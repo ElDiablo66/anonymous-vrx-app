@@ -482,6 +482,21 @@ impl ApiClient {
         self.act(Method::DELETE, format!("/auth/user/friends/{}", Self::part(user_id)), None).await
     }
 
+    /// Every choice I made about another person: blocks, mutes and the rest.
+    pub async fn player_moderations(&self) -> AppResult<Value> {
+        self.read("/auth/user/playermoderations").await
+    }
+
+    /// Blocks or mutes someone. `kind` is VRChat's own word, `block` or `mute`.
+    pub async fn moderate(&self, user_id: &str, kind: &str) -> AppResult<()> {
+        self.act(Method::POST, "/auth/user/playermoderations".into(), Some(serde_json::json!({ "moderated": user_id, "type": kind }))).await
+    }
+
+    /// Takes a block or a mute back.
+    pub async fn unmoderate(&self, user_id: &str, kind: &str) -> AppResult<()> {
+        self.act(Method::PUT, "/auth/user/unplayermoderate".into(), Some(serde_json::json!({ "moderated": user_id, "type": kind }))).await
+    }
+
     /// Gives one of my favourite groups a new name.
     pub async fn rename_favorite_group(&self, kind: &str, group: &str, owner: &str, name: &str) -> AppResult<()> {
         let path = format!("/favorite/group/{}/{}/{}", Self::part(kind), Self::part(group), Self::part(owner));

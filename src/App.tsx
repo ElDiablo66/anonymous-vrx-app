@@ -39,7 +39,7 @@ type View = "around" | "here" | "history" | "everyone" | "favourites" | "uploads
 /** What the page is called while a tab other than the first is open. */
 const tabTitles: Partial<Record<View, Record<string, string>>> = {
   history: { Worlds: "World history", Photos: "Photos", Avatars: "Avatar history", "Friend activity": "Friend activity" },
-  everyone: { "Friend list": "Everyone", "Friend log": "Friend log" },
+  everyone: { "Friend list": "Everyone", "Friend log": "Friend log", "Blocked and muted": "Blocked and muted" },
   favourites: { Avatars: "Favourite avatars", Worlds: "Favourite worlds", Friends: "Favourite friends", "Group names": "Favourite group names" },
   uploads: { Avatars: "My avatars", Worlds: "My worlds" },
   inbox: { Waiting: "Inbox", Done: "Inbox, done" },
@@ -514,7 +514,7 @@ export function App() {
         {view === "here" && <Here friends={friends} worlds={worlds} instances={instances} meId={me.id} tick={logTick} onDone={setToast} />}
         {view === "history" && <History friends={friends} worlds={worlds} meId={me.id} tick={logTick} onDone={setToast} />}
         {view === "everyone" && (
-          <Everyone friends={list} friendMap={friends} worlds={worlds} favorites={favorites} noted={noted} feedTick={feedTick} query={query} />
+          <Everyone friends={list} friendMap={friends} worlds={worlds} favorites={favorites} noted={noted} feedTick={feedTick} query={query} onDone={setToast} />
         )}
         {view === "uploads" && <Uploads meId={me.id} onDone={setToast} />}
         {view === "favourites" && <Favourites friends={friends} favorites={favorites} meId={me.id} onDone={setToast} />}

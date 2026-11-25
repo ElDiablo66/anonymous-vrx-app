@@ -204,6 +204,18 @@ async fn upload_action(hub: State<'_, Arc<Hub>>, kind: String, id: String, actio
     hub.upload_action(&kind, &id, &action).await
 }
 
+/// The people I blocked or muted.
+#[tauri::command]
+async fn get_moderations(hub: State<'_, Arc<Hub>>, fresh: bool) -> AppResult<serde_json::Value> {
+    hub.moderations(fresh).await
+}
+
+/// Blocks or mutes someone (`kind` is `block` or `mute`), or takes it back with `on` false.
+#[tauri::command]
+async fn set_moderation(hub: State<'_, Arc<Hub>>, user_id: String, kind: String, on: bool) -> AppResult<()> {
+    hub.set_moderation(&user_id, &kind, on).await
+}
+
 #[tauri::command]
 async fn friend_action(hub: State<'_, Arc<Hub>>, user_id: String, action: String) -> AppResult<()> {
     hub.friend_action(&user_id, &action).await
@@ -767,6 +779,8 @@ pub fn run() {
             get_note,
             get_favorites_cached,
             friend_action,
+            get_moderations,
+            set_moderation,
             upload_action,
             get_friend_status,
             rename_favorite_group,

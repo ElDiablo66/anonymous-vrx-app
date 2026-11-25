@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { backend, type Favorites, type FeedItem, type Friend, type World } from "./backend";
+import { backend, errorText, type Favorites, type FeedItem, type Friend, type Moderation, type World } from "./backend";
 import { Avatar, accessName, clock, dayLabel, deviceLine, statusTone, statusWords, tidy } from "./bits";
 import { openProfile } from "./Profile";
 
@@ -75,6 +75,85 @@ function FriendLog({ friends, tick }: { friends: Map<string, Friend>; tick: numb
   );
 }
 
+/** Everyone I blocked or muted, with a way back for each. */
+function Blocked({ friends, onDone }: { friends: Map<string, Friend>; onDone: (message: string) => void }) {
+  const [rows, setRows] = useState<Moderation[] | null>(null);
+  const [problem, setProblem] = useState("");
+  const [busy, setBusy] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    void backend
+      .moderations(true)
+      .then((list) => alive && setRows(list))
+      .catch((err) => alive && setProblem(errorText(err)));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function undo(m: Moderation) {
+    const id = m.kind + m.userId;
+    setBusy(id);
+    try {
+      await backend.setModeration(m.userId, m.kind, false);
+      setRows((old) => (old ? old.filter((r) => r.kind + r.userId !== id) : old));
+      onDone(`${m.name} is no longer ${m.kind === "block" ? "blocked" : "muted"}.`);
+    } catch (err) {
+      onDone(`That did not work: ${errorText(err)}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (problem) {
+    return (
+      <p className="banner" role="alert">
+        {problem}
+      </p>
+    );
+  }
+  if (rows === null) return <p className="empty">Asking VRChat who you blocked and muted</p>;
+  if (rows.length === 0) return <p className="empty">Nobody is blocked or muted. You can block or mute someone from their profile.</p>;
+  return (
+    <>
+      {(["block", "mute"] as const).map((kind) => {
+        const mine = rows.filter((r) => r.kind === kind);
+        if (mine.length === 0) return null;
+        return (
+          <section key={kind}>
+            <h2 className="blocked-title">
+              {kind === "block" ? "Blocked" : "Muted"}, {mine.length}
+            </h2>
+            <ol className="inbox">
+              {mine.map((m) => (
+                <li className="notice notice-done" key={m.kind + m.userId}>
+                  <Avatar name={m.name} image={friends.get(m.userId)?.image ?? ""} />
+                  <div className="notice-text">
+                    <p className="notice-title">
+                      <button className="name-link" onClick={() => openProfile(m.userId)}>
+                        {m.name || "Someone"}
+                      </button>
+                    </p>
+                    {m.at && (
+                      <time dateTime={m.at}>
+                        Since {dayLabel(m.at)}
+                      </time>
+                    )}
+                  </div>
+                  <button className="plain" disabled={busy === m.kind + m.userId} onClick={() => void undo(m)}>
+                    {kind === "block" ? "Unblock" : "Unmute"}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
 export function Everyone({
   friends,
   friendMap,
@@ -83,7 +162,9 @@ export function Everyone({
   noted,
   feedTick,
   query,
+  onDone,
 }: {
+  onDone: (message: string) => void;
   friends: Friend[];
   friendMap: Map<string, Friend>;
   worlds: Map<string, World>;
@@ -93,7 +174,7 @@ export function Everyone({
   feedTick: number;
   query: string;
 }) {
-  const [tab, setTab] = useState<"list" | "log">("list");
+  const [tab, setTab] = useState<"list" | "log" | "blocked">("list");
   const [sort, setSort] = useState<"status" | "name" | "place" | "together">("status");
   const [hidePrivate, setHidePrivate] = useState(false);
   const [together, setTogether] = useState<Record<string, number>>({});
@@ -138,6 +219,9 @@ export function Everyone({
         <button role="tab" aria-selected={tab === "log"} className={tab === "log" ? "on" : ""} onClick={() => setTab("log")}>
           Friend log
         </button>
+        <button role="tab" aria-selected={tab === "blocked"} className={tab === "blocked" ? "on" : ""} onClick={() => setTab("blocked")}>
+          Blocked and muted
+        </button>
       </div>
       {tab === "list" && (
         <div className="list-tools">
@@ -156,7 +240,9 @@ export function Everyone({
           </label>
         </div>
       )}
-      {tab === "log" ? (
+      {tab === "blocked" ? (
+        <Blocked friends={friendMap} onDone={onDone} />
+      ) : tab === "log" ? (
         <FriendLog friends={friendMap} tick={feedTick} />
       ) : rows.length === 0 ? (
         <p className="empty">{q ? `Nobody matches "${query.trim()}".` : "No friends to show yet."}</p>

@@ -87,6 +87,75 @@ export function Unfriend({ userId, name, onDone }: { userId: string; name: strin
   );
 }
 
+/** Mute and block for one person. Blocking asks twice; taking either back does not. */
+export function BlockMute({ userId, name, onDone }: { userId: string; name: string; onDone: (message: string) => void }) {
+  const [state, setState] = useState<{ block: boolean; mute: boolean } | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setState(null);
+    setAsking(false);
+    void backend
+      .moderations(false)
+      .then((all) => {
+        if (!alive) return;
+        const mine = all.filter((m) => m.userId === userId);
+        setState({ block: mine.some((m) => m.kind === "block"), mute: mine.some((m) => m.kind === "mute") });
+      })
+      .catch(() => alive && setState({ block: false, mute: false }));
+    return () => {
+      alive = false;
+    };
+  }, [userId]);
+
+  async function set(kind: "block" | "mute", on: boolean, done: string) {
+    setBusy(true);
+    try {
+      await backend.setModeration(userId, kind, on);
+      setState((old) => (old ? { ...old, [kind]: on } : old));
+      onDone(done);
+    } catch (err) {
+      onDone(`That did not work: ${errorText(err)}`);
+    } finally {
+      setBusy(false);
+      setAsking(false);
+    }
+  }
+
+  if (!state) return null;
+  return (
+    <>
+      {state.mute ? (
+        <button disabled={busy} onClick={() => void set("mute", false, `${name} is no longer muted.`)}>
+          Unmute
+        </button>
+      ) : (
+        <button disabled={busy} title="You stop hearing them in VRChat. They are not told" onClick={() => void set("mute", true, `${name} is muted.`)}>
+          Mute
+        </button>
+      )}
+      {state.block ? (
+        <button disabled={busy} onClick={() => void set("block", false, `${name} is no longer blocked.`)}>
+          Unblock
+        </button>
+      ) : asking ? (
+        <>
+          <button className="danger" disabled={busy} onClick={() => void set("block", true, `${name} is blocked.`)}>
+            Yes, block
+          </button>
+          <button onClick={() => setAsking(false)}>Keep</button>
+        </>
+      ) : (
+        <button title="You and they stop seeing and hearing each other in VRChat" onClick={() => setAsking(true)}>
+          Block
+        </button>
+      )}
+    </>
+  );
+}
+
 const standardGroups = ["group_0", "group_1", "group_2", "group_3"];
 
 /** Puts a friend into one of my favourite friend groups, or takes them out. */

@@ -6,7 +6,7 @@ import { openThing } from "./Detail";
 import { savedAvatarProvider } from "./settings";
 import { openPicture } from "./Viewer";
 import { usePic } from "./Pic";
-import { AddFriend, FriendFavourite, Unfriend } from "./FriendTools";
+import { AddFriend, BlockMute, FriendFavourite, Unfriend } from "./FriendTools";
 
 /** Any part of the window can ask for someone's profile this way. */
 export function openProfile(userId: string) {
@@ -641,6 +641,7 @@ export function ProfilePanel({
                         <button onClick={() => copy(person.id, "User ID copied.")}>Copy user ID</button>
                         <button onClick={() => copy(`https://vrchat.com/home/user/${person.id}`, "Profile link copied.")}>Copy link</button>
                         {friend && !isMe && <Unfriend userId={userId} name={name} onDone={onDone} />}
+                        {!isMe && <BlockMute userId={userId} name={name} onDone={onDone} />}
                       </div>
                     </section>
                     {friend && !isMe && <FriendFavourite userId={userId} name={name} onDone={onDone} />}

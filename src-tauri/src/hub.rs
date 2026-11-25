@@ -80,6 +80,8 @@ pub struct Hub {
     alerts: Mutex<Alerts>,
     /// The last favourites answer per kind, so screens can show at once and refresh after.
     fav_cache: Mutex<HashMap<String, Value>>,
+    /// The people I blocked or muted, with the account the list belongs to.
+    blocked: Mutex<Option<(String, Value)>>,
 }
 
 /// Which notifications get a Windows pop-up. The window sends its switches here,
@@ -159,6 +161,7 @@ impl Hub {
             }),
             alerts: Mutex::new(Alerts::default()),
             fav_cache: Mutex::new(HashMap::new()),
+            blocked: Mutex::new(None),
         })
     }
 
@@ -768,6 +771,52 @@ impl Hub {
             "remove" => self.api.unfriend(user_id).await,
             _ => Err(AppError::CannotDo("That is not something to do with a friend.".into())),
         }
+    }
+
+    /// The people I blocked or muted, newest first. VRChat is asked once; after that the list
+    /// is kept until something changes or `fresh` asks again.
+    pub async fn moderations(&self, fresh: bool) -> AppResult<Value> {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        if !fresh {
+            if let Some((owner, list)) = self.blocked.lock().unwrap().as_ref() {
+                if *owner == me.id {
+                    return Ok(list.clone());
+                }
+            }
+        }
+        let all = self.api.player_moderations().await?;
+        let mut rows: Vec<Value> = all
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .filter(|m| matches!(m["type"].as_str(), Some("block" | "mute")))
+            .map(|m| json!({ "kind": m["type"], "userId": m["targetUserId"], "name": m["targetDisplayName"], "at": m["created"] }))
+            .collect();
+        rows.sort_by(|a, b| b["at"].as_str().unwrap_or_default().cmp(a["at"].as_str().unwrap_or_default()));
+        let list = Value::Array(rows);
+        *self.blocked.lock().unwrap() = Some((me.id, list.clone()));
+        Ok(list)
+    }
+
+    /// Blocks or mutes someone, or takes that back. Nothing else can be set from here.
+    pub async fn set_moderation(&self, user_id: &str, kind: &str, on: bool) -> AppResult<()> {
+        if !user_id.starts_with("usr_") || self.me().is_some_and(|me| me.id == user_id) {
+            return Err(AppError::CannotDo("That only works on another person.".into()));
+        }
+        if !matches!(kind, "block" | "mute") {
+            return Err(AppError::CannotDo("Only a block or a mute can be set from here.".into()));
+        }
+        if self.me().is_none() {
+            return Err(AppError::NotSignedIn);
+        }
+        if on {
+            self.api.moderate(user_id, kind).await?;
+        } else {
+            self.api.unmoderate(user_id, kind).await?;
+        }
+        *self.blocked.lock().unwrap() = None;
+        Ok(())
     }
 
     /// Whether we are friends, and whether a request is waiting either way.

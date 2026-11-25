@@ -1,7 +1,7 @@
 // Made-up friends and worlds for looking at the layout in a browser tab.
 // Nothing here talks to VRChat.
 
-import type { AvatarWorn, Backend, FeedItem, Friend, Handled, LiveEvents, LocalFavorite, Notice, Person, Place, Sighting, Visit, World } from "./backend";
+import type { AvatarWorn, Backend, Moderation, FeedItem, Friend, Handled, LiveEvents, LocalFavorite, Notice, Person, Place, Sighting, Visit, World } from "./backend";
 
 const worlds: World[] = [
   { id: "wrld_demo_pier", name: "\uFF3BAutumn\uFF3D\u3000Quiet Pier at Dusk", image: "" },
@@ -155,6 +155,11 @@ let demoNotices: Notice[] = [
       { kind: "decline", data: "grp_demo", text: "Decline" },
     ],
   },
+];
+
+const demoBlocked: Moderation[] = [
+  { kind: "block", userId: "usr_demo_blocked", name: "Static Crow", at: new Date(Date.now() - 6 * 86400000).toISOString() },
+  { kind: "mute", userId: "usr_demo_muted", name: "Loud Harbor", at: new Date(Date.now() - 30 * 86400000).toISOString() },
 ];
 
 const demoHandled: Handled[] = [];
@@ -435,6 +440,16 @@ export const demoBackend: Backend = {
   },
   async friendAction() {
     await wait(300);
+  },
+  async moderations() {
+    await wait(250);
+    return demoBlocked.slice();
+  },
+  async setModeration(userId, kind, on) {
+    await wait(250);
+    const at = demoBlocked.findIndex((m) => m.userId === userId && m.kind === kind);
+    if (at >= 0) demoBlocked.splice(at, 1);
+    if (on) demoBlocked.unshift({ kind, userId, name: "Someone", at: new Date().toISOString() });
   },
   async friendStatus() {
     return { isFriend: false, outgoingRequest: false, incomingRequest: false };

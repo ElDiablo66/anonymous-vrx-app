@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use anonymous_vrx_lib::error::AppError;
 use anonymous_vrx_lib::hub::Hub;
 use anonymous_vrx_lib::vrchat::client::{ApiClient, LoginOutcome, Session, Timing};
-use wiremock::matchers::{header, header_exists, method, path, query_param};
+use wiremock::matchers::{body_json, header, header_exists, method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 fn quick() -> Timing {
@@ -608,6 +608,43 @@ async fn my_uploads_can_be_changed_and_deleted_but_nobody_elses() {
     hub.upload_action("world", "wrld_mine", "delete").await.unwrap();
     hub.sign_out().await.ok();
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn blocks_and_mutes_are_listed_set_and_taken_back() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/auth/user/playermoderations")).respond_with(ResponseTemplate::new(200).set_body_json(json!([
+        { "id": "pmod_1", "type": "mute", "sourceUserId": "usr_me", "targetUserId": "usr_2", "targetDisplayName": "Loud One", "created": "2026-01-02T00:00:00.000Z" },
+        { "id": "pmod_2", "type": "block", "sourceUserId": "usr_me", "targetUserId": "usr_3", "targetDisplayName": "Rook", "created": "2026-03-04T00:00:00.000Z" },
+        { "id": "pmod_3", "type": "showAvatar", "sourceUserId": "usr_me", "targetUserId": "usr_4", "targetDisplayName": "Pal", "created": "2026-05-06T00:00:00.000Z" }
+    ]))).expect(2).mount(&server).await;
+    Mock::given(method("POST")).and(path("/auth/user/playermoderations")).and(body_json(json!({ "moderated": "usr_5", "type": "block" }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    Mock::given(method("PUT")).and(path("/auth/user/unplayermoderate")).and(body_json(json!({ "moderated": "usr_2", "type": "mute" }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+
+    let api = Arc::new(client(&server));
+    api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
+    let hub = Hub::new(api, std::env::temp_dir(), Arc::new(|_, _| {}), false, None);
+    // Nothing is asked or changed before sign-in.
+    assert!(matches!(hub.moderations(false).await, Err(AppError::NotSignedIn)));
+    assert!(matches!(hub.set_moderation("usr_5", "block", true).await, Err(AppError::NotSignedIn)));
+    hub.begin(json!({ "id": "usr_me", "displayName": "Tester" })).unwrap();
+
+    let list = hub.moderations(false).await.unwrap();
+    // Only blocks and mutes, newest first.
+    assert_eq!(list, json!([
+        { "kind": "block", "userId": "usr_3", "name": "Rook", "at": "2026-03-04T00:00:00.000Z" },
+        { "kind": "mute", "userId": "usr_2", "name": "Loud One", "at": "2026-01-02T00:00:00.000Z" }
+    ]));
+    // Asked once; the second look comes from memory.
+    hub.moderations(false).await.unwrap();
+
+    assert!(matches!(hub.set_moderation("usr_me", "block", true).await, Err(AppError::CannotDo(_))));
+    assert!(matches!(hub.set_moderation("avtr_1", "block", true).await, Err(AppError::CannotDo(_))));
+    assert!(matches!(hub.set_moderation("usr_5", "hideAvatar", true).await, Err(AppError::CannotDo(_))));
+    hub.set_moderation("usr_5", "block", true).await.unwrap();
+    hub.set_moderation("usr_2", "mute", false).await.unwrap();
+    // A change empties the memory, so the list is asked for again.
+    hub.moderations(false).await.unwrap();
 }
 
 #[tokio::test]

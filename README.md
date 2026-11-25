@@ -96,6 +96,7 @@ This is the screen the app opens on.
 | Friend list | Sortable, with trust colours, VRC+ and 18+ marks, language flags and status colours |
 | Old names | Hover a name to see what that friend used to be called |
 | Friend tools | Send and answer friend requests, boop back, unfriend, move people between favourite groups, rename the groups |
+| Block and mute | Block or mute someone from their profile, and see everyone you blocked or muted in one list, with a button to take each one back |
 | Your status | Click your own picture to change it |
 
 ### History

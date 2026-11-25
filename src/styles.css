@@ -4418,3 +4418,13 @@ button.pinned-away:hover {
   flex-direction: row-reverse;
   font-size: 14px;
 }
+
+/* Everyone: the blocked and muted lists */
+.blocked-title {
+  margin: 18px 0 8px;
+  font-size: 15px;
+}
+
+.notice .plain {
+  align-self: center;
+}

@@ -158,6 +158,14 @@ export interface HereNow {
   people: Sighting[];
 }
 
+/** Someone I blocked or muted. */
+export interface Moderation {
+  kind: "block" | "mute";
+  userId: string;
+  name: string;
+  at: string;
+}
+
 export interface Favorites {
   groups: Array<{ key: string; name: string }>;
   /** Friend user id to group key. */
@@ -332,6 +340,10 @@ export interface Backend {
   /** `add` sends a friend request, `cancel` takes it back, `remove` unfriends. */
   friendAction(userId: string, action: "add" | "cancel" | "remove"): Promise<void>;
   friendStatus(userId: string): Promise<{ isFriend?: boolean; outgoingRequest?: boolean; incomingRequest?: boolean }>;
+  /** The people I blocked or muted, newest first. `fresh` asks VRChat again. */
+  moderations(fresh: boolean): Promise<Moderation[]>;
+  /** Blocks or mutes someone, or takes it back with `on` false. */
+  setModeration(userId: string, kind: "block" | "mute", on: boolean): Promise<void>;
   renameFavoriteGroup(kind: string, group: string, name: string): Promise<void>;
   /** A picture as a data address, fetched with the sign-in when VRChat wants it. */
   loadPicture(url: string): Promise<string>;
@@ -459,6 +471,10 @@ const desktop: Backend = {
     forget(`profile:${userId}`);
   },
   friendStatus: (userId) => invoke("get_friend_status", { userId }),
+  moderations: (fresh) => invoke("get_moderations", { fresh }),
+  setModeration: async (userId, kind, on) => {
+    await invoke("set_moderation", { userId, kind, on });
+  },
   uploadAction: async (kind, id, action) => {
     await invoke("upload_action", { kind, id, action });
     forget(`thing:${kind}:${id}`);
