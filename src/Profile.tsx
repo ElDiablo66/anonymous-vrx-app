@@ -6,7 +6,7 @@ import { openThing } from "./Detail";
 import { savedAvatarProvider } from "./settings";
 import { openPicture } from "./Viewer";
 import { usePic } from "./Pic";
-import { AddFriend, BlockMute, FriendFavourite, Unfriend } from "./FriendTools";
+import { AddFriend, BlockMute, FriendFavourite, Unfriend, type BlockState } from "./FriendTools";
 
 /** Any part of the window can ask for someone's profile this way. */
 export function openProfile(userId: string) {
@@ -162,6 +162,24 @@ export function ProfilePanel({
   onDone: (message: string) => void;
 }) {
   const [profile, setProfile] = useState<Profile | null>(null);
+  // Whether I blocked or muted this person. Asked from the list the app already holds.
+  const [blockState, setBlockState] = useState<BlockState | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setBlockState(null);
+    if (userId === meId) return;
+    void backend
+      .moderations(false)
+      .then((all) => {
+        if (!alive) return;
+        const mine = all.filter((m) => m.userId === userId);
+        setBlockState({ block: mine.some((m) => m.kind === "block"), mute: mine.some((m) => m.kind === "mute") });
+      })
+      .catch(() => alive && setBlockState({ block: false, mute: false }));
+    return () => {
+      alive = false;
+    };
+  }, [userId, meId]);
   const [problem, setProblem] = useState("");
   const [note, setNote] = useState("");
   const [saved, setSaved] = useState("");
@@ -437,6 +455,8 @@ export function ProfilePanel({
           {statusText && <p className="profile-status">{statusText}</p>}
           <ul className="badges">
             {standing && <li className={friend ? `tone-${statusTone(friend)}` : person?.isFriend ? "badge-friend" : ""}>{friend && <i className="tone-dot" />}{standing}</li>}
+            {blockState?.block && <li className="chip-blocked">Blocked by you</li>}
+            {blockState?.mute && <li className="chip-blocked">Muted by you</li>}
             {person && <li className={`chip-rank rank-${person.rank.replace(/ /g, "")}`}>{person.rank}</li>}
             {adult && <li className="chip-adult">18+ verified</li>}
             {vrcPlus && <li className="chip-plus">VRChat+</li>}
@@ -573,7 +593,13 @@ export function ProfilePanel({
                             : "Offline, or not on your friend list"}
                     </Empty>
                   )}
-                  {!friend && !isMe && <AddFriend userId={userId} name={name} onDone={onDone} />}
+                  {!isMe && blockState?.block && (
+                    <div className="wayback blocked-line">
+                      <span className="tile-note">You blocked {name}. You and they do not see or hear each other in VRChat.</span>
+                      <BlockMute userId={userId} name={name} state={blockState} setState={setBlockState} only="unblock" onDone={onDone} />
+                    </div>
+                  )}
+                  {!friend && !isMe && !blockState?.block && <AddFriend userId={userId} name={name} onDone={onDone} />}
                   {friend && !isMe && (
                     <div className="wayback">
                       <button
@@ -641,7 +667,7 @@ export function ProfilePanel({
                         <button onClick={() => copy(person.id, "User ID copied.")}>Copy user ID</button>
                         <button onClick={() => copy(`https://vrchat.com/home/user/${person.id}`, "Profile link copied.")}>Copy link</button>
                         {friend && !isMe && <Unfriend userId={userId} name={name} onDone={onDone} />}
-                        {!isMe && <BlockMute userId={userId} name={name} onDone={onDone} />}
+                        {!isMe && <BlockMute userId={userId} name={name} state={blockState} setState={setBlockState} onDone={onDone} />}
                       </div>
                     </section>
                     {friend && !isMe && <FriendFavourite userId={userId} name={name} onDone={onDone} />}

@@ -210,6 +210,12 @@ async fn get_moderations(hub: State<'_, Arc<Hub>>, fresh: bool) -> AppResult<ser
     hub.moderations(fresh).await
 }
 
+/// Picture, rank and status of one person, for a list row.
+#[tauri::command]
+async fn get_person_brief(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<serde_json::Value> {
+    hub.person_brief(&user_id).await
+}
+
 /// Blocks or mutes someone (`kind` is `block` or `mute`), or takes it back with `on` false.
 #[tauri::command]
 async fn set_moderation(hub: State<'_, Arc<Hub>>, user_id: String, kind: String, on: bool) -> AppResult<()> {
@@ -780,6 +786,7 @@ pub fn run() {
             get_favorites_cached,
             friend_action,
             get_moderations,
+            get_person_brief,
             set_moderation,
             upload_action,
             get_friend_status,

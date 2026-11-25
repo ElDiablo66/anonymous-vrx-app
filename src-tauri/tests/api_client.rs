@@ -645,6 +645,16 @@ async fn blocks_and_mutes_are_listed_set_and_taken_back() {
     hub.set_moderation("usr_2", "mute", false).await.unwrap();
     // A change empties the memory, so the list is asked for again.
     hub.moderations(false).await.unwrap();
+
+    // A row's picture and rank are asked for once per person.
+    Mock::given(method("GET")).and(path("/users/usr_3")).respond_with(ResponseTemplate::new(200).set_body_json(json!({
+        "id": "usr_3", "displayName": "Rook", "userIcon": "https://example.test/rook.png", "status": "busy", "state": "offline",
+        "tags": ["system_trust_basic", "system_supporter"]
+    }))).expect(1).mount(&server).await;
+    let brief = hub.person_brief("usr_3").await.unwrap();
+    assert_eq!((brief["displayName"].as_str(), brief["vrcPlus"].as_bool(), brief["state"].as_str()), (Some("Rook"), Some(true), Some("offline")));
+    hub.person_brief("usr_3").await.unwrap();
+    assert!(matches!(hub.person_brief("avtr_1").await, Err(AppError::CannotDo(_))));
 }
 
 #[tokio::test]

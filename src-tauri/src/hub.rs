@@ -82,6 +82,8 @@ pub struct Hub {
     fav_cache: Mutex<HashMap<String, Value>>,
     /// The people I blocked or muted, with the account the list belongs to.
     blocked: Mutex<Option<(String, Value)>>,
+    /// Picture, rank and status of people looked up for a list, kept while the app runs.
+    briefs: Mutex<HashMap<String, Value>>,
 }
 
 /// Which notifications get a Windows pop-up. The window sends its switches here,
@@ -162,6 +164,7 @@ impl Hub {
             alerts: Mutex::new(Alerts::default()),
             fav_cache: Mutex::new(HashMap::new()),
             blocked: Mutex::new(None),
+            briefs: Mutex::new(HashMap::new()),
         })
     }
 
@@ -797,6 +800,25 @@ impl Hub {
         let list = Value::Array(rows);
         *self.blocked.lock().unwrap() = Some((me.id, list.clone()));
         Ok(list)
+    }
+
+    /// The little a list row shows about someone who is not a friend: picture, rank, marks and
+    /// status. One request the first time, none after that.
+    pub async fn person_brief(&self, user_id: &str) -> AppResult<Value> {
+        if !user_id.starts_with("usr_") {
+            return Err(AppError::CannotDo("That is not a person.".into()));
+        }
+        if self.me().is_none() {
+            return Err(AppError::NotSignedIn);
+        }
+        if let Some(known) = self.briefs.lock().unwrap().get(user_id) {
+            return Ok(known.clone());
+        }
+        let user = self.api.user(user_id).await?;
+        let state = user["state"].as_str().unwrap_or("offline").to_string();
+        let brief = Friend::from_user(&user, &state).map(|f| json!(f)).ok_or_else(|| AppError::Parse("that user had no id".into()))?;
+        self.briefs.lock().unwrap().insert(user_id.to_string(), brief.clone());
+        Ok(brief)
     }
 
     /// Blocks or mutes someone, or takes that back. Nothing else can be set from here.

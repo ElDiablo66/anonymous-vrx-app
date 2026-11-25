@@ -342,6 +342,8 @@ export interface Backend {
   friendStatus(userId: string): Promise<{ isFriend?: boolean; outgoingRequest?: boolean; incomingRequest?: boolean }>;
   /** The people I blocked or muted, newest first. `fresh` asks VRChat again. */
   moderations(fresh: boolean): Promise<Moderation[]>;
+  /** Picture, rank, marks and status of someone, for a list row. Asked once per person. */
+  personBrief(userId: string): Promise<Friend>;
   /** Blocks or mutes someone, or takes it back with `on` false. */
   setModeration(userId: string, kind: "block" | "mute", on: boolean): Promise<void>;
   renameFavoriteGroup(kind: string, group: string, name: string): Promise<void>;
@@ -472,6 +474,7 @@ const desktop: Backend = {
   },
   friendStatus: (userId) => invoke("get_friend_status", { userId }),
   moderations: (fresh) => invoke("get_moderations", { fresh }),
+  personBrief: (userId) => invoke("get_person_brief", { userId }),
   setModeration: async (userId, kind, on) => {
     await invoke("set_moderation", { userId, kind, on });
   },

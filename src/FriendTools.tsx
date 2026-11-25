@@ -87,34 +87,40 @@ export function Unfriend({ userId, name, onDone }: { userId: string; name: strin
   );
 }
 
-/** Mute and block for one person. Blocking asks twice; taking either back does not. */
-export function BlockMute({ userId, name, onDone }: { userId: string; name: string; onDone: (message: string) => void }) {
-  const [state, setState] = useState<{ block: boolean; mute: boolean } | null>(null);
+export interface BlockState {
+  block: boolean;
+  mute: boolean;
+}
+
+/** Mute and block for one person. Blocking asks twice; taking either back does not. The
+ *  profile holds the state, so every place that shows it changes together. `only` narrows it
+ *  to the one button that takes a block back. */
+export function BlockMute({
+  userId,
+  name,
+  state,
+  setState,
+  only,
+  onDone,
+}: {
+  userId: string;
+  name: string;
+  state: BlockState | null;
+  setState: (next: BlockState) => void;
+  only?: "unblock";
+  onDone: (message: string) => void;
+}) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let alive = true;
-    setState(null);
-    setAsking(false);
-    void backend
-      .moderations(false)
-      .then((all) => {
-        if (!alive) return;
-        const mine = all.filter((m) => m.userId === userId);
-        setState({ block: mine.some((m) => m.kind === "block"), mute: mine.some((m) => m.kind === "mute") });
-      })
-      .catch(() => alive && setState({ block: false, mute: false }));
-    return () => {
-      alive = false;
-    };
-  }, [userId]);
+  useEffect(() => setAsking(false), [userId]);
 
   async function set(kind: "block" | "mute", on: boolean, done: string) {
+    if (!state) return;
     setBusy(true);
     try {
       await backend.setModeration(userId, kind, on);
-      setState((old) => (old ? { ...old, [kind]: on } : old));
+      setState({ ...state, [kind]: on });
       onDone(done);
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
@@ -125,6 +131,13 @@ export function BlockMute({ userId, name, onDone }: { userId: string; name: stri
   }
 
   if (!state) return null;
+  if (only === "unblock") {
+    return (
+      <button className="go" disabled={busy} onClick={() => void set("block", false, `${name} is no longer blocked.`)}>
+        Unblock
+      </button>
+    );
+  }
   return (
     <>
       {state.mute ? (

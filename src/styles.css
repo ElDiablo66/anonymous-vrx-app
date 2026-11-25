@@ -4428,3 +4428,23 @@ button.pinned-away:hover {
 .notice .plain {
   align-self: center;
 }
+
+/* A profile of someone I blocked or muted says so */
+.badges .chip-blocked {
+  border-color: var(--busy);
+  color: var(--busy);
+  background: color-mix(in srgb, var(--busy) 14%, transparent);
+  font-weight: 600;
+}
+
+.blocked-line {
+  align-items: center;
+}
+
+.blocked-line .tile-note {
+  flex: 1 1 220px;
+}
+
+.notice-title .mark {
+  margin-left: 6px;
+}

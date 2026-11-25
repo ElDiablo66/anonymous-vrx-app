@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorText, type Favorites, type FeedItem, type Friend, type Moderation, type World } from "./backend";
 import { Avatar, accessName, clock, dayLabel, deviceLine, statusTone, statusWords, tidy } from "./bits";
 import { openProfile } from "./Profile";
@@ -75,11 +75,72 @@ function FriendLog({ friends, tick }: { friends: Map<string, Friend>; tick: numb
   );
 }
 
+/** What was looked up about people on the blocked list, so a row is asked for once. */
+const briefs = new Map<string, Friend>();
+
+/** One blocked or muted person. Their picture, rank and status are looked up when the row
+ *  has been on screen for a moment, so a long list does not ask for everyone at once. */
+function BlockedRow({ m, friend, busy, onUndo }: { m: Moderation; friend?: Friend; busy: boolean; onUndo: () => void }) {
+  const [brief, setBrief] = useState<Friend | undefined>(friend ?? briefs.get(m.userId));
+  const row = useRef<HTMLLIElement>(null);
+
+  useEffect(() => {
+    if (brief || !row.current) return;
+    let alive = true;
+    let wait = 0;
+    const watch = new IntersectionObserver((seen) => {
+      window.clearTimeout(wait);
+      if (!seen.some((s) => s.isIntersecting)) return;
+      wait = window.setTimeout(() => {
+        watch.disconnect();
+        void backend
+          .personBrief(m.userId)
+          .then((b) => {
+            briefs.set(m.userId, b);
+            if (alive) setBrief(b);
+          })
+          .catch(() => {});
+      }, 400);
+    });
+    watch.observe(row.current);
+    return () => {
+      alive = false;
+      window.clearTimeout(wait);
+      watch.disconnect();
+    };
+  }, [brief, m.userId]);
+
+  const name = brief?.displayName || m.name || "Someone";
+  return (
+    <li className="notice notice-done" ref={row}>
+      <Avatar name={name} image={brief?.image ?? ""} tone={brief ? statusTone(brief) : undefined} />
+      <div className="notice-text">
+        <p className="notice-title">
+          <button className={`name-link${brief?.rank ? ` rank-name rank-${brief.rank.replace(/ /g, "")}` : ""}`} title={brief?.rank || undefined} onClick={() => openProfile(m.userId)}>
+            {name}
+          </button>
+          {brief?.vrcPlus && <span className="mark" title="VRChat+ supporter">VRC+</span>}
+          {brief?.adult && <span className="mark" title="Age verified as 18+">18+</span>}
+        </p>
+        <time dateTime={m.at || undefined}>
+          {brief ? `${brief.state === "active" ? deviceLine(brief.platform) : statusWords(brief)}${brief.statusDescription ? `, ${brief.statusDescription}` : ""}` : ""}
+          {brief && m.at ? " · " : ""}
+          {m.at ? `${m.kind === "block" ? "Blocked" : "Muted"} since ${dayLabel(m.at)}` : ""}
+        </time>
+      </div>
+      <button className="plain" disabled={busy} onClick={onUndo}>
+        {m.kind === "block" ? "Unblock" : "Unmute"}
+      </button>
+    </li>
+  );
+}
+
 /** Everyone I blocked or muted, with a way back for each. */
 function Blocked({ friends, onDone }: { friends: Map<string, Friend>; onDone: (message: string) => void }) {
   const [rows, setRows] = useState<Moderation[] | null>(null);
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState("");
+  const [only, setOnly] = useState<"all" | "block" | "mute">("all");
 
   useEffect(() => {
     let alive = true;
@@ -115,11 +176,30 @@ function Blocked({ friends, onDone }: { friends: Map<string, Friend>; onDone: (m
   }
   if (rows === null) return <p className="empty">Asking VRChat who you blocked and muted</p>;
   if (rows.length === 0) return <p className="empty">Nobody is blocked or muted. You can block or mute someone from their profile.</p>;
+  const count = { block: rows.filter((r) => r.kind === "block").length, mute: rows.filter((r) => r.kind === "mute").length };
+  // The two kinds get a filter each when there is something of both.
+  const active = only !== "all" && count[only] === 0 ? "all" : only;
   return (
     <>
+      {count.block > 0 && count.mute > 0 && (
+        <div className="filters filters-flat" role="group" aria-label="Blocked or muted">
+          {(
+            [
+              ["all", "Everything"],
+              ["block", "Blocked"],
+              ["mute", "Muted"],
+            ] as const
+          ).map(([id, label]) => (
+            <button key={id} className={id === active ? "on" : ""} aria-pressed={id === active} onClick={() => setOnly(id)}>
+              {label}
+              {id !== "all" && <span className="chip-count">{count[id]}</span>}
+            </button>
+          ))}
+        </div>
+      )}
       {(["block", "mute"] as const).map((kind) => {
         const mine = rows.filter((r) => r.kind === kind);
-        if (mine.length === 0) return null;
+        if (mine.length === 0 || (active !== "all" && active !== kind)) return null;
         return (
           <section key={kind}>
             <h2 className="blocked-title">
@@ -127,24 +207,7 @@ function Blocked({ friends, onDone }: { friends: Map<string, Friend>; onDone: (m
             </h2>
             <ol className="inbox">
               {mine.map((m) => (
-                <li className="notice notice-done" key={m.kind + m.userId}>
-                  <Avatar name={m.name} image={friends.get(m.userId)?.image ?? ""} />
-                  <div className="notice-text">
-                    <p className="notice-title">
-                      <button className="name-link" onClick={() => openProfile(m.userId)}>
-                        {m.name || "Someone"}
-                      </button>
-                    </p>
-                    {m.at && (
-                      <time dateTime={m.at}>
-                        Since {dayLabel(m.at)}
-                      </time>
-                    )}
-                  </div>
-                  <button className="plain" disabled={busy === m.kind + m.userId} onClick={() => void undo(m)}>
-                    {kind === "block" ? "Unblock" : "Unmute"}
-                  </button>
-                </li>
+                <BlockedRow key={m.kind + m.userId} m={m} friend={friends.get(m.userId)} busy={busy === m.kind + m.userId} onUndo={() => void undo(m)} />
               ))}
             </ol>
           </section>

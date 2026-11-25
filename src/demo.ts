@@ -445,6 +445,12 @@ export const demoBackend: Backend = {
     await wait(250);
     return demoBlocked.slice();
   },
+  async personBrief(userId) {
+    await wait(300);
+    const like = people[0];
+    const m = demoBlocked.find((b) => b.userId === userId);
+    return { ...like, id: userId, displayName: m?.name ?? "Someone", image: "", state: "offline", status: "busy", statusDescription: "", rank: "Known User", vrcPlus: true, adult: false };
+  },
   async setModeration(userId, kind, on) {
     await wait(250);
     const at = demoBlocked.findIndex((m) => m.userId === userId && m.kind === kind);
