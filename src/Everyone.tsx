@@ -148,8 +148,23 @@ function Blocked({ friends, onDone }: { friends: Map<string, Friend>; onDone: (m
       .moderations(true)
       .then((list) => alive && setRows(list))
       .catch((err) => alive && setProblem(errorText(err)));
+    // A block or mute changed from a profile: read the list again.
+    const again = (e: Event) => {
+      const what = (e as CustomEvent<{ userId: string; kind: string; on: boolean }>).detail;
+      // Something taken back leaves the list at once, without waiting for VRChat to agree.
+      if (what && !what.on) {
+        setRows((old) => (old ? old.filter((r) => !(r.userId === what.userId && r.kind === what.kind)) : old));
+        return;
+      }
+      void backend
+        .moderations(false)
+        .then((list) => alive && setRows(list))
+        .catch(() => {});
+    };
+    window.addEventListener("moderation:changed", again);
     return () => {
       alive = false;
+      window.removeEventListener("moderation:changed", again);
     };
   }, []);
 

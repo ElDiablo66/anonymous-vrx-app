@@ -121,6 +121,8 @@ export function BlockMute({
     try {
       await backend.setModeration(userId, kind, on);
       setState({ ...state, [kind]: on });
+      // The Blocked and muted list may be open behind this profile.
+      window.dispatchEvent(new CustomEvent("moderation:changed", { detail: { userId, kind, on } }));
       onDone(done);
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
