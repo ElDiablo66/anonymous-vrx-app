@@ -1,0 +1,821 @@
+pub mod backup;
+pub mod discord;
+pub mod error;
+pub mod gamelog;
+pub mod hub;
+pub mod photos;
+pub mod secrets;
+pub mod store;
+pub mod vrchat;
+
+use std::sync::Arc;
+
+use serde::Serialize;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
+
+use error::{AppError, AppResult};
+use hub::Hub;
+use store::{Sighting, Visit};
+use vrchat::client::{ApiClient, LoginOutcome};
+use vrchat::model::{Favorites, FeedItem, Friend, Instance, Me, World};
+use vrchat::notices::{Handled, Notice};
+use vrchat::people::{AvatarCard, Person, WorldCard};
+
+/// Used in the User-Agent, the credential store entry and file names.
+pub const APP_SLUG: &str = "anonymous-vrx";
+/// Shown to VRChat in the User-Agent so they can tell what this client is.
+pub const APP_CONTACT: &str = "personal desktop build";
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SignIn {
+    /// `signedIn`, `signedOut` or `needsCode`.
+    status: &'static str,
+    me: Option<Me>,
+    methods: Vec<String>,
+}
+
+impl SignIn {
+    fn of(me: Option<Me>) -> SignIn {
+        SignIn {
+            status: if me.is_some() { "signedIn" } else { "signedOut" },
+            me,
+            methods: Vec::new(),
+        }
+    }
+}
+
+#[tauri::command]
+async fn session_restore(hub: State<'_, Arc<Hub>>) -> AppResult<SignIn> {
+    Ok(SignIn::of(hub.restore().await?))
+}
+
+#[tauri::command]
+async fn login(hub: State<'_, Arc<Hub>>, username: String, password: String) -> AppResult<SignIn> {
+    match hub.api.login(username.trim(), &password).await? {
+        LoginOutcome::SignedIn(user) => Ok(SignIn::of(Some(hub.begin(user)?))),
+        LoginOutcome::NeedsCode(methods) => Ok(SignIn {
+            status: "needsCode",
+            me: None,
+            methods,
+        }),
+    }
+}
+
+#[tauri::command]
+async fn verify_code(hub: State<'_, Arc<Hub>>, method: String, code: String) -> AppResult<SignIn> {
+    hub.api.verify_code(&method, &code).await?;
+    let user = hub.api.current_user().await?;
+    Ok(SignIn::of(Some(hub.begin(user)?)))
+}
+
+#[tauri::command]
+async fn logout(hub: State<'_, Arc<Hub>>) -> AppResult<()> {
+    hub.sign_out().await
+}
+
+#[tauri::command]
+fn get_friends(hub: State<'_, Arc<Hub>>) -> Vec<Friend> {
+    hub.friends()
+}
+
+#[tauri::command]
+fn get_favorites(hub: State<'_, Arc<Hub>>) -> Favorites {
+    hub.favorites()
+}
+
+#[tauri::command]
+fn get_notices(hub: State<'_, Arc<Hub>>) -> Vec<Notice> {
+    hub.notices()
+}
+
+#[tauri::command]
+async fn get_profile(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<hub::Profile> {
+    hub.profile(&user_id).await
+}
+
+#[tauri::command]
+async fn get_profile_part(
+    hub: State<'_, Arc<Hub>>,
+    user_id: String,
+    part: String,
+    extra: Option<String>,
+    provider: Option<String>,
+) -> AppResult<serde_json::Value> {
+    hub.profile_part(&user_id, &part, extra.as_deref().unwrap_or(""), provider.as_deref().unwrap_or(""))
+        .await
+}
+
+#[tauri::command]
+async fn get_thing(hub: State<'_, Arc<Hub>>, kind: String, id: String) -> AppResult<serde_json::Value> {
+    hub.thing(&kind, &id).await
+}
+
+#[tauri::command]
+async fn get_favorites_of(hub: State<'_, Arc<Hub>>, kind: String) -> AppResult<serde_json::Value> {
+    hub.favorites_of(&kind).await
+}
+
+#[tauri::command]
+async fn add_favorite(hub: State<'_, Arc<Hub>>, kind: String, id: String, group: String) -> AppResult<()> {
+    hub.add_favorite(&kind, &id, &group).await
+}
+
+#[tauri::command]
+async fn remove_favorites(hub: State<'_, Arc<Hub>>, entry_ids: Vec<String>) -> AppResult<usize> {
+    hub.remove_favorites(&entry_ids).await
+}
+
+/// My favourite groups of every kind with how many favourites each holds.
+#[tauri::command]
+async fn get_favorite_groups(hub: State<'_, Arc<Hub>>, counts: bool) -> AppResult<serde_json::Value> {
+    if counts {
+        hub.favorite_groups_overview().await
+    } else {
+        hub.favorite_group_list().await
+    }
+}
+
+#[tauri::command]
+async fn check_favorites(hub: State<'_, Arc<Hub>>, kind: String) -> AppResult<serde_json::Value> {
+    hub.check_favorites(&kind).await
+}
+
+#[tauri::command]
+async fn boop(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<()> {
+    hub.boop(&user_id).await
+}
+
+fn pictures_root(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .picture_dir()
+        .map(|d| d.join("Anonymous VRX"))
+        .map_err(|e| AppError::Storage(e.to_string()))
+}
+
+/// Saves a picture into Pictures, in this app's own folder. Resolves to the full path.
+#[tauri::command]
+async fn save_picture(app: AppHandle, hub: State<'_, Arc<Hub>>, url: String, name: String) -> AppResult<String> {
+    let (kind, bytes) = hub.picture(&url).await?;
+    let ending = match kind.as_str() {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => return Err(AppError::CannotDo("That kind of picture cannot be saved.".into())),
+    };
+    let mut plain: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+        .take(60)
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if plain.is_empty() {
+        plain = "Picture".into();
+    }
+    let root = pictures_root(&app)?;
+    std::fs::create_dir_all(&root).map_err(|e| AppError::Storage(e.to_string()))?;
+    let mut path = root.join(format!("{plain}.{ending}"));
+    let mut n = 2;
+    while path.exists() {
+        path = root.join(format!("{plain} {n}.{ending}"));
+        n += 1;
+    }
+    std::fs::write(&path, bytes).map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn open_pictures_folder(app: AppHandle) -> AppResult<()> {
+    let root = pictures_root(&app)?;
+    std::fs::create_dir_all(&root).map_err(|e| AppError::Storage(e.to_string()))?;
+    std::process::Command::new("explorer.exe")
+        .arg(&root)
+        .spawn()
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn upload_action(hub: State<'_, Arc<Hub>>, kind: String, id: String, action: String) -> AppResult<()> {
+    hub.upload_action(&kind, &id, &action).await
+}
+
+#[tauri::command]
+async fn friend_action(hub: State<'_, Arc<Hub>>, user_id: String, action: String) -> AppResult<()> {
+    hub.friend_action(&user_id, &action).await
+}
+
+#[tauri::command]
+async fn get_friend_status(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<serde_json::Value> {
+    hub.friend_status(&user_id).await
+}
+
+#[tauri::command]
+async fn rename_favorite_group(hub: State<'_, Arc<Hub>>, kind: String, group: String, name: String) -> AppResult<()> {
+    hub.rename_favorite_group(&kind, &group, &name).await
+}
+
+/// A picture as a data address, fetched with the sign-in when VRChat wants it.
+#[tauri::command]
+async fn load_picture(hub: State<'_, Arc<Hub>>, url: String) -> AppResult<String> {
+    use base64::Engine;
+    let (kind, bytes) = hub.picture(&url).await?;
+    if bytes.len() > 12 * 1024 * 1024 {
+        return Err(AppError::CannotDo("That picture is too large to show here.".into()));
+    }
+    Ok(format!("data:{kind};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
+
+#[tauri::command]
+fn get_favorites_cached(hub: State<'_, Arc<Hub>>, kind: String) -> Option<serde_json::Value> {
+    hub.favorites_cached(&kind)
+}
+
+#[tauri::command]
+async fn group_action(hub: State<'_, Arc<Hub>>, group_id: String, action: String) -> AppResult<()> {
+    hub.group_action(&group_id, &action).await
+}
+
+#[tauri::command]
+fn get_note(hub: State<'_, Arc<Hub>>, id: String) -> AppResult<String> {
+    hub.note(&id)
+}
+
+#[tauri::command]
+fn get_avatar_history(hub: State<'_, Arc<Hub>>, limit: u32) -> AppResult<Vec<store::AvatarWorn>> {
+    hub.avatar_history(limit)
+}
+
+#[tauri::command]
+fn search_feed(
+    hub: State<'_, Arc<Hub>>,
+    query: String,
+    kinds: Vec<String>,
+    before: Option<i64>,
+    until: Option<String>,
+    limit: u32,
+) -> AppResult<Vec<FeedItem>> {
+    hub.feed_search(&query, &kinds, before, until.as_deref(), limit)
+}
+
+#[tauri::command]
+fn get_together_counts(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, i64>> {
+    hub.together_counts()
+}
+
+#[tauri::command]
+fn get_local_favorites(hub: State<'_, Arc<Hub>>, kind: String) -> AppResult<Vec<store::LocalFavorite>> {
+    hub.local_favorites(&kind)
+}
+
+#[tauri::command]
+fn add_local_favorite(hub: State<'_, Arc<Hub>>, favorite: store::LocalFavorite) -> AppResult<()> {
+    hub.add_local_favorite(&favorite)
+}
+
+#[tauri::command]
+fn remove_local_favorite(hub: State<'_, Arc<Hub>>, kind: String, item_id: String) -> AppResult<()> {
+    hub.remove_local_favorite(&kind, &item_id)
+}
+
+#[tauri::command]
+async fn set_status(hub: State<'_, Arc<Hub>>, status: String, text: String) -> AppResult<()> {
+    hub.set_status(&status, &text).await
+}
+
+#[tauri::command]
+async fn get_service_status(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
+    hub.service_status().await
+}
+
+/// The window's own settings, kept in a file as well. The window stores them itself, but that
+/// store is written to disk with a delay, so a change made just before the app is closed or
+/// updated could be lost. The file is written at once.
+fn settings_file(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .app_data_dir()
+        .map(|d| d.join("window settings.json"))
+        .map_err(|e| AppError::Storage(e.to_string()))
+}
+
+#[tauri::command]
+fn save_settings(app: AppHandle, text: String) -> AppResult<()> {
+    // Only a JSON object of modest size is kept.
+    let ok = text.len() <= 200_000 && serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|v| v.is_object());
+    if !ok {
+        return Err(AppError::CannotDo("Those settings could not be saved.".into()));
+    }
+    let file = settings_file(&app)?;
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| AppError::Storage(e.to_string()))?;
+    }
+    // Written beside the file first, then swapped in, so a crash never leaves half a file.
+    let fresh = file.with_extension("json.new");
+    std::fs::write(&fresh, text).map_err(|e| AppError::Storage(e.to_string()))?;
+    std::fs::rename(&fresh, &file).map_err(|e| AppError::Storage(e.to_string()))
+}
+
+#[tauri::command]
+fn load_settings(app: AppHandle) -> AppResult<Option<String>> {
+    Ok(std::fs::read_to_string(settings_file(&app)?).ok())
+}
+
+/// Says what Discord should show on my profile, or clears it with nothing.
+#[tauri::command]
+fn set_discord(presence: Option<discord::Presence>) {
+    discord::show(presence);
+}
+
+#[tauri::command]
+fn set_alerts(hub: State<'_, Arc<Hub>>, alerts: hub::Alerts) {
+    hub.set_alerts(alerts);
+}
+
+#[tauri::command]
+fn set_note(hub: State<'_, Arc<Hub>>, user_id: String, note: String) -> AppResult<()> {
+    hub.set_note(&user_id, &note)
+}
+
+#[tauri::command]
+fn get_noted(hub: State<'_, Arc<Hub>>) -> Vec<String> {
+    hub.noted()
+}
+
+#[tauri::command]
+fn get_friend_log(hub: State<'_, Arc<Hub>>, limit: u32) -> AppResult<Vec<FeedItem>> {
+    hub.friend_log(limit)
+}
+
+#[tauri::command]
+async fn search_users(hub: State<'_, Arc<Hub>>, query: String) -> AppResult<Vec<Person>> {
+    hub.search_users(&query).await
+}
+
+#[tauri::command]
+async fn search_worlds(hub: State<'_, Arc<Hub>>, query: String) -> AppResult<Vec<WorldCard>> {
+    hub.search_worlds(&query).await
+}
+
+#[tauri::command]
+async fn search_avatars(hub: State<'_, Arc<Hub>>, provider: String, query: String) -> AppResult<Vec<AvatarCard>> {
+    hub.search_avatars(&provider, &query).await
+}
+
+/// Puts an avatar on. Only ids that look like avatar ids are passed on.
+#[tauri::command]
+async fn wear_avatar(hub: State<'_, Arc<Hub>>, avatar_id: String) -> AppResult<()> {
+    if !avatar_id.starts_with("avtr_") {
+        return Err(AppError::CannotDo("That is not an avatar id.".into()));
+    }
+    hub.api.select_avatar(&avatar_id).await
+}
+
+#[tauri::command]
+async fn invite_here(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<()> {
+    hub.invite_here(&user_id).await
+}
+
+/// Opens a web address from someone's profile in the default browser. Web links only.
+#[tauri::command]
+fn open_link(url: String) -> AppResult<()> {
+    let plain = url.starts_with("https://") || url.starts_with("http://");
+    let clean = !url.chars().any(|c| c.is_control() || c == '"' || c == ' ');
+    if !plain || !clean || url.len() > 2000 {
+        return Err(AppError::CannotDo("That is not a web link this app will open.".into()));
+    }
+    std::process::Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", &url])
+        .spawn()
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_handled(hub: State<'_, Arc<Hub>>, limit: u32) -> AppResult<Vec<Handled>> {
+    hub.handled(limit)
+}
+
+#[tauri::command]
+async fn notice_action(
+    hub: State<'_, Arc<Hub>>,
+    id: String,
+    action: String,
+    reply_kind: Option<String>,
+    reply_data: Option<String>,
+) -> AppResult<()> {
+    hub.notice_action(
+        &id,
+        &action,
+        reply_kind.as_deref().unwrap_or(""),
+        reply_data.as_deref().unwrap_or(""),
+    )
+    .await
+}
+
+#[tauri::command]
+fn get_instances(hub: State<'_, Arc<Hub>>) -> Vec<Instance> {
+    hub.instances()
+}
+
+#[tauri::command]
+async fn invite_myself(hub: State<'_, Arc<Hub>>, location: String) -> AppResult<()> {
+    hub.invite_myself(&location).await
+}
+
+/// Makes a new instance of a world and gives back where it is.
+#[tauri::command]
+async fn create_instance(hub: State<'_, Arc<Hub>>, world_id: String, access: String, region: String) -> AppResult<String> {
+    hub.create_instance(&world_id, &access, &region).await
+}
+
+#[tauri::command]
+async fn request_invite(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<()> {
+    hub.request_invite(&user_id).await
+}
+
+#[tauri::command]
+fn get_worlds(hub: State<'_, Arc<Hub>>) -> Vec<World> {
+    hub.worlds()
+}
+
+#[tauri::command]
+fn get_feed(hub: State<'_, Arc<Hub>>, limit: u32, before: Option<i64>) -> AppResult<Vec<FeedItem>> {
+    hub.feed(limit, before)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Here {
+    visit: Visit,
+    people: Vec<Sighting>,
+}
+
+#[tauri::command]
+fn get_here(hub: State<'_, Arc<Hub>>) -> AppResult<Option<Here>> {
+    Ok(hub.here()?.map(|(visit, people)| Here { visit, people }))
+}
+
+#[tauri::command]
+fn get_visits(hub: State<'_, Arc<Hub>>, limit: u32, before: Option<i64>) -> AppResult<Vec<Visit>> {
+    hub.visits(limit, before)
+}
+
+#[tauri::command]
+fn get_visit_people(hub: State<'_, Arc<Hub>>, visit_id: i64) -> AppResult<Vec<Sighting>> {
+    hub.visit_people(visit_id)
+}
+
+#[tauri::command]
+fn get_pipeline_status(hub: State<'_, Arc<Hub>>) -> &'static str {
+    hub.pipeline_status()
+}
+
+/// Backups go to a folder in Documents so they are easy to find and copy elsewhere.
+fn backups_root(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .document_dir()
+        .map(|d| d.join("Anonymous VRX backups"))
+        .map_err(|e| AppError::Storage(e.to_string()))
+}
+
+#[tauri::command]
+fn backup_now(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String) -> AppResult<backup::BackupInfo> {
+    hub.backup(&backups_root(&app)?, &settings, "backup")
+}
+
+/// Makes the daily automatic backup when it is due. Nothing happens otherwise.
+#[tauri::command]
+fn auto_backup(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String, keep: usize) -> AppResult<Option<backup::BackupInfo>> {
+    hub.auto_backup(&backups_root(&app)?, &settings, keep)
+}
+
+#[tauri::command]
+fn list_backups(app: AppHandle) -> AppResult<Vec<backup::BackupInfo>> {
+    Ok(backup::list(&backups_root(&app)?))
+}
+
+/// Lines a backup up to replace the current history at the next start.
+#[tauri::command]
+fn restore_backup(app: AppHandle, hub: State<'_, Arc<Hub>>, name: String, settings: String) -> AppResult<String> {
+    hub.restore_backup(&backups_root(&app)?, &name, &settings)
+}
+
+/// Runs a small Windows tool without flashing a console window, and returns what it printed.
+fn quiet_output(program: &str, args: &[&str]) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::process::Command::new(program)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Whether a program with this file name is running. Reads the process list only.
+fn is_running(image: &str) -> bool {
+    let filter = format!("IMAGENAME eq {image}");
+    quiet_output("tasklist", &["/FI", &filter, "/NH", "/FO", "CSV"])
+        .is_some_and(|text| text.to_ascii_lowercase().contains(&image.to_ascii_lowercase()))
+}
+
+/// VRChat's own launcher, as registered for its `vrchat://` links.
+fn vrchat_launcher() -> Option<std::path::PathBuf> {
+    for root in ["HKCU", "HKLM"] {
+        let key = format!("{root}\\Software\\Classes\\VRChat\\shell\\open\\command");
+        let Some(text) = quiet_output("reg", &["query", &key, "/ve"]) else { continue };
+        if let Some(path) = vrchat::model::first_quoted_exe(&text) {
+            let path = std::path::PathBuf::from(path);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Starts VRChat in an instance. `mode` is `auto`, `desktop` or `vr`.
+/// Returns `running`, `desktop` or `vr` to say what was done.
+#[tauri::command]
+fn launch_instance(location: String, mode: String) -> AppResult<&'static str> {
+    let url = vrchat::model::launch_link(&location)
+        .ok_or_else(|| AppError::CannotDo("That is not an instance VRChat can be started in.".into()))?;
+    let hand_over = |url: &str| {
+        std::process::Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::Storage(e.to_string()))
+    };
+    // An open game takes the link itself and moves there; no new start, no mode to pick.
+    if is_running("VRChat.exe") {
+        hand_over(&url)?;
+        return Ok("running");
+    }
+    let desktop = match mode.as_str() {
+        "desktop" => true,
+        "vr" => false,
+        // Auto: VR only when SteamVR is already up.
+        _ => !is_running("vrserver.exe"),
+    };
+    if !desktop {
+        hand_over(&url)?;
+        return Ok("vr");
+    }
+    let launcher = vrchat_launcher().ok_or_else(|| {
+        AppError::CannotDo(
+            "Could not find VRChat's launcher to start in desktop mode. Start VRChat yourself first, or switch \"Start VRChat in\" to VR in Settings.".into(),
+        )
+    })?;
+    std::process::Command::new(launcher)
+        .args(["--no-vr", &url])
+        .spawn()
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok("desktop")
+}
+
+/// Opens VRChat's own join page for an instance in the default browser.
+#[tauri::command]
+fn open_join_page(location: String) -> AppResult<()> {
+    let url = vrchat::model::join_page(&location)
+        .ok_or_else(|| AppError::CannotDo("That is not an instance with a join page.".into()))?;
+    std::process::Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", &url])
+        .spawn()
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok(())
+}
+
+/// Where VRChat's camera saves photos.
+fn photos_root(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .picture_dir()
+        .map(|d| d.join("VRChat"))
+        .map_err(|e| AppError::Storage(e.to_string()))
+}
+
+/// VRChat's photos on this PC, newest first, with the world and people the history has for each.
+#[tauri::command]
+fn photos(app: AppHandle, hub: State<'_, Arc<Hub>>, limit: usize, skip: usize) -> AppResult<serde_json::Value> {
+    hub.photos(&photos_root(&app)?, limit, skip)
+}
+
+/// Opens the folder of one VRChat photo with the file selected.
+#[tauri::command]
+fn show_photo(app: AppHandle, path: String) -> AppResult<()> {
+    let root = photos_root(&app)?;
+    let file = std::path::PathBuf::from(&path);
+    // Only files inside the VRChat photo folder; the page cannot point Explorer anywhere else.
+    let inside = file.canonicalize().ok().zip(root.canonicalize().ok()).is_some_and(|(f, r)| f.starts_with(r));
+    if !inside || !file.is_file() {
+        return Err(AppError::CannotDo("That is not one of your VRChat photos.".into()));
+    }
+    std::process::Command::new("explorer.exe")
+        .arg(format!("/select,{}", file.display()))
+        .spawn()
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_backups_folder(app: AppHandle) -> AppResult<()> {
+    let root = backups_root(&app)?;
+    std::fs::create_dir_all(&root).map_err(|e| AppError::Storage(e.to_string()))?;
+    std::process::Command::new("explorer.exe")
+        .arg(&root)
+        .spawn()
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok(())
+}
+
+/// Opens the folder with the credits and the licence texts of everything the installer carries.
+#[tauri::command]
+fn open_licences_folder(app: AppHandle) -> AppResult<()> {
+    let root = app
+        .path()
+        .resource_dir()
+        .map_err(|e| AppError::Storage(e.to_string()))?
+        .join("licences");
+    if !root.is_dir() {
+        return Err(AppError::CannotDo("The licence texts are not part of this build of the app.".into()));
+    }
+    std::process::Command::new("explorer.exe")
+        .arg(&root)
+        .spawn()
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok(())
+}
+
+/// Brings the main window back, for example from the tray.
+fn show_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+/// Hides the window. The app keeps running and stays reachable from the tray icon.
+#[tauri::command]
+fn hide_to_tray(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    discord::show(None);
+    app.exit(0);
+}
+
+fn add_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, "open", "Open Anonymous VRX", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip("Anonymous VRX")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => show_window(app),
+            "quit" => {
+                app.exit(0)
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        // Starting the app a second time brings the running one to the front.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_window(app)
+        }))
+        // The window asks what to do instead of closing straight away.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.emit("window:close-asked", ());
+            }
+        })
+        .plugin(tauri_plugin_notification::init())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let data_dir = app.path().app_data_dir()?;
+            let api = Arc::new(ApiClient::new().map_err(|e: AppError| e.to_string())?);
+            let emit: hub::Emit = Arc::new(move |name, payload| {
+                if name == "popup" {
+                    // Shown from here, so it works while the window is hidden in the tray.
+                    use tauri_plugin_notification::NotificationExt;
+                    let text = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let mut note = handle.notification().builder().title(text("title"));
+                    let body = text("body");
+                    if !body.is_empty() {
+                        note = note.body(body);
+                    }
+                    let _ = note.show();
+                    return;
+                }
+                let _ = handle.emit(name, payload);
+            });
+            app.manage(Hub::new(api, data_dir, emit, true, gamelog::default_dir()));
+            add_tray(app)?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            session_restore,
+            login,
+            verify_code,
+            logout,
+            get_friends,
+            get_favorites,
+            get_instances,
+            invite_myself,
+            create_instance,
+            request_invite,
+            get_notices,
+            get_handled,
+            get_profile,
+            get_profile_part,
+            get_thing,
+            set_alerts,
+            set_discord,
+            save_settings,
+            load_settings,
+            get_avatar_history,
+            get_note,
+            get_favorites_cached,
+            friend_action,
+            upload_action,
+            get_friend_status,
+            rename_favorite_group,
+            load_picture,
+            group_action,
+            search_feed,
+            get_together_counts,
+            get_local_favorites,
+            add_local_favorite,
+            remove_local_favorite,
+            set_status,
+            get_service_status,
+            check_favorites,
+            get_favorite_groups,
+            boop,
+            save_picture,
+            open_pictures_folder,
+            get_favorites_of,
+            add_favorite,
+            remove_favorites,
+            set_note,
+            get_noted,
+            get_friend_log,
+            search_users,
+            search_worlds,
+            search_avatars,
+            wear_avatar,
+            invite_here,
+            open_link,
+            notice_action,
+            get_worlds,
+            get_feed,
+            get_here,
+            get_visits,
+            get_visit_people,
+            get_pipeline_status,
+            hide_to_tray,
+            backup_now,
+            list_backups,
+            auto_backup,
+            restore_backup,
+            open_backups_folder,
+            photos,
+            show_photo,
+            open_licences_folder,
+            open_join_page,
+            launch_instance,
+            quit_app
+        ])
+        .run(tauri::generate_context!())
+        .expect("the app window could not start");
+}

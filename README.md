@@ -1,0 +1,229 @@
+# Anonymous VRX
+
+<p align="center">
+  <img src="Design/banner.svg" alt="Anonymous VRX. Your VRChat night, on one screen." width="100%">
+</p>
+
+<p align="center">
+  <b>A VRChat companion for Windows that shows who is out tonight and where.</b><br>
+  I built it from scratch in Rust, with a neon sunset look.
+</p>
+
+<p align="center">
+  <img alt="Windows 10 and 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-ff4fa3?style=for-the-badge">
+  <img alt="Rust" src="https://img.shields.io/badge/Built%20in-Rust-ff9a3c?style=for-the-badge">
+  <img alt="Tauri v2" src="https://img.shields.io/badge/Tauri-v2-2de2e6?style=for-the-badge">
+  <img alt="Your data stays on your PC" src="https://img.shields.io/badge/Your%20data-stays%20on%20your%20PC-c39bff?style=for-the-badge">
+</p>
+
+<p align="center">
+  <a href="#get-it">Get it</a> ·
+  <a href="#more-screens">More screens</a> ·
+  <a href="#what-it-does">What it does</a> ·
+  <a href="#privacy">Privacy</a> ·
+  <a href="#known-limits">Known limits</a> ·
+  <a href="#build-it-yourself">Build it</a> ·
+  <a href="#credits">Credits</a>
+</p>
+
+<p align="center">
+  <img src="Design/screens/around.webp" alt="The Around screen: friends grouped by the world they are in, favourites pinned on top, the activity feed on the right" width="100%">
+</p>
+
+<p align="center"><sub>My own app, with "Hide names and pictures" switched on. The grey bars and circles are where my friends' names and pictures would be.</sub></p>
+
+## What this is
+
+Anonymous VRX runs next to VRChat and answers the questions I kept digging through menus for:
+
+- Who is out tonight, and which world are they in?
+- Who is with them, and is there room for one more?
+- What happened while I was away?
+- Where was I last Tuesday at 2 am, and who else was there?
+
+It all sits in one window, so you never have to open the VRChat website.
+
+> This is an independent project. It is not made by, affiliated with or endorsed by VRChat Inc. It uses the same web API as the VRChat website, which VRChat does not officially support for outside tools, so parts of it can break without notice.
+
+## Get it
+
+1. Open [Releases](../../releases) and download `Anonymous-VRX-0.1.0-setup.exe`.
+2. Run it. Everything is inside that one file.
+3. Sign in with your VRChat account inside the app.
+
+You need 64-bit Windows 10 or 11 and a VRChat account. Nothing else has to be installed first.
+
+It installs for your user only and needs no administrator rights. The installer is not code signed, so Windows SmartScreen warns the first time you run it: choose "More info", then "Run anyway".
+
+To update, quit the app and run the newer installer over the old one. Your history and settings stay. To remove it, use "Installed apps" in Windows Settings.
+
+Where it keeps things:
+
+| | |
+|---|---|
+| History, notes, settings | `%APPDATA%\app.anonymousvrx.desktop` |
+| Sign-in cookie | Windows Credential Manager |
+| Backups | `Documents\Anonymous VRX backups` |
+
+## More screens
+
+World history, read from VRChat's log files:
+
+<img src="Design/screens/history.webp" alt="World history: every instance visited, when, and for how long" width="100%">
+
+The Done tab of the Inbox:
+
+<img src="Design/screens/inbox.webp" alt="The Inbox, Done tab, with answered notifications" width="100%">
+
+## What it does
+
+### Around right now
+
+This is the screen the app opens on.
+
+| | |
+|---|---|
+| Friends by room | Friends are grouped by the instance they share, with the world, access type, region, head count and how long each of them has been there |
+| Favourites on top | Favourite friends are pinned above everyone else, one block per favourite group |
+| Notifications | Windows tells you when a favourite comes online or leaves a private world for one you can join. You pick which favourite groups do that |
+| Joining | Join, ask for an invite, invite yourself, or copy the link, each with one click |
+| Right-click a friend | Ask for an invite, invite them to your world, or boop, from anywhere they are listed |
+
+### Everyone
+
+| | |
+|---|---|
+| Friend list | Sortable, with trust colours, VRC+ and 18+ marks, language flags and status colours |
+| Old names | Hover a name to see what that friend used to be called |
+| Friend tools | Send and answer friend requests, boop back, unfriend, move people between favourite groups, rename the groups |
+| Your status | Click your own picture to change it |
+
+### History
+
+VRChat forgets most of this. The app keeps it in a file on your PC.
+
+| | |
+|---|---|
+| Activity feed | Who came online, left, changed world or status. Searchable, saved per account |
+| Friend log | Who was added, removed or renamed, including while the app was closed |
+| World history | Every instance you visited, for how long, and who was there, read from VRChat's own log files |
+| Photos | The photos VRChat's camera saved on your PC, each with the world it was taken in and who was in the instance, looked up in the world history. The files are not changed |
+| Here | The instance you are in now and everyone in it, with friends marked |
+| Going back | From any past instance you can send yourself an invite, copy a join link or open VRChat's join page |
+
+### Inbox
+
+| | |
+|---|---|
+| Notices | Friend requests, invites, invite requests and group notices, with filters by kind |
+| Answers | The app never answers for you. A Done tab keeps what you accepted, declined or dismissed |
+| Invites | "Join in VRChat" on an invite takes you straight to that instance |
+| Pop-ups | They still arrive when the window is closed to the tray |
+
+### Worlds, avatars and groups
+
+| | |
+|---|---|
+| Windows | Worlds, avatars and groups open inside the app, and a Back button retraces your steps |
+| Groups | Member counts, posts, photos and open instances. You can join and leave from there |
+| Favourites | Shows how full each favourite group is. The clean-up asks VRChat about each missing favourite before offering to remove it. Local favourites on your PC have no limit |
+| New instance | Make your own instance of any world (Invite, Invite+, Friends, Friends+ or Public, in the region you pick) and join it |
+| Notes | Private notes on people, avatars and worlds |
+| Search | People, worlds and avatars |
+
+### Your own uploads
+
+| | |
+|---|---|
+| My uploads | Your avatars and worlds in one list. Make them public or private, wear an avatar, delete what you no longer want, copy an ID |
+
+### Look and behaviour
+
+| | |
+|---|---|
+| Themes | Sunset, night, black and white, red and black, your own colours, or your own picture as the background |
+| Wide windows | Settings and the friend screens spread into columns when there is room |
+| Tray | Closing the window can leave the app in the tray, where it keeps recording. Starting it a second time brings the running one forward |
+| Backups | History and settings go to a folder in Documents, by hand or by itself once a day (the newest 7 automatic ones are kept, you can change that). The sign-in is never part of a backup |
+| VRChat outages | A warning appears when VRChat's status page reports trouble |
+| Discord | Optional. Shows the world you are in on your Discord profile, with switches for the world name, the kind of instance, the head count and a Join button. Invite instances show as a private world. Needs your own Discord application ID |
+
+## Privacy
+
+- "Hide names and pictures" in Settings, or Ctrl+Shift+H, covers people's names, pictures, statuses and bios with plain bars, your own included, along with the names and pictures in My uploads. Nothing is blurred, so there is nothing to sharpen back. I added it so I could take screenshots without showing my friends.
+- Your password goes to VRChat once, at sign-in, and the app never writes it anywhere. Two-factor works with an authenticator app, email or a recovery code.
+- The sign-in cookie is kept in the Windows credential store.
+- History, notes and settings are files on your PC. I run no server, so there is nowhere for them to be sent.
+- Avatar search asks community avatar databases and sends them the search words only.
+- Discord rich presence is off until you switch it on, and it only talks to the Discord app on your PC.
+
+## How it treats VRChat's servers
+
+- Every request carries a User-Agent that names this app and its version.
+- All requests go through one gate that spaces them out.
+- A 429 answer pauses everything, honours `Retry-After` and gives up after three tries.
+- The friend list is fetched once at sign-in. After that, changes come from VRChat's websocket.
+- World names, favourites and group data are cached, so the same question is not asked twice.
+- World history makes no requests at all. It comes from log files already on your disk.
+
+## Known limits
+
+- Windows only.
+- VRChat does not support outside tools on its web API, so a change on their side can break a screen until I update the app.
+- With "Hide names and pictures" on, Windows notifications and hover tooltips still show names.
+- This is version 0.1.0 and I have only tested it on my own PC and account.
+
+## Build it yourself
+
+You need Rust (stable, MSVC), Node.js 24 and the WebView2 runtime that ships with Windows 11.
+
+```
+npm install
+npm run tauri dev      # run with live reload
+npm run tauri build    # release build and installer
+```
+
+The installer lands in `src-tauri/target/release/bundle/nsis/`.
+
+The tests use a local stand-in server and invented accounts, so they never contact VRChat and need no credentials:
+
+```
+cd src-tauri
+cargo test
+```
+
+`npm run dev` on its own opens the interface in a browser tab on made-up demo data, which is useful for layout work.
+
+<details>
+<summary>Where things are</summary>
+
+- `src-tauri/src/vrchat/`: HTTP client, sign-in, rate limiting, websocket events, data types.
+- `src-tauri/src/hub.rs`: the signed-in session, websocket loop, caches.
+- `src-tauri/src/store.rs`: SQLite history.
+- `src-tauri/src/gamelog.rs`: reads VRChat's log files, read only.
+- `src-tauri/src/secrets.rs`: Windows credential store.
+- `src-tauri/resources/licences/`: credits and licence texts the installer carries.
+- `src/`: the window (React).
+- `Design/`: the logo, the banner, the installer art and the pictures in this file.
+
+</details>
+
+## Credits
+
+This app is built on other people's work. Thank you to them.
+
+| | By | Used for | Licence its makers state |
+|---|---|---|---|
+| [Tauri](https://tauri.app), [React](https://react.dev) | Their contributors | The window and the interface | MIT, Apache-2.0 |
+| Instrument Sans, Barlow Condensed, Yellowtail | Their designers | The fonts | OFL-1.1, Apache-2.0 |
+| VRChat | VRChat Inc. | The game this app is a companion to | |
+
+The installer carries the full licence texts in a `licences` folder, and the app lists the same credits under Settings, Credits. [THIRD-PARTY.md](THIRD-PARTY.md) has more detail.
+
+## Help and licence
+
+If something breaks, open an [issue](../../issues) and say what you clicked and what happened. Leave your VRChat name, password and any codes out of it.
+
+I have not chosen a licence for this code yet. The projects it is built on keep their own licences, listed above.
+
+<p align="center"><sub>Made by El Diablo 59.</sub></p>

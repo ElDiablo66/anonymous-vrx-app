@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 420" width="1280" height="420" role="img" aria-label="Anonymous VRX. Your VRChat night, on one screen.">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#150a33"/>
+      <stop offset="0.38" stop-color="#4a1470"/>
+      <stop offset="0.62" stop-color="#c2257f"/>
+      <stop offset="0.8" stop-color="#ff6a5c"/>
+      <stop offset="1" stop-color="#ffb347"/>
+    </linearGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff0a8"/>
+      <stop offset="0.5" stop-color="#ff9a3c"/>
+      <stop offset="1" stop-color="#ff3d8b"/>
+    </linearGradient>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a0f5e"/>
+      <stop offset="1" stop-color="#0d0624"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff4fa3"/>
+      <stop offset="1" stop-color="#2de2e6"/>
+    </linearGradient>
+    <clipPath id="sunclip"><rect x="0" y="0" width="1280" height="292"/></clipPath>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="420" fill="url(#sky)"/>
+
+  <!-- stars -->
+  <g fill="#ffffff" opacity="0.7">
+    <circle cx="90" cy="40" r="1.4"/><circle cx="210" cy="86" r="1"/><circle cx="330" cy="30" r="1.2"/>
+    <circle cx="470" cy="64" r="1"/><circle cx="560" cy="24" r="1.5"/><circle cx="1010" cy="48" r="1.2"/>
+    <circle cx="1120" cy="92" r="1"/><circle cx="1210" cy="30" r="1.4"/><circle cx="900" cy="22" r="1"/>
+  </g>
+
+  <!-- sun with cut lines -->
+  <g clip-path="url(#sunclip)">
+    <circle cx="960" cy="250" r="130" fill="url(#sun)" filter="url(#glow)"/>
+    <g fill="#c2257f">
+      <rect x="820" y="214" width="280" height="5"/>
+      <rect x="820" y="236" width="280" height="8"/>
+      <rect x="820" y="260" width="280" height="11"/>
+    </g>
+  </g>
+
+  <!-- skyline -->
+  <g fill="#1a0a36">
+    <rect x="772" y="226" width="26" height="68"/><rect x="742" y="252" width="26" height="42"/>
+    <rect x="1096" y="230" width="34" height="64"/><rect x="1136" y="204" width="28" height="90"/>
+    <rect x="1170" y="244" width="52" height="50"/><rect x="1228" y="222" width="52" height="72"/>
+  </g>
+  <g fill="#ffd166" opacity="0.85">
+    <rect x="778" y="240" width="4" height="5"/><rect x="1142" y="216" width="4" height="5"/><rect x="1152" y="238" width="4" height="5"/>
+    <rect x="1104" y="246" width="4" height="5"/><rect x="1240" y="236" width="4" height="5"/><rect x="1258" y="252" width="4" height="5"/>
+  </g>
+
+  <!-- water with a grid running to the horizon -->
+  <rect x="0" y="292" width="1280" height="128" fill="url(#sea)"/>
+  <g stroke="#ff4fa3" stroke-width="1.2" opacity="0.55">
+    <line x1="0" y1="304" x2="1280" y2="304"/><line x1="0" y1="322" x2="1280" y2="322"/>
+    <line x1="0" y1="348" x2="1280" y2="348"/><line x1="0" y1="384" x2="1280" y2="384"/>
+    <line x1="640" y1="292" x2="-260" y2="420"/><line x1="640" y1="292" x2="60" y2="420"/>
+    <line x1="640" y1="292" x2="360" y2="420"/><line x1="640" y1="292" x2="640" y2="420"/>
+    <line x1="640" y1="292" x2="920" y2="420"/><line x1="640" y1="292" x2="1220" y2="420"/>
+    <line x1="640" y1="292" x2="1540" y2="420"/>
+  </g>
+  <rect x="0" y="291" width="1280" height="2" fill="#2de2e6" opacity="0.9"/>
+
+  <!-- palm -->
+  <g fill="#12062a">
+    <path d="M1048 420 C1052 360 1058 312 1072 262 L1080 264 C1068 314 1064 362 1064 420 Z"/>
+    <path d="M1076 262 C1040 236 1004 236 972 256 C1010 250 1040 254 1070 270 Z"/>
+    <path d="M1076 262 C1060 222 1032 204 996 204 C1030 214 1052 234 1068 268 Z"/>
+    <path d="M1076 262 C1090 222 1120 206 1156 208 C1122 216 1100 236 1084 270 Z"/>
+    <path d="M1076 262 C1112 240 1148 244 1178 266 C1142 256 1112 258 1082 272 Z"/>
+    <path d="M1076 262 C1080 232 1074 208 1058 190 C1086 204 1092 234 1084 268 Z"/>
+  </g>
+
+  <!-- words -->
+  <g font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+    <text x="70" y="176" font-size="92" font-weight="800" font-style="italic" fill="url(#word)" filter="url(#glow)" letter-spacing="-2">Anonymous VRX</text>
+    <text x="74" y="230" font-size="33" font-weight="600" fill="#ffffff" opacity="0.94">Your VRChat night, on one screen.</text>
+    <text x="74" y="268" font-size="20" fill="#ffe3f1" opacity="0.85">Friends. Worlds. History. Your own avatars. Built from scratch in Rust.</text>
+  </g>
+</svg>

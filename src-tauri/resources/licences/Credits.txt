@@ -1,0 +1,17 @@
+Anonymous VRX stands on other people's work. Thank you.
+
+Built with
+  Tauri, by the Tauri contributors. Apache License 2.0 or MIT.
+  React, by Meta and contributors. MIT.
+  Rust and the crates listed in Cargo.lock, each under its own licence.
+
+Fonts
+  Instrument Sans. SIL Open Font License 1.1.
+  Barlow Condensed. SIL Open Font License 1.1.
+  Yellowtail. Apache License 2.0.
+
+Services
+  VRChat, by VRChat Inc. This app is independent and not affiliated with or endorsed by VRChat.
+  The community avatar databases that answer avatar search.
+
+The full licence texts are in this folder.
