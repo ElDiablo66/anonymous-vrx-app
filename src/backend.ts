@@ -296,6 +296,8 @@ export type LiveEvents = {
   "friend:removed": string;
   "feed:new": FeedItem;
   "notices:changed": null;
+  /** VRChat closed with no goodbye while I was in an instance. `rejoined` says the app already started it again. */
+  "game:crashed": { location: string; worldName: string; rejoined: boolean };
   "avatars:changed": null;
   "notice:new": Notice;
   "here:changed": null;
@@ -378,6 +380,11 @@ export interface Backend {
   serviceStatus(): Promise<ServiceStatus>;
   /** Which notifications get a Windows pop-up. */
   setAlerts(alerts: { invites: boolean; friendRequests: boolean; boops: boolean; everythingElse: boolean }): Promise<void>;
+  /** Says what to do when VRChat starts, and when it closes without warning. */
+  setGameWatch(watch: { openWithGame: boolean; rejoin: "off" | "ask" | "auto"; launchMode: "auto" | "desktop" | "vr" }): Promise<void>;
+  /** Whether the app starts with Windows. */
+  getAutostart(): Promise<boolean>;
+  setAutostart(on: boolean): Promise<void>;
   /** Boops a friend. */
   boop(userId: string): Promise<void>;
   /** Saves a picture to Pictures\Anonymous VRX; resolves to the full path. */
@@ -506,6 +513,9 @@ const desktop: Backend = {
   checkFavorites: (kind) => invoke("check_favorites", { kind }),
   boop: (userId) => invoke("boop", { userId }),
   setAlerts: (alerts) => invoke("set_alerts", { alerts }),
+  setGameWatch: (watch) => invoke("set_game_watch", { watch }),
+  getAutostart: () => invoke("get_autostart"),
+  setAutostart: (on) => invoke("set_autostart", { on }),
   avatarHistory: (limit) => invoke("get_avatar_history", { limit }),
   searchFeed: (query, kinds, before, until, limit) =>
     invoke("search_feed", { query, kinds, before: before ?? null, until: until ?? null, limit }),

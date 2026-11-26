@@ -163,6 +163,7 @@ const demoBlocked: Moderation[] = [
 ];
 
 const demoHandled: Handled[] = [];
+let demoAutostart = false;
 const demoRemoved = new Set<string>();
 let demoMember = false;
 const demoNames = new Map<string, string>();
@@ -392,6 +393,14 @@ export const demoBackend: Backend = {
     return { dead, checked: dead.length, left: 0, stopped: false };
   },
   async setAlerts() {},
+  async setGameWatch() {},
+  async getAutostart() {
+    return demoAutostart;
+  },
+  async setAutostart(on) {
+    await wait(150);
+    demoAutostart = on;
+  },
   async favoriteGroups(counts) {
     await wait(counts ? 1200 : 150);
     return {

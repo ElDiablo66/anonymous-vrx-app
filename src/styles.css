@@ -4448,3 +4448,15 @@ button.pinned-away:hover {
 .notice-title .mark {
   margin-left: 6px;
 }
+
+/* The note after VRChat closed without warning */
+.crash-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.crash-note span {
+  flex: 1 1 260px;
+}

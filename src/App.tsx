@@ -247,6 +247,11 @@ export function App() {
       })
       .catch(() => {});
   }, [settings.alertInvites, settings.alertFriendRequests, settings.alertBoops, settings.alertEverythingElse]);
+  useEffect(() => {
+    void backend.setGameWatch({ openWithGame: settings.openWithGame, rejoin: settings.rejoin, launchMode: settings.launchMode }).catch(() => {});
+  }, [settings.openWithGame, settings.rejoin, settings.launchMode]);
+  // VRChat closed without warning: where I was, until I go back or put the note away.
+  const [crash, setCrash] = useState<{ location: string; worldName: string } | null>(null);
   const asked = useRef(false);
 
   // Live event handlers read the newest values through these.
@@ -386,6 +391,16 @@ export function App() {
     void hold(backend.on("pipeline:status", (s) => setLink(s)));
     void hold(backend.on("sync:error", (e) => setNotice(e.message)));
     void hold(
+      backend.on("game:crashed", (c) => {
+        if (c.rejoined) {
+          setCrash(null);
+          setToast(`VRChat closed without warning. Starting it again in ${c.worldName}.`);
+        } else {
+          setCrash({ location: c.location, worldName: c.worldName });
+        }
+      }),
+    );
+    void hold(
       backend.on("session:ended", () => {
         setNotice("");
         setMe(null);
@@ -503,6 +518,25 @@ export function App() {
           )}
         </header>
         {backend.demo && <p className="demo-strip">Demo data. Open the desktop app to see your own friends.</p>}
+        {crash && (
+          <div className="banner crash-note" role="alert">
+            <span>VRChat closed without warning while you were in {crash.worldName}.</span>
+            <button
+              className="go"
+              onClick={() => {
+                const where = crash.location;
+                setCrash(null);
+                void backend
+                  .launchInstance(where, settings.launchMode)
+                  .then(() => setToast("Starting VRChat where you were."))
+                  .catch((err) => setToast(`That did not work: ${errorText(err)}`));
+              }}
+            >
+              Go back
+            </button>
+            <button onClick={() => setCrash(null)}>Not now</button>
+          </div>
+        )}
         {notice && (
           <p className="banner" role="alert">
             {notice} <button onClick={() => setNotice("")}>Dismiss</button>

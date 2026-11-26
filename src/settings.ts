@@ -57,6 +57,10 @@ export interface Settings {
   activityShown: boolean;
   /** Favourite groups whose friends raise no notification, by group key. */
   alertGroupsOff: string[];
+  /** Bring the window up when VRChat starts. */
+  openWithGame: boolean;
+  /** What to do when VRChat closes without a goodbye while I am in an instance. */
+  rejoin: "off" | "ask" | "auto";
   /** Make a backup by itself once a day. */
   autoBackup: boolean;
   /** How many automatic backups are kept; older ones are removed. */
@@ -122,6 +126,8 @@ function load(): Settings {
     hidePeople: false,
     activityShown: true,
     alertGroupsOff: [],
+    openWithGame: false,
+    rejoin: "ask",
     autoBackup: true,
     autoBackupKeep: 7,
     discordOn: false,

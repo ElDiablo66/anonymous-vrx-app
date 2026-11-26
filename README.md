@@ -145,6 +145,8 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | Themes | Sunset, night, black and white, red and black, your own colours, or your own picture as the background |
 | Wide windows | Settings and the friend screens spread into columns when there is room |
 | Tray | Closing the window can leave the app in the tray, where it keeps recording. Starting it a second time brings the running one forward |
+| Starting up | It can start with Windows, in the tray, and open its window when VRChat starts |
+| After a crash | When VRChat closes without warning while you are in a world, the app offers to take you back to the same instance, or does it by itself if you choose that |
 | Backups | History and settings go to a folder in Documents, by hand or by itself once a day (the newest 7 automatic ones are kept, you can change that). The sign-in is never part of a backup |
 | VRChat outages | A warning appears when VRChat's status page reports trouble |
 | Discord | Optional. Shows the world you are in on your Discord profile, with switches for the world name, the kind of instance, the head count and a Join button. Invite instances show as a private world. Needs your own Discord application ID |

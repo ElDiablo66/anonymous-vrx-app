@@ -87,6 +87,14 @@ export function SettingsPage({
   const [dataNote, setDataNote] = useState("");
   const [asking, setAsking] = useState("");
   const [restored, setRestored] = useState(false);
+  // Starting with Windows is kept by Windows, so it is asked for and not read from my settings.
+  const [autostart, setAutostart] = useState(false);
+  useEffect(() => {
+    void backend
+      .getAutostart()
+      .then(setAutostart)
+      .catch(() => {});
+  }, []);
   const [working, setWorking] = useState(false);
 
   const loadBackups = () =>
@@ -496,6 +504,48 @@ export function SettingsPage({
               ] as const
             ).map(([value, label]) => (
               <button key={value} role="radio" aria-checked={settings.launchMode === value} className={settings.launchMode === value ? "on" : ""} onClick={() => change({ launchMode: value })}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Starting up</h2>
+        <Switch
+          label="Start with Windows"
+          hint="Starts in the tray when you sign in to Windows, so it is already recording by the time VRChat opens."
+          on={autostart}
+          set={(on) => {
+            setAutostart(on);
+            void backend.setAutostart(on).catch(() => setAutostart(!on));
+          }}
+        />
+        <Switch
+          label="Open the window when VRChat starts"
+          hint="Works while the app is running, in the tray included."
+          on={settings.openWithGame}
+          set={(on) => change({ openWithGame: on })}
+        />
+        <div className="setting">
+          <span>
+            <span className="setting-name">When VRChat crashes</span>
+            <span className="setting-hint">
+              A crash is VRChat closing with no goodbye in its log while you are in a world. Ask shows a note with a
+              Go back button. By itself starts VRChat again in the same instance, at most once every three minutes.
+              An invite-only instance may need a new invite.
+            </span>
+          </span>
+          <div className="choices" role="radiogroup" aria-label="When VRChat crashes">
+            {(
+              [
+                ["off", "Do nothing"],
+                ["ask", "Ask"],
+                ["auto", "Go back by itself"],
+              ] as const
+            ).map(([value, label]) => (
+              <button key={value} role="radio" aria-checked={settings.rejoin === value} className={settings.rejoin === value ? "on" : ""} onClick={() => change({ rejoin: value })}>
                 {label}
               </button>
             ))}

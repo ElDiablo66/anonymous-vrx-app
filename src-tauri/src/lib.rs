@@ -8,7 +8,7 @@ pub mod secrets;
 pub mod store;
 pub mod vrchat;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
@@ -597,6 +597,104 @@ fn launch_instance(location: String, mode: String) -> AppResult<&'static str> {
     Ok("desktop")
 }
 
+/// What the window asked for about VRChat starting and stopping.
+#[derive(Clone, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GameWatch {
+    /// Bring the window up when VRChat starts.
+    open_with_game: bool,
+    /// After a crash: `off`, `ask` or `auto`.
+    rejoin: String,
+    /// How VRChat is started again: `auto`, `desktop` or `vr`.
+    launch_mode: String,
+}
+
+static GAME_WATCH: Mutex<Option<GameWatch>> = Mutex::new(None);
+
+#[tauri::command]
+fn set_game_watch(watch: GameWatch) {
+    *GAME_WATCH.lock().unwrap() = Some(watch);
+}
+
+/// The argument Windows starts the app with at sign-in, so it stays in the tray.
+const TRAY_FLAG: &str = "--tray";
+
+/// Whether the app starts when I sign in to Windows.
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> bool {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// Turns starting with Windows on or off. It is one entry under my own account's Run key.
+#[tauri::command]
+fn set_autostart(app: AppHandle, on: bool) -> AppResult<()> {
+    use tauri_plugin_autostart::ManagerExt;
+    let auto = app.autolaunch();
+    let done = if on { auto.enable() } else { auto.disable() };
+    // Switching off something that was never on is not a problem.
+    match done {
+        Err(e) if on || auto.is_enabled().unwrap_or(false) => Err(AppError::Storage(e.to_string())),
+        _ => Ok(()),
+    }
+}
+
+/// How often the process list is looked at for VRChat.
+const GAME_LOOK: std::time::Duration = std::time::Duration::from_secs(5);
+/// After the game is gone, how long the log reader gets to see a goodbye line.
+const QUIT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+/// The game is not started again by itself more often than this, so a game that keeps
+/// crashing on the way in does not loop.
+const REJOIN_GAP: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// Watches for VRChat starting and stopping. A stop with no goodbye line in the log while I
+/// was in an instance counts as a crash; what happens then is the window's choice.
+fn watch_game(app: AppHandle) {
+    let mut was = is_running("VRChat.exe");
+    let mut last_rejoin: Option<std::time::Instant> = None;
+    loop {
+        std::thread::sleep(GAME_LOOK);
+        let running = is_running("VRChat.exe");
+        let watch = GAME_WATCH.lock().unwrap().clone().unwrap_or_default();
+        if running && !was {
+            let _ = app.emit("game:started", ());
+            if watch.open_with_game {
+                show_window(&app);
+            }
+        }
+        if !running && was {
+            std::thread::sleep(QUIT_GRACE);
+            // A clean exit closes the stay in the history. One still open means no goodbye.
+            let open = app.state::<Arc<Hub>>().here().ok().flatten().map(|(visit, _)| visit);
+            if let Some(visit) = open.filter(|v| vrchat::model::launch_link(&v.location).is_some()) {
+                if !is_running("VRChat.exe") {
+                    crashed(&app, &watch, &visit, &mut last_rejoin);
+                }
+            }
+        }
+        was = running;
+    }
+}
+
+fn crashed(app: &AppHandle, watch: &GameWatch, visit: &Visit, last_rejoin: &mut Option<std::time::Instant>) {
+    if watch.rejoin == "off" || watch.rejoin.is_empty() {
+        return;
+    }
+    let world = if visit.world_name.is_empty() { "the world you were in".to_string() } else { visit.world_name.clone() };
+    let again = watch.rejoin == "auto" && last_rejoin.is_none_or(|t| t.elapsed() >= REJOIN_GAP);
+    let rejoined = again && launch_instance(visit.location.clone(), watch.launch_mode.clone()).is_ok();
+    if rejoined {
+        *last_rejoin = Some(std::time::Instant::now());
+    }
+    let _ = app.emit(
+        "game:crashed",
+        serde_json::json!({ "location": visit.location, "worldName": world, "rejoined": rejoined }),
+    );
+    use tauri_plugin_notification::NotificationExt;
+    let body = if rejoined { format!("Starting it again in {world}.") } else { format!("Open Anonymous VRX to go back to {world}.") };
+    let _ = app.notification().builder().title("VRChat closed without warning").body(body).show();
+}
+
 /// Opens VRChat's own join page for an instance in the default browser.
 #[tauri::command]
 fn open_join_page(location: String) -> AppResult<()> {
@@ -738,6 +836,7 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![TRAY_FLAG])))
         .setup(|app| {
             let handle = app.handle().clone();
             let data_dir = app.path().app_data_dir()?;
@@ -759,6 +858,12 @@ pub fn run() {
             });
             app.manage(Hub::new(api, data_dir, emit, true, gamelog::default_dir()));
             add_tray(app)?;
+            // Started by Windows at sign-in, the app stays in the tray until it is asked for.
+            if !std::env::args().any(|a| a == TRAY_FLAG) {
+                show_window(app.handle());
+            }
+            let watcher = app.handle().clone();
+            std::thread::spawn(move || watch_game(watcher));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -778,6 +883,9 @@ pub fn run() {
             get_profile_part,
             get_thing,
             set_alerts,
+            set_game_watch,
+            get_autostart,
+            set_autostart,
             set_discord,
             save_settings,
             load_settings,
