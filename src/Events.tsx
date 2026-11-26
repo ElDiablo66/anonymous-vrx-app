@@ -4,15 +4,17 @@ import { clock, dayLabel, tidy } from "./bits";
 import { openThing } from "./Detail";
 import { usePic } from "./Pic";
 
-type Which = "mine" | "following" | "featured";
+type Which = "discover" | "mine" | "following" | "featured";
 
 const lists: Array<[Which, string]> = [
+  ["discover", "All of VRChat"],
   ["mine", "My groups"],
   ["following", "Following"],
   ["featured", "Featured"],
 ];
 
 const none: Record<Which, string> = {
+  discover: "VRChat lists no events that are on now or coming up.",
   mine: "None of your groups has an event this month.",
   following: "You follow no events this month. Press Follow on an event and it is listed here, with a reminder before it starts.",
   featured: "VRChat features no events this month.",
@@ -51,7 +53,9 @@ function EventPicture({ url }: { url: string }) {
 
 /** Group events by month: the ones of my groups, the ones I follow, and VRChat's featured ones. */
 export function Events({ onDone }: { onDone: (message: string) => void }) {
-  const [which, setWhich] = useState<Which>("mine");
+  const [which, setWhich] = useState<Which>("discover");
+  // What is on across VRChat has no months: it is the ones on now, then the ones coming up.
+  const byMonth = which !== "discover";
   const [month, setMonth] = useState(() => monthOf(new Date()));
   const [events, setEvents] = useState<CalendarEvent[] | null>(null);
   const [more, setMore] = useState(false);
@@ -65,11 +69,14 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
     const mine = ++asked.current;
     setProblem("");
     if (!fresh) setEvents(null);
-    void backend
-      .calendar(which, month, fresh)
-      .then((page) => {
+    // VRChat does not always say on a list whether I follow an event, so the list of the
+    // ones I follow is read alongside (it is kept, so this is rarely a second question).
+    const followed = which === "following" ? Promise.resolve(null) : backend.calendar("following", month, fresh).catch(() => null);
+    void Promise.all([backend.calendar(which, byMonth ? month : "", fresh), followed])
+      .then(([page, mineToo]) => {
         if (mine !== asked.current) return;
-        setEvents(page.events);
+        const ids = new Set((mineToo?.events ?? []).map((e) => e.id));
+        setEvents(page.events.map((e) => (which === "following" || ids.has(e.id) ? { ...e, following: true } : e)));
         setMore(page.more);
       })
       .catch((err) => {
@@ -102,11 +109,11 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
     const now = Date.now();
     return (events ?? [])
       // VRChat also sends the days around a month; an event belongs to the month it starts in.
-      .filter((e) => monthOf(new Date(e.startsAt)) === month)
-      .filter((e) => past || Date.parse(e.endsAt || e.startsAt) >= now)
+      .filter((e) => !byMonth || monthOf(new Date(e.startsAt)) === month)
+      .filter((e) => !byMonth || past || Date.parse(e.endsAt || e.startsAt) >= now)
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-  }, [events, past, month]);
-  const hidden = (events ?? []).filter((e) => monthOf(new Date(e.startsAt)) === month).length - shown.length;
+  }, [events, past, month, byMonth]);
+  const hidden = byMonth ? (events ?? []).filter((e) => monthOf(new Date(e.startsAt)) === month).length - shown.length : 0;
 
   let lastDay = "";
   return (
@@ -119,6 +126,8 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
         ))}
       </div>
       <div className="list-tools event-tools">
+        {!byMonth && <b className="events-lead">On now and coming up</b>}
+        {byMonth && (
         <span className="month-nav">
           <button className="plain" aria-label="The month before" title="The month before" onClick={() => setMonth(shifted(month, -1))}>
             ‹
@@ -128,15 +137,18 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
             ›
           </button>
         </span>
-        {month !== monthOf(new Date()) && (
+        )}
+        {byMonth && month !== monthOf(new Date()) && (
           <button className="plain" onClick={() => setMonth(monthOf(new Date()))}>
             This month
           </button>
         )}
-        <label className="tool">
-          <input type="checkbox" checked={past} onChange={(e) => setPast(e.target.checked)} />
-          Show the ones that are over
-        </label>
+        {byMonth && (
+          <label className="tool">
+            <input type="checkbox" checked={past} onChange={(e) => setPast(e.target.checked)} />
+            Show the ones that are over
+          </label>
+        )}
         <button className="plain" title="Asks VRChat again now. Otherwise a list is asked for at most once in ten minutes" onClick={() => load(true)}>
           Refresh
         </button>
@@ -147,7 +159,7 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
           VRChat did not send the events: {problem}
         </p>
       )}
-      {events === null && <p className="empty">Asking VRChat for the events of {monthName(month)}</p>}
+      {events === null && <p className="empty">{byMonth ? `Asking VRChat for the events of ${monthName(month)}` : "Asking VRChat what is on"}</p>}
       {events !== null && !problem && shown.length === 0 && (
         <p className="empty">{hidden > 0 ? `All ${hidden} ${hidden === 1 ? "event" : "events"} of this month are over. Tick the box above to see them.` : none[which]}</p>
       )}
@@ -196,14 +208,14 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
                   title={e.following ? "Stop following this event" : "Follow it: it is listed under Following and you get a reminder before it starts"}
                   onClick={() => void follow(e)}
                 >
-                  {e.following ? "Following" : "Follow"}
+                  {e.following ? "Unfollow" : "Follow"}
                 </button>
               </span>
             </li>,
           ];
         })}
       </ol>
-      {more && <p className="tile-note">VRChat has more than 100 events for this month; the first 100 are shown.</p>}
+      {more && <p className="tile-note">{byMonth ? "VRChat has more than 100 events for this month; the first 100 are shown." : "VRChat has more coming up; the next 100 are shown."}</p>}
     </div>
   );
 }

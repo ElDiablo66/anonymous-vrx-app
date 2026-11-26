@@ -602,6 +602,12 @@ impl ApiClient {
         self.read(&format!("/calendar{tail}?date={}&n=100", Self::part(month))).await
     }
 
+    /// Events across all of VRChat: the ones on now and the ones coming up, soonest first.
+    /// One request, up to 100 events.
+    pub async fn discover_events(&self) -> AppResult<Value> {
+        self.read("/calendar/discover?scope=all&n=100&upcomingSort=startTime_ascending").await
+    }
+
     /// Follows a group's calendar event, or stops following it.
     pub async fn follow_event(&self, group_id: &str, calendar_id: &str, on: bool) -> AppResult<()> {
         let path = format!("/calendar/{}/{}/follow", Self::part(group_id), Self::part(calendar_id));

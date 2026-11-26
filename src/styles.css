@@ -6366,3 +6366,7 @@ body .month-nav .plain {
     padding-block: 5px 4px;
   }
 }
+
+.events-lead {
+  font: italic 700 20px/1 var(--display);
+}

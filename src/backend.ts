@@ -363,8 +363,9 @@ export interface Backend {
   friendStatus(userId: string): Promise<{ isFriend?: boolean; outgoingRequest?: boolean; incomingRequest?: boolean }>;
   /** The people I blocked or muted, newest first. `fresh` asks VRChat again. */
   moderations(fresh: boolean): Promise<Moderation[]>;
-  /** One month of events (`month` is YYYY-MM): my groups', the ones I follow, or VRChat's featured ones. */
-  calendar(which: "mine" | "following" | "featured", month: string, fresh?: boolean): Promise<{ events: CalendarEvent[]; more: boolean }>;
+  /** One month of events (`month` is YYYY-MM): my groups', the ones I follow, or VRChat's featured ones.
+   *  `discover` has no month: it is what is on now and coming up across all of VRChat. */
+  calendar(which: "mine" | "following" | "featured" | "discover", month: string, fresh?: boolean): Promise<{ events: CalendarEvent[]; more: boolean }>;
   /** Follows a group event, or stops following it. */
   followEvent(groupId: string, eventId: string, on: boolean): Promise<void>;
   /** Picture, rank, marks and status of someone, for a list row. Asked once per person. */

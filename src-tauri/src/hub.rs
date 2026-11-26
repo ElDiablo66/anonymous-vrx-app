@@ -937,14 +937,20 @@ impl Hub {
             "mine" => "",
             "following" => "following",
             "featured" => "featured",
+            // On now and coming up across VRChat. It has no months.
+            "discover" => "discover",
             _ => return Err(AppError::CannotDo("That is not a calendar this app knows.".into())),
         };
-        let day = chrono::NaiveDate::parse_from_str(&format!("{month}-15"), "%Y-%m-%d")
-            .map_err(|_| AppError::CannotDo("That is not a month.".into()))?;
+        let everywhere = which == "discover";
+        let day = if everywhere {
+            chrono::Utc::now().date_naive()
+        } else {
+            chrono::NaiveDate::parse_from_str(&format!("{month}-15"), "%Y-%m-%d").map_err(|_| AppError::CannotDo("That is not a month.".into()))?
+        };
         if self.me().is_none() {
             return Err(AppError::NotSignedIn);
         }
-        let key = format!("{which}:{month}");
+        let key = if everywhere { "discover".to_string() } else { format!("{which}:{month}") };
         if !fresh {
             if let Some((at, known)) = self.calendars.lock().unwrap().get(&key) {
                 if at.elapsed() < Duration::from_secs(600) {
@@ -952,7 +958,11 @@ impl Hub {
                 }
             }
         }
-        let answer = self.api.calendar(list, &format!("{}T12:00:00.000Z", day.format("%Y-%m-%d"))).await?;
+        let answer = if everywhere {
+            self.api.discover_events().await?
+        } else {
+            self.api.calendar(list, &format!("{}T12:00:00.000Z", day.format("%Y-%m-%d"))).await?
+        };
         // The calendar names an event's group only by id. Each group is asked for its name
         // once, a few per look at the calendar; the rest follow on the next look.
         let mut unnamed: Vec<String> = Vec::new();
@@ -997,12 +1007,14 @@ impl Hub {
                     "image": e["imageUrl"],
                     "interested": e["interestedUserCount"],
                     "friends": e["interestedFriendCount"],
-                    "following": e["userInterest"]["isFollowing"].as_bool().unwrap_or(false),
+                    // Everything on the list of events I follow is followed, whatever else the answer says.
+                    "following": which == "following" || e["userInterest"]["isFollowing"].as_bool().unwrap_or(false),
                     "featured": e["featured"].as_bool().unwrap_or(false),
                 })
             })
             .collect();
-        let out = json!({ "events": events, "more": answer["hasNext"].as_bool().unwrap_or(false) });
+        let more = answer["hasNext"].as_bool().unwrap_or(false) || answer["nextCursor"].as_str().is_some_and(|c| !c.is_empty());
+        let out = json!({ "events": events, "more": more });
         self.calendars.lock().unwrap().insert(key, (Instant::now(), out.clone()));
         Ok(out)
     }

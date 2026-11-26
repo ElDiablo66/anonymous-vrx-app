@@ -470,7 +470,7 @@ export const demoBackend: Backend = {
   async calendar(which, month) {
     await wait(350);
     const now = new Date();
-    if (month !== `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`) return { events: [], more: false };
+    if (which !== "discover" && month !== `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`) return { events: [], more: false };
     const at = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
     const all = [
       { id: "cal_demo_1", groupId: "grp_demo", groupName: "Night Owls", title: "Pier sunset hangout", description: "Bring a blanket. We sit on the pier until the sun is gone, then move to the arcade.", category: "hangout", access: "public", startsAt: at(0.4), endsAt: at(2.4), image: "", interested: 41, friends: 3, featured: false },
@@ -478,7 +478,11 @@ export const demoBackend: Backend = {
       { id: "cal_demo_3", groupId: "grp_demo_2", groupName: "Arcade High Scores", title: "High score tournament, round 2", description: "", category: "gaming", access: "public", startsAt: at(74), endsAt: at(77), image: "", interested: 9, friends: 0, featured: false },
       { id: "cal_demo_4", groupId: "grp_demo_2", groupName: "Arcade High Scores", title: "Last week's finals", description: "", category: "gaming", access: "public", startsAt: at(-50), endsAt: at(-47), image: "", interested: 30, friends: 1, featured: false },
     ].map((e) => ({ ...e, following: demoFollowed.has(e.id) }));
-    const events = which === "following" ? all.filter((e) => e.following) : which === "featured" ? all.filter((e) => e.featured) : all;
+    const wide = [
+      { id: "cal_demo_9", groupId: "grp_demo_3", groupName: "VRChat", title: "Community meetup, live from the Hub", description: "Open to everyone, on now.", category: "hangout", access: "public", startsAt: at(-0.5), endsAt: at(1.5), image: "", interested: 2140, friends: 2, featured: true, following: demoFollowed.has("cal_demo_9") },
+      ...all.filter((e) => Date.parse(e.endsAt) > Date.now() && e.access === "public"),
+    ];
+    const events = which === "discover" ? wide : which === "following" ? all.filter((e) => e.following) : which === "featured" ? all.filter((e) => e.featured) : all;
     return { events, more: false };
   },
   async followEvent(_groupId, eventId, on) {

@@ -706,6 +706,8 @@ async fn calendar_is_read_once_and_events_can_be_followed() {
     assert_eq!(page["events"][1]["groupName"], "Pier Regulars");
     assert_eq!(page["events"][0]["groupName"], "Night Owls");
     assert_eq!(page["events"][0]["following"], true);
+    // An event on the followed list counts as followed even when the answer does not say so.
+    assert_eq!(page["events"][1]["following"], true);
     // The second look comes from memory.
     hub.calendar("following", "2026-11", false).await.unwrap();
 
@@ -714,6 +716,17 @@ async fn calendar_is_read_once_and_events_can_be_followed() {
     hub.follow_event("grp_1", "cal_1", false).await.unwrap();
     // A change empties the memory, so the list is asked for again.
     hub.calendar("following", "2026-11", false).await.unwrap();
+
+    // Events across VRChat have no month: on now and coming up, one request.
+    Mock::given(method("GET")).and(path("/calendar/discover")).and(query_param("scope", "all")).respond_with(ResponseTemplate::new(200).set_body_json(json!({
+        "nextCursor": "", "results": [
+            { "id": "cal_9", "ownerId": "grp_1", "ownerName": "Night Owls", "title": "Open stage", "startsAt": "2026-11-25T20:00:00.000Z", "endsAt": "2026-11-25T23:00:00.000Z", "featured": true }
+        ]
+    }))).expect(1).mount(&server).await;
+    let wide = hub.calendar("discover", "", false).await.unwrap();
+    assert_eq!(wide["events"][0]["title"], "Open stage");
+    assert_eq!(wide["more"], false);
+    hub.calendar("discover", "2031-01", false).await.unwrap();
 }
 
 #[tokio::test]
