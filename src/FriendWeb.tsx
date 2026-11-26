@@ -338,7 +338,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
             </div>
             <div>
               <dt>Knows the most of them</dt>
-              <dd className="town-fact-name hide-me">{top ? nameOf(top) : "Nobody yet"}</dd>
+              <dd className="town-fact-name hide-name">{top ? nameOf(top) : "Nobody yet"}</dd>
             </div>
             <div>
               <dt>Know none of the others</dt>
@@ -435,7 +435,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
                   className={`town-district${zone === d.index ? " on" : ""}`}
                   style={{ left: d.x - d.r, top: d.y - d.r, width: 2 * d.r, height: 2 * d.r, "--c": d.colour } as CSSProperties}
                 >
-                  <button className="town-plate hide-me" onClick={() => !drag.current?.moved && showDistrict(d)} title="Look at this circle">
+                  <button className="town-plate hide-name" onClick={() => !drag.current?.moved && showDistrict(d)} title="Look at this circle">
                     {d.name}
                     <i>{d.members.length}</i>
                   </button>
@@ -460,7 +460,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
                       onClick={() => !drag.current?.moved && setPicked(picked === id ? "" : id)}
                     >
                       <Avatar name={nameOf(id)} image={f?.image ?? ""} tone={f ? statusTone(f) : undefined} size={FACE} />
-                      <span className="town-name hide-me">{nameOf(id)}</span>
+                      <span className="town-name hide-name">{nameOf(id)}</span>
                     </button>
                   );
                 }),
@@ -496,7 +496,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
                     <li key={f.id}>
                       <button onClick={() => goTo(f.id)}>
                         <Avatar name={f.displayName} image={f.image} size={26} />
-                        <span className="hide-me">{f.displayName}</span>
+                        <span className="hide-name">{f.displayName}</span>
                         {!seat.has(f.id) && <small>knows none of the others</small>}
                       </button>
                     </li>
@@ -510,7 +510,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
                 <header>
                   <Avatar name={chosen.displayName} image={chosen.image} tone={statusTone(chosen)} size={48} />
                   <div>
-                    <b className="hide-me">{chosen.displayName}</b>
+                    <b className="hide-name">{chosen.displayName}</b>
                     <span>
                       {seat.has(chosen.id)
                         ? `Friends with ${near.get(chosen.id)!.length} of your friends, in ${districts[seat.get(chosen.id)!.district].name}`
@@ -524,7 +524,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
                       <li key={id}>
                         <button onClick={() => goTo(id)} style={{ "--c": districts[seat.get(id)!.district].colour } as CSSProperties}>
                           <i aria-hidden="true" />
-                          <span className="hide-me">{nameOf(id)}</span>
+                          <span className="hide-name">{nameOf(id)}</span>
                         </button>
                       </li>
                     ))}
@@ -548,7 +548,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
                   <li key={d.index}>
                     <button className={zone === d.index ? "on" : ""} onClick={() => showDistrict(d)} style={{ "--c": d.colour } as CSSProperties}>
                       <i aria-hidden="true" />
-                      <span className="hide-me">{d.name}</span>
+                      <span className="hide-name">{d.name}</span>
                       <small>{d.members.length}</small>
                     </button>
                   </li>
@@ -565,7 +565,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
                     <li key={id}>
                       <button onClick={() => goTo(id)} style={{ "--c": districts[seat.get(id)!.district].colour } as CSSProperties}>
                         <i aria-hidden="true" />
-                        <span className="hide-me">{nameOf(id)}</span>
+                        <span className="hide-name">{nameOf(id)}</span>
                         <small>{n + 1} circles</small>
                       </button>
                     </li>

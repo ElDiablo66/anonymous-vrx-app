@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { backend, errorText, type Friend, type Habits as HabitData } from "./backend";
+import { backend, errorText, type Friend, type Habits as HabitData, type World } from "./backend";
 import { Avatar, statusTone, tidy } from "./bits";
 import { openThing } from "./Detail";
 import { span } from "./Find";
@@ -87,7 +87,9 @@ function When({ points, what }: { points: Array<[string, number]>; what: string 
 }
 
 /** On a profile: where and when I meet this person, and where they go by themselves. From this PC's history only. */
-export function Habits({ userId, name, friends }: { userId: string; name: string; friends: Map<string, Friend> }) {
+export function Habits({ userId, name, friends, worlds }: { userId: string; name: string; friends: Map<string, Friend>; worlds: Map<string, World> }) {
+  // A name the history lacks comes from the worlds the app has looked up, as soon as it has it.
+  const worldName = (w: { worldId: string; name: string }) => tidy(w.name) || tidy(worlds.get(w.worldId)?.name ?? "") || "Unnamed world (private, removed, or still being looked up)";
   const [data, setData] = useState<HabitData | null>(null);
   const [problem, setProblem] = useState("");
   useEffect(() => {
@@ -102,7 +104,7 @@ export function Habits({ userId, name, friends }: { userId: string; name: string
       alive = false;
     };
   }, [userId]);
-  if (problem) return <p className="profile-fine">The history of where you meet could not be read: {problem}</p>;
+  if (problem) return <p className="habit-fine">The history of where you meet could not be read: {problem}</p>;
   if (!data) return null;
   const withMe = data.worlds.length > 0;
   const alone = data.ownWorlds.length > 0 || data.seenAt.length > 2;
@@ -113,15 +115,15 @@ export function Habits({ userId, name, friends }: { userId: string; name: string
       {withMe && (
         <section className="habits">
           <h3>With you</h3>
-          <p className="profile-fine">From the stays VRChat's log on this PC recorded. Nothing is asked of VRChat.</p>
+          <p className="habit-fine">From the stays VRChat's log on this PC recorded. Nothing is asked of VRChat.</p>
           <div className="habit-cols">
             <div>
               <h4>Where you meet</h4>
               <ol className="habit-list">
                 {data.worlds.map((w) => (
                   <li key={w.worldId || w.name}>
-                    <button className="name-link" disabled={!w.worldId} onClick={() => openThing("world", w.worldId)}>
-                      {tidy(w.name) || "A world without a name"}
+                    <button className="name-link world-name" disabled={!w.worldId} onClick={() => openThing("world", w.worldId)}>
+                      {worldName(w)}
                     </button>
                     <span>
                       {w.times} {w.times === 1 ? "time" : "times"}, {span(w.seconds)}
@@ -156,7 +158,7 @@ export function Habits({ userId, name, friends }: { userId: string; name: string
       {alone && (
         <section className="habits">
           <h3>Where the app saw them, last 90 days</h3>
-          <p className="profile-fine">
+          <p className="habit-fine">
             From the friend activity the app recorded while it was open, the times you were there too included. It only knows what VRChat showed you about{" "}
             <span className="hide-me">{name}</span>.
           </p>
@@ -166,8 +168,8 @@ export function Habits({ userId, name, friends }: { userId: string; name: string
               <ol className="habit-list">
                 {data.ownWorlds.map((w) => (
                   <li key={w.worldId}>
-                    <button className="name-link" onClick={() => openThing("world", w.worldId)}>
-                      {tidy(w.name) || "A world the app has no name for yet"}
+                    <button className="name-link world-name" onClick={() => openThing("world", w.worldId)}>
+                      {worldName(w)}
                     </button>
                     <span>
                       {w.times} {w.times === 1 ? "time" : "times"}

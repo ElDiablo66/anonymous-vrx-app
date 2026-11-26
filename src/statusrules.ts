@@ -247,8 +247,9 @@ export async function saveStatusByHand(me: string, mine: Pair) {
   }
 }
 
-/** VRChat is asked to change my status at most this often, however fast the rules flip. */
-const GAP = 20_000;
+/** VRChat is asked to change my status at most this often, however fast the rules flip. VRChat's
+ *  own word to makers of outside apps is one request a minute for the same thing. */
+const GAP = 60_000;
 /** A rule has to fit for this long before it acts, so walking through a world for a moment changes nothing. */
 const SETTLE = 4_000;
 /** With no world open, no rule has to fit for this long before my status goes back. Loading into the next world is not "no rule". */

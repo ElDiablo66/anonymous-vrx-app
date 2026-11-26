@@ -356,7 +356,7 @@ impl Hub {
             let gone = |why: &str| ("queue:gone", json!({ "location": location, "worldName": world, "why": why }));
             let done = match reply {
                 Ok(i) => {
-                    let users = i["n_users"].as_i64().or_else(|| i["userCount"].as_i64());
+                    let users = crate::vrchat::model::head_count(&i);
                     let capacity = i["capacity"].as_i64().unwrap_or(0);
                     let closed = i["closedAt"].as_str().is_some_and(|c| !c.is_empty());
                     // Without a head count or VRChat's own word, nothing is known this round.
@@ -523,7 +523,15 @@ impl Hub {
     pub fn habits(&self, user_id: &str) -> AppResult<Value> {
         let me = self.me().ok_or(AppError::NotSignedIn)?;
         let since = (chrono::Utc::now() - chrono::Duration::days(90)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-        Ok(json!(self.with_store(|s| s.habits(user_id, &me.id, &since))?))
+        let habits = self.with_store(|s| s.habits(user_id, &me.id, &since))?;
+        // A world the app has no name for is looked up once, in the slow queue; the window
+        // gets the name when it arrives.
+        for world in habits.own_worlds.iter().chain(&habits.worlds) {
+            if world.name.is_empty() && world.world_id.starts_with("wrld_") {
+                self.want_world(&world.world_id);
+            }
+        }
+        Ok(json!(habits))
     }
 
     /// What was noted about my own worlds over the last `days` days, oldest first.

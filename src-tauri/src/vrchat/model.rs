@@ -260,6 +260,16 @@ impl World {
     }
 }
 
+/// How many people an instance answer says are in it. VRChat sends the number under two
+/// names, and one of them can read 0 while the other holds the real count, so the larger wins.
+pub fn head_count(v: &Value) -> Option<i64> {
+    let named = |key: &str| v.get(key).and_then(Value::as_i64);
+    match (named("n_users"), named("userCount")) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    }
+}
+
 /// How busy one instance is.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -272,10 +282,7 @@ pub struct Instance {
 
 impl Instance {
     pub fn from_json(location: &str, v: &Value) -> Option<Instance> {
-        let users = v
-            .get("n_users")
-            .or_else(|| v.get("userCount"))
-            .and_then(Value::as_i64)?;
+        let users = head_count(v)?;
         Some(Instance {
             location: location.to_string(),
             users,

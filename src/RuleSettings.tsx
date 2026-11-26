@@ -52,6 +52,11 @@ export function StatusRuleSettings({ settings, change }: { settings: Settings; c
         VRChat can take a minute to show a new status. The game's own menu often shows it only after your next world
         change, and the website catches up a little later. The list at the bottom says what the app set and when.
       </p>
+      <p className="rule-fine">
+        The rules change your status the way VRChat's website does when you change it there, once a minute at most. VRChat
+        does not officially support apps like this one, so rules are off until you switch them on, and using them is your
+        own call.
+      </p>
 
       {rules.length === 0 ? (
         <div className="rule-empty">

@@ -521,7 +521,7 @@ export function FriendMap({
             <ul className="map-pairs">
               {together.map((p) => (
                 <li key={`${p.a}:${p.b}`} onPointerEnter={() => setFocus(p.a)} onPointerLeave={() => setFocus("")}>
-                  <span className="hide-me">
+                  <span className="hide-name">
                     {p.names[0]} and {p.names[1]}
                   </span>
                   <small>{p.times} times</small>

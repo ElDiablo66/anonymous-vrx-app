@@ -3803,7 +3803,7 @@ button:disabled {
 :root[data-hide="on"] body .person-window :is(
   .profile-side h2,
   .hide-me,
-  [class*="name"],
+  [class*="name"]:not(.name-wrap):not(.world-name),
   [class*="bio"],
   [class*="status"],
   .tile-note,
@@ -3856,7 +3856,7 @@ button:disabled {
 :root[data-hide="on"] body .person-window :is(
   .profile-side h2,
   .hide-me,
-  [class*="name"],
+  [class*="name"]:not(.name-wrap):not(.world-name),
   [class*="bio"],
   [class*="status"],
   .tile-note,
@@ -3875,7 +3875,7 @@ button:disabled {
 }
 
 /* Pictures: the picture itself is not drawn, a flat block stands in for it. */
-:root[data-hide="on"] body :is(.avatar, .tiles-wide .thumb, .recovery .thumb, .person-window [style*="background-image"], .own-window [style*="background-image"]) {
+:root[data-hide="on"] body :is(.avatar, .tiles-wide .thumb, .recovery .thumb, .person-window [style*="background-image"]:not(.icon-frame):not(.profile-effect):not(.name-wrap), .own-window [style*="background-image"]:not(.icon-frame):not(.profile-effect):not(.name-wrap)) {
   background-image: none !important;
   background-color: color-mix(in srgb, var(--text) 16%, transparent) !important;
 }
@@ -9715,4 +9715,43 @@ body .town-face {
   .find-cols {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+/* ---------- Hide names and pictures: the newer screens, and what stays on show ---------- */
+/* A person's name or status text anywhere outside a profile window. */
+:root[data-hide="on"] body .hide-name {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important;
+  background: linear-gradient(color-mix(in srgb, var(--text) 20%, transparent), color-mix(in srgb, var(--text) 20%, transparent)) no-repeat left center / 100% 72% !important;
+  border-color: transparent !important;
+  border-radius: 6px;
+  user-select: none;
+}
+
+:root[data-hide="on"] body .hide-name * {
+  visibility: hidden !important;
+}
+
+/* What I type into the history search is a name too. */
+:root[data-hide="on"] body .find-box input {
+  -webkit-text-security: disc;
+}
+
+/* On a profile the person's own choices of decoration stay: the frame round the picture,
+   the effect over the banner and the plate behind the name. Only the picture, the banner
+   picture and the letters are covered. */
+:root[data-hide="on"] body .person-window .name-wrap h2 {
+  width: fit-content;
+  min-width: 55%;
+}
+
+.habit-fine {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+
+.habits .habit-fine + h4 {
+  margin-top: 14px;
 }

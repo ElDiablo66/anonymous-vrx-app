@@ -118,10 +118,14 @@ export function Find({ friends }: { friends: Map<string, Friend> }) {
                         <button className={mine ? "find-hit on" : "find-hit"} aria-pressed={mine} onClick={() => setPick({ kind: "person", person: p })}>
                           <Avatar name={p.name} image={friend?.image ?? ""} tone={friend ? statusTone(friend) : undefined} />
                           <span className="find-hit-text">
-                            <b className="hide-me">{p.name}</b>
+                            <b className="hide-name">{p.name}</b>
                             <small>
                               {p.times} {p.times === 1 ? "time" : "times"}, last {dayLabel(p.last).toLowerCase()}
-                              {p.matched !== p.name && <>, then "{p.matched}"</>}
+                              {p.matched !== p.name && (
+                                <>
+                                  , then <span className="hide-name">"{p.matched}"</span>
+                                </>
+                              )}
                             </small>
                           </span>
                           {friend && <span className="mark">Friend</span>}
@@ -201,7 +205,7 @@ function Stays({ pick, friends }: { pick: Pick; friends: Map<string, Friend> }) 
   return (
     <article className="find-detail">
       <header>
-        <h3 className={person ? "hide-me" : undefined}>{title}</h3>
+        <h3 className={person ? "hide-name" : undefined}>{title}</h3>
         {person && person.userId && (
           <button className="plain" onClick={() => openProfile(person.userId)}>
             Open profile

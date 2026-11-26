@@ -156,8 +156,8 @@ export function InstancePanel({
                       <button className="inst-friend" data-person={f.id} data-person-name={f.displayName} onClick={() => openProfile(f.id)} title={`Open ${f.displayName}'s profile`}>
                         <Avatar name={f.displayName} image={f.image} tone={statusTone(f)} />
                         <span className="inst-friend-text">
-                          <b className="hide-me">{f.displayName}</b>
-                          {f.statusDescription && <small>{f.statusDescription}</small>}
+                          <b className="hide-name">{f.displayName}</b>
+                          {f.statusDescription && <small className="hide-name">{f.statusDescription}</small>}
                         </span>
                         {f.since && (
                           <span className="inst-since" title="How long they have been in this instance">

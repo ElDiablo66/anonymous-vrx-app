@@ -915,7 +915,7 @@ export function ProfilePanel({
               </section>
             )}
 
-            {tab === "activity" && profile && !isMe && <Habits userId={userId} name={name} friends={friends} />}
+            {tab === "activity" && profile && !isMe && <Habits userId={userId} name={name} friends={friends} worlds={worlds} />}
 
             {tab === "activity" &&
               profile &&

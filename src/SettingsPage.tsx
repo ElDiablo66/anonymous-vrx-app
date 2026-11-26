@@ -222,7 +222,7 @@ export function SettingsPage({
         <h2>Privacy</h2>
         <Switch
           label="Hide names and pictures"
-          hint="Covers people with plain bars and blocks: their names, pictures, statuses and bios, your own included, and the names and pictures in My uploads. Nothing is blurred, so nothing can be sharpened back. Worlds stay readable. Ctrl+Shift+H switches it from anywhere. Windows notifications still show names."
+          hint="Covers people with plain bars and blocks: their names, pictures, statuses and bios, your own included, and the names and pictures in My uploads. Nothing is blurred, so nothing can be sharpened back. Worlds stay readable, and so do the frame, effect and name plate a person picked for their profile. What you type into the history search is covered too. Ctrl+Shift+H switches it from anywhere. Windows notifications still show names."
           on={settings.hidePeople}
           set={(on) => change({ hidePeople: on })}
         />

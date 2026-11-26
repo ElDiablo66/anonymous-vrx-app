@@ -964,7 +964,7 @@ async fn friends_of_friends_are_asked_one_friend_at_a_time() {
 async fn a_full_instance_is_watched_until_it_has_room() {
     let server = MockServer::start().await;
     // Full at the first look, one place free at the second.
-    Mock::given(method("GET")).and(path("/instances/wrld_a:1~region(eu)")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "n_users": 16, "capacity": 16, "full": true }))).up_to_n_times(1).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/instances/wrld_a:1~region(eu)")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "n_users": 0, "userCount": 16, "capacity": 16 }))).up_to_n_times(1).expect(1).mount(&server).await;
     Mock::given(method("GET")).and(path("/instances/wrld_a:1~region(eu)")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "n_users": 15, "capacity": 16, "full": false }))).expect(1).mount(&server).await;
     // A third answers with no head count at all, both times: nothing is known, so it stays waited for.
     Mock::given(method("GET")).and(path("/instances/wrld_c:3~region(eu)")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "capacity": 16 }))).expect(2).mount(&server).await;
