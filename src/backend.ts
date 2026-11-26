@@ -558,7 +558,7 @@ export interface Backend {
   /** Sends a sample notice now and says how each program took it. */
   testVrNotice(rules: VrRules): Promise<Array<{ target: string; ok: boolean; problem: string }>>;
   /** `byItself` is the quiet run the app makes when VRCX's file has changed. */
-  importVrcx(settings: string, byItself?: boolean, since?: string): Promise<{ broughtOver: { feed: number; friendLog: number; visits: number; people: number; notes: number; favourites: number }; backup: string }>;
+  importVrcx(settings: string, byItself?: boolean, since?: string): Promise<{ broughtOver: { feed: number; friendLog: number; visits: number; people: number; notes: number; favourites: number; avatars: number; tags: number }; backup: string }>;
   /** Makes the daily automatic backup if one is due and keeps the newest `keep`. Null when none was due. */
   autoBackup(settings: string, keep: number): Promise<BackupInfo | null>;
   backups(): Promise<BackupInfo[]>;

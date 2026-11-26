@@ -23,6 +23,21 @@ const none: Record<Which, string> = {
 
 const accessWords: Record<string, string> = { public: "Open to everyone", group: "Group members" };
 
+/** "Saturday, 28 November" for a day key such as "2026-11-28". */
+function dayWords(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+}
+
+/** How long an event runs, in the fewest words: "1 h 10 min". Empty when it has no end. */
+function lengthWords(e: CalendarEvent): string {
+  const minutes = Math.round((Date.parse(e.endsAt) - Date.parse(e.startsAt)) / 60_000);
+  if (!(minutes > 0)) return "";
+  const h = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return h ? (rest ? `${h} h ${rest} min` : `${h} h`) : `${rest} min`;
+}
+
 /** "2026-11" for a date, in the PC's own time. */
 export function monthOf(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -127,7 +142,7 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
   const [busy, setBusy] = useState("");
   /** A day picked in the month grid ("2026-11-25"), or empty for the whole month. */
   const [onlyDay, setOnlyDay] = useState("");
-  useEffect(() => setOnlyDay(""), [which, month]);
+  useEffect(() => setOnlyDay(""), [which, month, past]);
   /** Counts the questions, so a slow answer for another month is not shown over this one. */
   const asked = useRef(0);
 
@@ -188,11 +203,22 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
     }
     return counts;
   }, [events, month]);
-  const hidden = byMonth ? (events ?? []).filter((e) => monthOf(new Date(e.startsAt)) === month).length - shown.length : 0;
+  const inMonth = byMonth ? (events ?? []).filter((e) => monthOf(new Date(e.startsAt)) === month) : [];
+  const overCount = inMonth.filter((e) => Date.parse(e.endsAt || e.startsAt) < Date.now()).length;
+  const hidden = byMonth && !onlyDay ? inMonth.length - shown.length : 0;
 
   let lastDay = "";
+  const heading = !byMonth
+    ? "On now and coming up"
+    : onlyDay
+      ? dayWords(onlyDay)
+      : past
+        ? `All of ${monthName(month)}`
+        : month === monthOf(new Date())
+          ? "Coming up this month"
+          : monthName(month);
   return (
-    <div className="table-wrap">
+    <div className="table-wrap events-screen">
       <div className="tabs" role="tablist" aria-label="Events">
         {lists.map(([id, label]) => (
           <button key={id} role="tab" aria-selected={which === id} className={which === id ? "on" : ""} onClick={() => setWhich(id)}>
@@ -200,99 +226,143 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
           </button>
         ))}
       </div>
-      <div className="list-tools event-tools">
-        {!byMonth && <b className="events-lead">On now and coming up</b>}
+
+      <div className={`events-layout${byMonth ? "" : " events-wide"}`}>
         {byMonth && (
-        <span className="month-nav">
-          <button className="plain" aria-label="The month before" title="The month before" onClick={() => setMonth(shifted(month, -1))}>
-            ‹
-          </button>
-          <b>{monthName(month)}</b>
-          <button className="plain" aria-label="The month after" title="The month after" onClick={() => setMonth(shifted(month, 1))}>
-            ›
-          </button>
-        </span>
-        )}
-        {byMonth && month !== monthOf(new Date()) && (
-          <button className="plain" onClick={() => setMonth(monthOf(new Date()))}>
-            This month
-          </button>
-        )}
-        {byMonth && (
-          <label className="tool">
-            <input type="checkbox" checked={past} onChange={(e) => setPast(e.target.checked)} />
-            Show the ones that are over
-          </label>
-        )}
-        <button className="plain" title="Asks VRChat again now. Otherwise a list is asked for at most once in ten minutes" onClick={() => load(true)}>
-          Refresh
-        </button>
-      </div>
-
-      {byMonth && events !== null && perDay.size > 0 && <MonthGrid month={month} counts={perDay} picked={onlyDay} pick={setOnlyDay} />}
-
-      {problem && (
-        <p className="banner" role="alert">
-          VRChat did not send the events: {problem}
-        </p>
-      )}
-      {events === null && <p className="empty">{byMonth ? `Asking VRChat for the events of ${monthName(month)}` : "Asking VRChat what is on"}</p>}
-      {events !== null && !problem && shown.length === 0 && (
-        <p className="empty">{hidden > 0 ? `All ${hidden} ${hidden === 1 ? "event" : "events"} of this month are over. Tick the box above to see them.` : none[which]}</p>
-      )}
-
-      <ol className="events">
-        {shown.map((e) => {
-          const day = dayLabel(e.startsAt);
-          const header = day !== lastDay ? <li className="day" key={`day-${e.id}`}>{day}</li> : null;
-          lastDay = day;
-          const now = Date.now();
-          const live = Date.parse(e.startsAt) <= now && now < Date.parse(e.endsAt || e.startsAt);
-          const over = Date.parse(e.endsAt || e.startsAt) < now;
-          const soon = untilWords(e.startsAt);
-          return [
-            header,
-            <li className={`event${over ? " event-over" : ""}`} key={e.id}>
-              <span className="event-time">
-                <time dateTime={e.startsAt}>{clock(e.startsAt)}</time>
-                {e.endsAt && <span>to {clock(e.endsAt)}</span>}
+          <aside className="events-side" aria-label="Month">
+            <div className="month-nav">
+              <button className="plain" aria-label="The month before" title="The month before" onClick={() => setMonth(shifted(month, -1))}>
+                ‹
+              </button>
+              <b>{monthName(month)}</b>
+              <button className="plain" aria-label="The month after" title="The month after" onClick={() => setMonth(shifted(month, 1))}>
+                ›
+              </button>
+            </div>
+            <MonthGrid month={month} counts={perDay} picked={onlyDay} pick={setOnlyDay} />
+            {events !== null && (
+              <p className="events-count">
+                {inMonth.length === 0
+                  ? "No events this month."
+                  : `${inMonth.length} ${inMonth.length === 1 ? "event" : "events"} this month${overCount > 0 ? `, ${overCount} already over` : ""}. Press a day to see only that day.`}
+              </p>
+            )}
+            <label className="setting events-past">
+              <span>
+                <span className="setting-name">Show the ones that are over</span>
               </span>
-              <EventPicture url={e.image} />
-              <span className="event-main">
-                <span className="event-title">
-                  {tidy(e.title) || "Unnamed event"}
-                  {live && <span className="mark mark-live">On now</span>}
-                  {!live && soon && Date.parse(e.startsAt) - now < 36 * 3_600_000 && <span className="mark">{soon}</span>}
-                </span>
-                <span className="event-sub">
-                  <button className="name-link" onClick={() => openThing("group", e.groupId)} title="Open the group">
-                    {e.groupName || "A group"}
-                  </button>
-                  {e.category && <span>{e.category}</span>}
-                  <span>{accessWords[e.access] ?? e.access}</span>
-                  {e.interested > 0 && (
-                    <span>
-                      {e.interested.toLocaleString()} interested{e.friends > 0 ? `, ${e.friends} of them ${e.friends === 1 ? "a friend" : "friends"}` : ""}
-                    </span>
-                  )}
-                </span>
-                {e.description && <span className="event-about">{e.description}</span>}
-              </span>
-              <span className="event-actions">
-                <button
-                  className={e.following ? "plain" : "plain go"}
-                  disabled={busy === e.id}
-                  title={e.following ? "Stop following this event" : "Follow it: it is listed under Following and you get a reminder before it starts"}
-                  onClick={() => void follow(e)}
-                >
-                  {e.following ? "Unfollow" : "Follow"}
+              <input type="checkbox" role="switch" checked={past} onChange={(e) => setPast(e.target.checked)} />
+            </label>
+            <div className="events-side-actions">
+              {month !== monthOf(new Date()) && (
+                <button className="plain" onClick={() => setMonth(monthOf(new Date()))}>
+                  This month
                 </button>
+              )}
+              <button className="plain" title="Asks VRChat again now. Otherwise a list is asked for at most once in ten minutes" onClick={() => load(true)}>
+                Refresh
+              </button>
+            </div>
+          </aside>
+        )}
+
+        <section className="events-main" aria-label={heading}>
+          <header className="events-head">
+            <h2>{heading}</h2>
+            {events !== null && shown.length > 0 && (
+              <span className="events-tally">
+                {shown.length} {shown.length === 1 ? "event" : "events"}
               </span>
-            </li>,
-          ];
-        })}
-      </ol>
-      {more && <p className="tile-note">{byMonth ? "VRChat has more than 100 events for this month; the first 100 are shown." : "VRChat has more coming up; the next 100 are shown."}</p>}
+            )}
+            {onlyDay && (
+              <button className="plain" onClick={() => setOnlyDay("")}>
+                Show the whole month
+              </button>
+            )}
+            {!byMonth && (
+              <button className="plain" title="Asks VRChat again now. Otherwise a list is asked for at most once in ten minutes" onClick={() => load(true)}>
+                Refresh
+              </button>
+            )}
+          </header>
+
+          {problem && (
+            <p className="banner" role="alert">
+              VRChat did not send the events: {problem}
+            </p>
+          )}
+          {events === null && <p className="empty">{byMonth ? `Asking VRChat for the events of ${monthName(month)}` : "Asking VRChat what is on"}</p>}
+          {events !== null && !problem && shown.length === 0 && (
+            <div className="events-none">
+              <p>{hidden > 0 ? `All ${hidden} ${hidden === 1 ? "event" : "events"} of this month are over.` : none[which]}</p>
+              {hidden > 0 && (
+                <button className="plain go" onClick={() => setPast(true)}>
+                  Show them
+                </button>
+              )}
+            </div>
+          )}
+
+          <ol className="events">
+            {shown.map((e) => {
+              const day = dayLabel(e.startsAt);
+              const header =
+                !onlyDay && day !== lastDay ? (
+                  <li className="day" key={`day-${e.id}`}>
+                    {day}
+                  </li>
+                ) : null;
+              lastDay = day;
+              const now = Date.now();
+              const live = Date.parse(e.startsAt) <= now && now < Date.parse(e.endsAt || e.startsAt);
+              const over = Date.parse(e.endsAt || e.startsAt) < now;
+              const soon = untilWords(e.startsAt);
+              const length = lengthWords(e);
+              return [
+                header,
+                <li className={`event${over ? " event-over" : ""}${live ? " event-live" : ""}`} key={e.id}>
+                  <EventPicture url={e.image} />
+                  <div className="event-main">
+                    <p className="event-when">
+                      <time dateTime={e.startsAt}>{clock(e.startsAt)}</time>
+                      {e.endsAt && <span>to {clock(e.endsAt)}</span>}
+                      {length && <span className="event-length">{length}</span>}
+                      {live && <span className="mark mark-live">On now</span>}
+                      {over && <span className="mark">Over</span>}
+                      {!live && !over && soon && Date.parse(e.startsAt) - now < 36 * 3_600_000 && <span className="mark">{soon}</span>}
+                    </p>
+                    <h3 className="event-title">{tidy(e.title) || "Unnamed event"}</h3>
+                    <p className="event-sub">
+                      <button className="name-link" onClick={() => openThing("group", e.groupId)} title="Open the group">
+                        {e.groupName || "A group"}
+                      </button>
+                      {e.category && <span className="event-chip">{e.category}</span>}
+                      <span className="event-chip">{accessWords[e.access] ?? e.access}</span>
+                      {e.interested > 0 && (
+                        <span>
+                          {e.interested.toLocaleString()} interested{e.friends > 0 ? `, ${e.friends} of them ${e.friends === 1 ? "a friend" : "friends"}` : ""}
+                        </span>
+                      )}
+                    </p>
+                    {e.description && <p className="event-about">{e.description}</p>}
+                  </div>
+                  <div className="event-actions">
+                    <button
+                      className={e.following ? "plain" : "plain go"}
+                      disabled={busy === e.id}
+                      title={e.following ? "Stop following this event" : "Follow it: it is listed under Following and you get a reminder before it starts"}
+                      onClick={() => void follow(e)}
+                    >
+                      {e.following ? "Unfollow" : "Follow"}
+                    </button>
+                  </div>
+                </li>,
+              ];
+            })}
+          </ol>
+          {more && <p className="tile-note">{byMonth ? "VRChat has more than 100 events for this month; the first 100 are shown." : "VRChat has more coming up; the next 100 are shown."}</p>}
+        </section>
+      </div>
     </div>
   );
 }

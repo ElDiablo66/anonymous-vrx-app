@@ -306,7 +306,7 @@ export function App() {
         const { broughtOver: got } = await backend.importVrcx(JSON.stringify(settingsNow.current), true, localStorage.getItem(mark) ?? undefined);
         localStorage.setItem(key, stamp);
         localStorage.setItem(mark, new Date(started - 2 * 86_400_000).toISOString());
-        const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites;
+        const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites + got.avatars + got.tags;
         if (total > 0) {
           setToast(`Brought over ${total.toLocaleString()} new ${total === 1 ? "entry" : "entries"} from VRCX.`);
           window.dispatchEvent(new Event("history:imported"));

@@ -117,12 +117,12 @@ export function SettingsPage({
     setBrought("");
     try {
       const { broughtOver: got, backup } = await backend.importVrcx(JSON.stringify(settings));
-      const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites;
+      const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites + got.avatars + got.tags;
       if (total > 0) window.dispatchEvent(new Event("history:imported"));
       setBrought(
         total === 0
           ? "Nothing new: everything VRCX has for this account is already here."
-          : `Brought over ${got.feed.toLocaleString()} activity entries, ${got.friendLog.toLocaleString()} friend log entries, ${got.visits.toLocaleString()} world visits with ${got.people.toLocaleString()} people, ${got.notes} notes and ${got.favourites} favourites kept on this PC. A backup from just before is saved as "${backup}". The lists show it after the app is opened again.`,
+          : `Brought over ${got.feed.toLocaleString()} activity entries, ${got.friendLog.toLocaleString()} friend log entries, ${got.visits.toLocaleString()} world visits with ${got.people.toLocaleString()} people, ${got.avatars.toLocaleString()} avatars you wore, ${got.notes} notes, ${got.tags} avatar tags and ${got.favourites} favourites kept on this PC. A backup from just before is saved as "${backup}". The lists show it after the app is opened again.`,
       );
     } catch (err) {
       setBrought(`Nothing was brought over: ${errorText(err)}`);
@@ -866,7 +866,7 @@ export function SettingsPage({
       <section data-group="data">
         <h2>Moving over from VRCX</h2>
         <p className="setting-hint">
-          Copies what VRCX recorded for this account into this app: friend activity, the friend log, world visits with who was there, your notes, and
+          Copies what VRCX recorded for this account into this app: friend activity, the friend log, world visits with who was there, the avatars you wore, your notes and avatar tags, and
           the favourites VRCX kept on this PC. VRCX's own file is only read, never changed, and a backup of this app's history is made first. Running
           it again only adds what is new.
         </p>

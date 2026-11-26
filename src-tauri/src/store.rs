@@ -1041,6 +1041,12 @@ pub struct BroughtOver {
     pub people: usize,
     pub notes: usize,
     pub favourites: usize,
+    /// Avatars I wore, with the time on each.
+    #[serde(default)]
+    pub avatars: usize,
+    /// My own tags on avatars.
+    #[serde(default)]
+    pub tags: usize,
 }
 
 impl Store {
@@ -1225,6 +1231,61 @@ impl Store {
                     }
                 }
                 tx.execute("UPDATE sightings SET left_at = ?1 WHERE visit_id = ?2 AND left_at IS NULL", params![left, visit])?;
+            }
+        }
+
+        // The avatars I wore. VRCX keeps the time it noted and how long the avatar was on; the
+        // name, maker and picture come from what it remembered about the avatar.
+        let worn = format!("{prefix}_avatar_history");
+        if has(&worn) {
+            let known = has("cache_avatar");
+            let mut rows = old.prepare(&format!("SELECT avatar_id, created_at, time FROM \"{worn}\" {from} ORDER BY created_at"))?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                let (id, at) = (text(r, 0), text(r, 1));
+                let millis = r.get::<_, Option<i64>>(2).ok().flatten().unwrap_or(0).max(0);
+                if !id.starts_with("avtr_") || at.is_empty() {
+                    continue;
+                }
+                let already: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM avatar_history WHERE avatar_id = ?1 AND ABS(strftime('%s', worn_at) - strftime('%s', ?2)) <= 10",
+                    params![id, at],
+                    |c| c.get(0),
+                )?;
+                if already > 0 {
+                    continue;
+                }
+                let ended = chrono::DateTime::parse_from_rfc3339(&at)
+                    .ok()
+                    .map(|t| (t + chrono::Duration::milliseconds(millis)).with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
+                    .unwrap_or_else(|| at.clone());
+                let (name, author_id, author, image, status) = if known {
+                    old.query_row("SELECT name, author_id, author_name, thumbnail_image_url, release_status FROM cache_avatar WHERE id = ?1", params![id], |c| {
+                        let get = |i: usize| c.get::<_, Option<String>>(i).map(Option::unwrap_or_default);
+                        Ok((get(0)?, get(1)?, get(2)?, get(3)?, get(4)?))
+                    })
+                    .unwrap_or_default()
+                } else {
+                    Default::default()
+                };
+                done.avatars += tx.execute(
+                    "INSERT INTO avatar_history (avatar_id, name, author_id, author_name, image, release_status, worn_at, ended_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![id, name, author_id, author, image, status, at, ended],
+                )?;
+            }
+        }
+
+        // My own tags on avatars. One I already have here is kept.
+        if !history_only && has("avatar_tags") {
+            let mut rows = old.prepare("SELECT avatar_id, tag FROM avatar_tags")?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                let (id, tag) = (text(r, 0), text(r, 1));
+                let tag = tag.trim();
+                if !id.starts_with("avtr_") || tag.is_empty() || tag.chars().count() > 40 {
+                    continue;
+                }
+                done.tags += tx.execute("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)", params![id, tag])?;
             }
         }
 
@@ -1639,6 +1700,41 @@ mod tests {
     }
 
     #[test]
+    fn avatars_worn_in_vrcx_come_over_with_their_time_and_tags() {
+        let dir = std::env::temp_dir().join(format!("anonymous-vrx-bring-avatars-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let other = dir.join("other.sqlite3");
+        {
+            let old = Connection::open(&other).unwrap();
+            old.execute_batch(
+                "CREATE TABLE usrme0000_avatar_history (avatar_id TEXT, created_at TEXT, time INTEGER);
+                 INSERT INTO usrme0000_avatar_history VALUES ('avtr_fox', '2025-03-01T20:00:00.000Z', 5400000), ('avtr_owl', '2025-03-02T20:00:00.000Z', NULL), ('not an avatar', '2025-03-02T20:00:00.000Z', 5);
+                 CREATE TABLE cache_avatar (id TEXT, name TEXT, author_id TEXT, author_name TEXT, thumbnail_image_url TEXT, release_status TEXT);
+                 INSERT INTO cache_avatar VALUES ('avtr_fox', 'Sunset Fox', 'usr_r', 'Rook', 'https://example.test/fox.png', 'public');
+                 CREATE TABLE avatar_tags (avatar_id TEXT, tag TEXT, color TEXT);
+                 INSERT INTO avatar_tags VALUES ('avtr_fox', 'dance', '#fff'), ('avtr_fox', '  ', '#fff');",
+            )
+            .unwrap();
+        }
+        let s = Store::in_memory().unwrap();
+        let got = s.import_vrcx(&other, "usr_me-0000", false, None).unwrap();
+        assert_eq!((got.avatars, got.tags), (2, 1));
+        let worn = s.avatar_history(10).unwrap();
+        let fox = worn.iter().find(|a| a.avatar_id == "avtr_fox").unwrap();
+        assert_eq!((fox.name.as_str(), fox.author_name.as_str()), ("Sunset Fox", "Rook"));
+        let (start, end): (String, String) = s.db.query_row("SELECT worn_at, ended_at FROM avatar_history WHERE avatar_id = 'avtr_fox'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((start.as_str(), end.as_str()), ("2025-03-01T20:00:00.000Z", "2025-03-01T21:30:00.000Z"));
+        assert_eq!(s.tags().unwrap().len(), 1);
+        // A second run adds nothing, and the quiet run leaves tags alone.
+        assert_eq!(s.import_vrcx(&other, "usr_me-0000", false, None).unwrap(), BroughtOver::default());
+        let quiet = Store::in_memory().unwrap();
+        let got = quiet.import_vrcx(&other, "usr_me-0000", true, None).unwrap();
+        assert_eq!((got.avatars, got.tags), (2, 0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn history_from_vrcx_comes_over_once_and_in_order() {
         let dir = std::env::temp_dir().join(format!("anonymous-vrx-bring-over-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1681,7 +1777,7 @@ mod tests {
         s.set_note("usr_b", "my own note stays").unwrap();
 
         let got = s.import_vrcx(&other, "usr_me-0000", false, None).unwrap();
-        assert_eq!(got, BroughtOver { feed: 3, friend_log: 2, visits: 1, people: 2, notes: 1, favourites: 1 });
+        assert_eq!(got, BroughtOver { feed: 3, friend_log: 2, visits: 1, people: 2, notes: 1, favourites: 1, ..BroughtOver::default() });
         // The status text did not change, so only the status itself came over; another account's table was not read.
         let feed = s.feed(50, None).unwrap();
         assert_eq!(feed.len(), 6);
