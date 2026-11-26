@@ -4529,3 +4529,36 @@ button.pinned-away:hover {
   background: transparent;
   color: var(--text);
 }
+
+/* Settings is split into pages; only the sections of the open one are shown. */
+.settings-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 0 18px;
+  padding: 8px 0 10px;
+  background: var(--bg, transparent);
+  backdrop-filter: blur(10px);
+}
+.settings-cols[data-show="general"] > section:not([data-group="general"]) {
+  display: none;
+}
+.settings-cols[data-show="look"] > section:not([data-group="look"]) {
+  display: none;
+}
+.settings-cols[data-show="alerts"] > section:not([data-group="alerts"]) {
+  display: none;
+}
+.settings-cols[data-show="feed"] > section:not([data-group="feed"]) {
+  display: none;
+}
+.settings-cols[data-show="data"] > section:not([data-group="data"]) {
+  display: none;
+}
+.settings-cols[data-show="about"] > section:not([data-group="about"]) {
+  display: none;
+}
+
+.settings-tabs {
+  flex-wrap: wrap;
+}

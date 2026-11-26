@@ -35,6 +35,19 @@ function Swatch({ label, value, set }: { label: string; value: string; set: (val
   );
 }
 
+/** The pages of Settings. Each section belongs to one, by its `data-group`. */
+const settingsTabs = [
+  ["general", "General"],
+  ["look", "Look and privacy"],
+  ["alerts", "Notifications"],
+  ["feed", "Feed and Discord"],
+  ["data", "Data and account"],
+  ["about", "About"],
+] as const;
+
+/** The page that was open last, kept while the app runs. */
+let lastTab: (typeof settingsTabs)[number][0] = "general";
+
 function Switch({ label, hint, on, set }: { label: string; hint?: string; on: boolean; set: (on: boolean) => void }) {
   return (
     <label className="setting">
@@ -87,6 +100,7 @@ export function SettingsPage({
   const [dataNote, setDataNote] = useState("");
   const [asking, setAsking] = useState("");
   const [restored, setRestored] = useState(false);
+  const [tab, setTab] = useState(lastTab);
   // Starting with Windows is kept by Windows, so it is asked for and not read from my settings.
   const [autostart, setAutostart] = useState(false);
   useEffect(() => {
@@ -156,8 +170,24 @@ export function SettingsPage({
 
   return (
     <div className="settings">
-      <div className="settings-cols">
-      <section>
+      <div className="tabs settings-tabs" role="tablist" aria-label="Settings">
+        {settingsTabs.map(([id, label]) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={tab === id}
+            className={tab === id ? "on" : ""}
+            onClick={() => {
+              lastTab = id;
+              setTab(id);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="settings-cols" data-show={tab}>
+      <section data-group="look">
         <h2>Privacy</h2>
         <Switch
           label="Hide names and pictures"
@@ -166,7 +196,7 @@ export function SettingsPage({
           set={(on) => change({ hidePeople: on })}
         />
       </section>
-      <section>
+      <section data-group="look">
         <h2>Look</h2>
         <div className="setting">
           <span>
@@ -315,7 +345,7 @@ export function SettingsPage({
         </div>
       </section>
 
-      <section>
+      <section data-group="feed">
         <h2>Activity feed</h2>
         <Switch
           label="Group repeated world changes"
@@ -360,7 +390,7 @@ export function SettingsPage({
         </div>
       </section>
 
-      <section>
+      <section data-group="feed">
         <h2>Discord</h2>
         <Switch
           label="Show where I am on Discord"
@@ -453,44 +483,8 @@ export function SettingsPage({
         </div>
       </section>
 
-      <section>
-        <h2>Avatar search</h2>
-        <div className="setting setting-top">
-          <span>
-            <span className="setting-name">Avatar database</span>
-            <span className="setting-hint">
-              VRChat has no avatar search for outside apps, so this asks a public, community-run database. It is
-              not run by VRChat or by this app. Only the words you search for are sent to it, never your account.
-            </span>
-          </span>
-          <div className="provider">
-            <input
-              type="url"
-              value={settings.avatarProvider}
-              onChange={(e) => change({ avatarProvider: e.target.value.trim() })}
-              aria-label="Avatar database address"
-              spellCheck={false}
-            />
-            <button className="plain" disabled={settings.avatarProvider === DEFAULT_AVATAR_PROVIDER} onClick={() => change({ avatarProvider: DEFAULT_AVATAR_PROVIDER })}>
-              Reset
-            </button>
-          </div>
-        </div>
-        {EXTRA_AVATAR_PROVIDERS.map((p) => {
-          const on = (settings.avatarExtras ?? []).includes(p.url);
-          return (
-            <Switch
-              key={p.url}
-              label={`Also ask ${p.name}`}
-              hint="Another community database. Avatar search asks it too and joins the results."
-              on={on}
-              set={(next) => change({ avatarExtras: next ? [...(settings.avatarExtras ?? []), p.url] : (settings.avatarExtras ?? []).filter((u) => u !== p.url) })}
-            />
-          );
-        })}
-      </section>
 
-      <section>
+      <section data-group="general">
         <h2>Joining worlds</h2>
         <div className="setting">
           <span>
@@ -517,7 +511,7 @@ export function SettingsPage({
         </div>
       </section>
 
-      <section>
+      <section data-group="general">
         <h2>Starting up</h2>
         <Switch
           label="Start with Windows"
@@ -559,7 +553,7 @@ export function SettingsPage({
         </div>
       </section>
 
-      <section>
+      <section data-group="general">
         <h2>Closing the window</h2>
         <div className="setting">
           <span>
@@ -586,7 +580,44 @@ export function SettingsPage({
         </div>
       </section>
 
-      <section>
+      <section data-group="general">
+        <h2>Avatar search</h2>
+        <div className="setting setting-top">
+          <span>
+            <span className="setting-name">Avatar database</span>
+            <span className="setting-hint">
+              VRChat has no avatar search for outside apps, so this asks a public, community-run database. It is
+              not run by VRChat or by this app. Only the words you search for are sent to it, never your account.
+            </span>
+          </span>
+          <div className="provider">
+            <input
+              type="url"
+              value={settings.avatarProvider}
+              onChange={(e) => change({ avatarProvider: e.target.value.trim() })}
+              aria-label="Avatar database address"
+              spellCheck={false}
+            />
+            <button className="plain" disabled={settings.avatarProvider === DEFAULT_AVATAR_PROVIDER} onClick={() => change({ avatarProvider: DEFAULT_AVATAR_PROVIDER })}>
+              Reset
+            </button>
+          </div>
+        </div>
+        {EXTRA_AVATAR_PROVIDERS.map((p) => {
+          const on = (settings.avatarExtras ?? []).includes(p.url);
+          return (
+            <Switch
+              key={p.url}
+              label={`Also ask ${p.name}`}
+              hint="Another community database. Avatar search asks it too and joins the results."
+              on={on}
+              set={(next) => change({ avatarExtras: next ? [...(settings.avatarExtras ?? []), p.url] : (settings.avatarExtras ?? []).filter((u) => u !== p.url) })}
+            />
+          );
+        })}
+      </section>
+
+      <section data-group="alerts">
         <h2>Windows notifications</h2>
         <Switch label="A favourite comes online" on={settings.alertFavouriteOnline} set={(on) => change({ alertFavouriteOnline: on })} />
         <Switch
@@ -669,7 +700,7 @@ export function SettingsPage({
         )}
       </section>
 
-      <section>
+      <section data-group="alerts">
         <h2>Quiet times</h2>
         <p className="setting-hint">These hold back every Windows notification from this app. Nothing is lost: the Inbox and the feed still fill up.</p>
         <Switch label="Quiet hours" on={settings.quietHours} set={(on) => change({ quietHours: on })} />
@@ -693,7 +724,7 @@ export function SettingsPage({
         />
       </section>
 
-      <section>
+      <section data-group="data">
         <h2>Your data</h2>
         <p className="setting-hint">
           A backup holds your friends list as last seen, the activity feed, world history, handled notifications
@@ -767,7 +798,7 @@ export function SettingsPage({
         )}
       </section>
 
-      <section>
+      <section data-group="data">
         <h2>Account</h2>
         <div className="setting">
           <span className="person">
@@ -783,7 +814,7 @@ export function SettingsPage({
         </p>
       </section>
 
-      <section>
+      <section data-group="about">
         <h2>About</h2>
         <p className="about-line">Your VRChat night, on one screen.</p>
         <p className="setting-hint">
@@ -796,7 +827,7 @@ export function SettingsPage({
         </p>
       </section>
 
-      <section>
+      <section data-group="about">
         <h2>Credits</h2>
         <p className="setting-hint">This app stands on other people's work. Thank you to all of them.</p>
         <ul className="credits">
