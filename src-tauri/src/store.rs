@@ -4,7 +4,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::vrchat::model::{parse_location, FeedDraft, FeedItem, Friend, World};
 
 pub struct Store {
@@ -996,6 +996,277 @@ impl Store {
     }
 }
 
+/// What was brought over from another app's history, counted by kind.
+#[derive(Clone, Debug, Default, serde::Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BroughtOver {
+    /// Friend activity: online, offline, world changes, status, avatar.
+    pub feed: usize,
+    /// Friends added, removed and renamed.
+    pub friend_log: usize,
+    pub visits: usize,
+    /// People seen in those visits.
+    pub people: usize,
+    pub notes: usize,
+    pub favourites: usize,
+}
+
+impl Store {
+    /// Copies the history VRCX kept for this account into this one. `other` is VRCX's own
+    /// database file, opened read-only and never changed. Only the tables of `my_id` are
+    /// read, so another account's history in the same file stays where it is.
+    ///
+    /// Running it again brings nothing over twice: a feed entry is skipped when this history
+    /// already has the same kind of entry for the same person within five seconds, and a
+    /// visit when it already has one in the same instance within ten. Afterwards the feed
+    /// and the visits are put back in order of time, because both are read newest-id first.
+    pub fn import_vrcx(&self, other: &Path, my_id: &str) -> AppResult<BroughtOver> {
+        let old = Connection::open_with_flags(other, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let has = |name: &str| -> bool {
+            old.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1", params![name], |r| r.get::<_, i64>(0))
+                .map(|n| n > 0)
+                .unwrap_or(false)
+        };
+        // VRCX names an account's tables after its id with the punctuation taken out.
+        let prefix: String = my_id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        if prefix.len() < 8 {
+            return Err(AppError::CannotDo("That is not an account id.".into()));
+        }
+        let text = |r: &rusqlite::Row<'_>, i: usize| -> String { r.get::<_, Option<String>>(i).ok().flatten().unwrap_or_default() };
+        let mut done = BroughtOver::default();
+        let tx = self.db.unchecked_transaction()?;
+
+        // One feed entry, unless this history already has it.
+        let add = |at: &str, user: &str, name: &str, kind: &str, detail: &str, previous: &str, location: &str| -> AppResult<bool> {
+            if at.is_empty() || user.is_empty() {
+                return Ok(false);
+            }
+            let known: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM feed WHERE user_id = ?1 AND kind = ?2
+                 AND ABS(CAST(strftime('%s', at) AS INTEGER) - CAST(strftime('%s', ?3) AS INTEGER)) <= 5",
+                params![user, kind, at],
+                |r| r.get(0),
+            )?;
+            if known > 0 {
+                return Ok(false);
+            }
+            tx.execute(
+                "INSERT INTO feed (at, user_id, display_name, kind, detail, previous, location) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![at, user, name, kind, detail, previous, location],
+            )?;
+            Ok(true)
+        };
+
+        let table = format!("{prefix}_feed_gps");
+        if has(&table) {
+            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, location, previous_location FROM \"{table}\" ORDER BY created_at"))?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                if add(&text(r, 0), &text(r, 1), &text(r, 2), "location", "", &text(r, 4), &text(r, 3))? {
+                    done.feed += 1;
+                }
+            }
+        }
+        let table = format!("{prefix}_feed_online_offline");
+        if has(&table) {
+            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, type, location FROM \"{table}\" ORDER BY created_at"))?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                let kind = if text(r, 3).eq_ignore_ascii_case("online") { "online" } else { "offline" };
+                if add(&text(r, 0), &text(r, 1), &text(r, 2), kind, "", "", &text(r, 4))? {
+                    done.feed += 1;
+                }
+            }
+        }
+        let table = format!("{prefix}_feed_status");
+        if has(&table) {
+            let mut rows = old.prepare(&format!(
+                "SELECT created_at, user_id, display_name, status, status_description, previous_status, previous_status_description FROM \"{table}\" ORDER BY created_at"
+            ))?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                let (at, user, name) = (text(r, 0), text(r, 1), text(r, 2));
+                let (status, words, was, were) = (text(r, 3), text(r, 4), text(r, 5), text(r, 6));
+                if !status.is_empty() && status != was && add(&at, &user, &name, "status", &status, &was, "")? {
+                    done.feed += 1;
+                }
+                if words != were && add(&at, &user, &name, "statusText", &words, &were, "")? {
+                    done.feed += 1;
+                }
+            }
+        }
+        let table = format!("{prefix}_feed_avatar");
+        if has(&table) {
+            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name FROM \"{table}\" ORDER BY created_at"))?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                if add(&text(r, 0), &text(r, 1), &text(r, 2), "avatar", "", "", "")? {
+                    done.feed += 1;
+                }
+            }
+        }
+        let table = format!("{prefix}_friend_log_history");
+        if has(&table) {
+            let mut rows = old.prepare(&format!("SELECT created_at, type, user_id, display_name, previous_display_name FROM \"{table}\" ORDER BY created_at"))?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                let (at, kind, user, name, was) = (text(r, 0), text(r, 1), text(r, 2), text(r, 3), text(r, 4));
+                let added = match kind.as_str() {
+                    "Friend" => add(&at, &user, &name, "friendAdded", "", "", "")?,
+                    "Unfriend" => add(&at, &user, &name, "friendRemoved", "", "", "")?,
+                    "DisplayName" => add(&at, &user, &name, "name", &name, &was, "")?,
+                    _ => false,
+                };
+                if added {
+                    done.friend_log += 1;
+                }
+            }
+        }
+
+        // Visits, each with the people the game log saw there.
+        if has("gamelog_location") {
+            let mut rows = old.prepare("SELECT created_at, location, world_id, world_name, time FROM gamelog_location ORDER BY created_at")?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                let (joined, location, world_id, world_name) = (text(r, 0), text(r, 1), text(r, 2), text(r, 3));
+                let stayed_ms: i64 = r.get::<_, Option<i64>>(4).ok().flatten().unwrap_or(0).max(0);
+                if joined.is_empty() || location.is_empty() {
+                    continue;
+                }
+                let known: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM visits WHERE location = ?1
+                     AND ABS(CAST(strftime('%s', joined_at) AS INTEGER) - CAST(strftime('%s', ?2) AS INTEGER)) <= 10",
+                    params![location, joined],
+                    |r| r.get(0),
+                )?;
+                if known > 0 {
+                    continue;
+                }
+                // VRCX keeps how long the stay lasted; a stay it never closed ends where it began.
+                let left: String = tx.query_row(
+                    "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?1, ?2)",
+                    params![joined, format!("+{:.3} seconds", stayed_ms as f64 / 1000.0)],
+                    |r| r.get(0),
+                )?;
+                tx.execute(
+                    "INSERT INTO visits (location, world_id, world_name, joined_at, left_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![location, world_id, world_name, joined, left],
+                )?;
+                let visit = tx.last_insert_rowid();
+                done.visits += 1;
+                if !has("gamelog_join_leave") {
+                    continue;
+                }
+                let mut seen = old.prepare(
+                    "SELECT created_at, type, display_name, user_id FROM gamelog_join_leave
+                     WHERE location = ?1 AND created_at >= ?2 AND created_at <= ?3 ORDER BY created_at",
+                )?;
+                let mut people = seen.query(params![location, joined, left])?;
+                while let Some(p) = people.next()? {
+                    let (at, kind, name, user) = (text(p, 0), text(p, 1), text(p, 2), text(p, 3));
+                    if name.is_empty() {
+                        continue;
+                    }
+                    if kind == "OnPlayerJoined" {
+                        tx.execute(
+                            "INSERT INTO sightings (visit_id, user_id, display_name, joined_at) VALUES (?1, ?2, ?3, ?4)",
+                            params![visit, user, name, at],
+                        )?;
+                        done.people += 1;
+                    } else if kind == "OnPlayerLeft" {
+                        tx.execute(
+                            "UPDATE sightings SET left_at = ?1 WHERE id = (
+                                SELECT id FROM sightings WHERE visit_id = ?2 AND left_at IS NULL AND display_name = ?3 ORDER BY id DESC LIMIT 1)",
+                            params![at, visit, name],
+                        )?;
+                    }
+                }
+                tx.execute("UPDATE sightings SET left_at = ?1 WHERE visit_id = ?2 AND left_at IS NULL", params![left, visit])?;
+            }
+        }
+
+        // Notes on people, worlds and avatars. One I already wrote here is kept.
+        for (table, key) in [("memos", "user_id"), ("world_memos", "world_id"), ("avatar_memos", "avatar_id")] {
+            if !has(table) {
+                continue;
+            }
+            let mut rows = old.prepare(&format!("SELECT {key}, memo, edited_at FROM {table}"))?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                let (id, memo, at) = (text(r, 0), text(r, 1), text(r, 2));
+                if id.is_empty() || memo.trim().is_empty() {
+                    continue;
+                }
+                let at = if at.is_empty() { now() } else { at };
+                done.notes += tx.execute("INSERT OR IGNORE INTO notes (user_id, note, updated_at) VALUES (?1, ?2, ?3)", params![id, memo, at])?;
+            }
+        }
+
+        // The favourites VRCX kept only on this PC, with the name and picture it had for each.
+        for (table, key, cache, kind) in [("favorite_world", "world_id", "cache_world", "world"), ("favorite_avatar", "avatar_id", "cache_avatar", "avatar")] {
+            if !has(table) {
+                continue;
+            }
+            let named = has(cache);
+            let mut rows = old.prepare(&format!("SELECT {key}, created_at FROM {table}"))?;
+            let mut it = rows.query([])?;
+            while let Some(r) = it.next()? {
+                let (id, at) = (text(r, 0), text(r, 1));
+                if id.is_empty() {
+                    continue;
+                }
+                let (name, author, image) = if named {
+                    old.query_row(&format!("SELECT name, author_name, thumbnail_image_url FROM {cache} WHERE id = ?1"), params![id], |c| {
+                        Ok((
+                            c.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                            c.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                            c.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                        ))
+                    })
+                    .unwrap_or_default()
+                } else {
+                    Default::default()
+                };
+                let at = if at.is_empty() { now() } else { at };
+                done.favourites += tx.execute(
+                    "INSERT OR IGNORE INTO local_favorites (kind, item_id, name, author_name, image, added_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![kind, id, name, author, image, at],
+                )?;
+            }
+        }
+
+        // Older entries were just added with the newest ids. Both lists are read newest id
+        // first, so they are numbered again in order of time. People keep pointing at their visit.
+        if done.feed + done.friend_log > 0 {
+            tx.execute_batch(
+                "CREATE TABLE feed_sorted AS SELECT at, user_id, display_name, kind, detail, previous, location FROM feed ORDER BY at, id;
+                 DELETE FROM feed;
+                 DELETE FROM sqlite_sequence WHERE name = 'feed';
+                 INSERT INTO feed (at, user_id, display_name, kind, detail, previous, location)
+                     SELECT at, user_id, display_name, kind, detail, previous, location FROM feed_sorted ORDER BY rowid;
+                 DROP TABLE feed_sorted;",
+            )?;
+        }
+        if done.visits > 0 {
+            tx.execute_batch(
+                "CREATE TABLE visit_order AS SELECT id AS was, ROW_NUMBER() OVER (ORDER BY joined_at, id) AS now FROM visits;
+                 CREATE TABLE visits_sorted AS SELECT o.now AS id, v.location, v.world_id, v.world_name, v.joined_at, v.left_at
+                     FROM visits v JOIN visit_order o ON o.was = v.id;
+                 UPDATE sightings SET visit_id = (SELECT now FROM visit_order WHERE was = sightings.visit_id)
+                     WHERE visit_id IN (SELECT was FROM visit_order);
+                 DELETE FROM visits;
+                 DELETE FROM sqlite_sequence WHERE name = 'visits';
+                 INSERT INTO visits (id, location, world_id, world_name, joined_at, left_at)
+                     SELECT id, location, world_id, world_name, joined_at, left_at FROM visits_sorted ORDER BY id;
+                 DROP TABLE visits_sorted;
+                 DROP TABLE visit_order;",
+            )?;
+        }
+        tx.commit()?;
+        Ok(done)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1308,5 +1579,95 @@ mod tests {
         assert_eq!(s.tags().unwrap(), vec![("avtr_a".to_string(), "club".to_string()), ("avtr_b".to_string(), "club".to_string())]);
         s.set_tags("avtr_b", &[]).unwrap();
         assert_eq!(s.tags().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn history_from_vrcx_comes_over_once_and_in_order() {
+        let dir = std::env::temp_dir().join(format!("anonymous-vrx-bring-over-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let other = dir.join("other.sqlite3");
+        {
+            let old = Connection::open(&other).unwrap();
+            old.execute_batch(
+                "CREATE TABLE usrme0000_feed_gps (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO usrme0000_feed_gps (created_at, user_id, display_name, location, previous_location) VALUES ('2025-01-02T10:00:00.000Z', 'usr_a', 'Ana', 'wrld_x:1', 'private');
+                 CREATE TABLE usrme0000_feed_online_offline (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO usrme0000_feed_online_offline (created_at, user_id, display_name, type, location) VALUES ('2025-01-02T09:00:00.000Z', 'usr_a', 'Ana', 'Online', 'private');
+                 CREATE TABLE usrme0000_feed_status (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT);
+                 INSERT INTO usrme0000_feed_status (created_at, user_id, display_name, status, status_description, previous_status, previous_status_description) VALUES ('2025-01-02T11:00:00.000Z', 'usr_a', 'Ana', 'busy', 'afk', 'active', 'afk');
+                 CREATE TABLE usrme0000_friend_log_history (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, user_id TEXT, display_name TEXT, previous_display_name TEXT, trust_level TEXT, previous_trust_level TEXT, friend_number INTEGER);
+                 INSERT INTO usrme0000_friend_log_history (created_at, type, user_id, display_name, previous_display_name) VALUES ('2025-01-01T08:00:00.000Z', 'Friend', 'usr_a', 'Ana', ''), ('2025-01-03T08:00:00.000Z', 'DisplayName', 'usr_a', 'Anna', 'Ana'), ('2025-01-03T09:00:00.000Z', 'TrustLevel', 'usr_a', 'Anna', '');
+                 CREATE TABLE usrother_feed_gps (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO usrother_feed_gps (created_at, user_id, display_name, location, previous_location) VALUES ('2025-01-02T10:00:00.000Z', 'usr_z', 'Not mine', 'wrld_y:1', '');
+                 CREATE TABLE gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO gamelog_location (created_at, location, world_id, world_name, time) VALUES ('2025-01-02T12:00:00.000Z', 'wrld_x:1', 'wrld_x', 'Pier', 3600000);
+                 CREATE TABLE gamelog_join_leave (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, display_name TEXT, location TEXT, user_id TEXT, time INTEGER);
+                 INSERT INTO gamelog_join_leave (created_at, type, display_name, location, user_id, time) VALUES
+                    ('2025-01-02T12:00:05.000Z', 'OnPlayerJoined', 'Ana', 'wrld_x:1', 'usr_a', 0),
+                    ('2025-01-02T12:30:00.000Z', 'OnPlayerLeft', 'Ana', 'wrld_x:1', 'usr_a', 1795000),
+                    ('2025-01-02T12:10:00.000Z', 'OnPlayerJoined', 'Bo', 'wrld_x:1', '', 0),
+                    ('2025-01-05T12:10:00.000Z', 'OnPlayerJoined', 'Later', 'wrld_x:1', '', 0);
+                 CREATE TABLE memos (user_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT);
+                 INSERT INTO memos VALUES ('usr_a', '2025-01-02T00:00:00.000Z', 'met at the pier'), ('usr_b', '2025-01-02T00:00:00.000Z', 'from the other app');
+                 CREATE TABLE favorite_world (id INTEGER PRIMARY KEY, created_at TEXT, world_id TEXT, group_name TEXT);
+                 INSERT INTO favorite_world (created_at, world_id, group_name) VALUES ('2025-01-02T00:00:00.000Z', 'wrld_x', 'Chill');
+                 CREATE TABLE cache_world (id TEXT PRIMARY KEY, name TEXT, author_name TEXT, thumbnail_image_url TEXT);
+                 INSERT INTO cache_world VALUES ('wrld_x', 'Pier', 'Rook', 'https://example.test/pier.png');",
+            )
+            .unwrap();
+        }
+
+        let s = Store::in_memory().unwrap();
+        // Something this app recorded itself, newer than everything coming over.
+        s.add_feed(&FeedDraft { user_id: "usr_a".into(), display_name: "Anna".into(), kind: "online", detail: String::new(), previous: String::new(), location: String::new() }).unwrap();
+        s.set_note("usr_b", "my own note stays").unwrap();
+
+        let got = s.import_vrcx(&other, "usr_me-0000").unwrap();
+        assert_eq!(got, BroughtOver { feed: 3, friend_log: 2, visits: 1, people: 2, notes: 1, favourites: 1 });
+        // The status text did not change, so only the status itself came over; another account's table was not read.
+        let feed = s.feed(50, None).unwrap();
+        assert_eq!(feed.len(), 6);
+        assert!(feed.iter().all(|f| f.user_id != "usr_z"));
+        // Newest first: my own entry from today leads, the oldest import is last.
+        assert_eq!((feed[0].kind.as_str(), feed[0].display_name.as_str()), ("online", "Anna"));
+        assert_eq!(feed.last().unwrap().kind, "friendAdded");
+        assert!(feed.windows(2).all(|w| w[0].at >= w[1].at));
+
+        let visits = s.visits(10, None).unwrap();
+        assert_eq!(visits.len(), 1);
+        assert_eq!(visits[0].left_at.as_deref(), Some("2025-01-02T13:00:00.000Z"));
+        let people = s.visit_people(visits[0].id).unwrap();
+        assert_eq!(people.len(), 2, "someone who joined days later is not part of this stay");
+        assert_eq!(people.iter().find(|p| p.display_name == "Ana").unwrap().left_at.as_deref(), Some("2025-01-02T12:30:00.000Z"));
+        assert_eq!(people.iter().find(|p| p.display_name == "Bo").unwrap().left_at.as_deref(), Some("2025-01-02T13:00:00.000Z"));
+        assert!(s.open_visit().unwrap().is_none(), "a stay from the past is never left open");
+        assert_eq!(s.note("usr_a").unwrap(), "met at the pier");
+        assert_eq!(s.note("usr_b").unwrap(), "my own note stays");
+
+        // A second run finds nothing new.
+        assert_eq!(s.import_vrcx(&other, "usr_me-0000").unwrap(), BroughtOver::default());
+        assert_eq!(s.feed(50, None).unwrap().len(), 6);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Reads a real VRCX file into an empty history in memory and prints the counts. The file
+    /// is named in `ANON_VRX_OTHER`; nothing on disk is changed.
+    #[test]
+    #[ignore]
+    fn real_vrcx_file_comes_over() {
+        let other = std::path::PathBuf::from(std::env::var("ANON_VRX_OTHER").expect("ANON_VRX_OTHER"));
+        let account: String = {
+            let old = Connection::open_with_flags(&other, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+            let table: String = old.query_row("SELECT name FROM sqlite_master WHERE name LIKE 'usr%_feed_gps' LIMIT 1", [], |r| r.get(0)).unwrap();
+            table.trim_end_matches("_feed_gps").to_string()
+        };
+        let s = Store::in_memory().unwrap();
+        let got = s.import_vrcx(&other, &account).unwrap();
+        println!("{got:?}");
+        let feed = s.feed(1000, None).unwrap();
+        assert_eq!(feed.len(), got.feed + got.friend_log);
+        assert!(feed.windows(2).all(|w| w[0].at >= w[1].at), "newest first");
+        assert_eq!(s.import_vrcx(&other, &account).unwrap(), BroughtOver::default(), "a second run adds nothing");
     }
 }

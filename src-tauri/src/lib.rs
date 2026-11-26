@@ -564,6 +564,24 @@ fn backup_now(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String) -> App
     hub.backup(&backups_root(&app)?, &settings, "backup")
 }
 
+/// Where VRCX keeps its history on this PC.
+fn vrcx_file() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("VRCX").join("VRCX.sqlite3"))
+}
+
+/// Whether VRCX's history file is on this PC.
+#[tauri::command]
+fn vrcx_found() -> bool {
+    vrcx_file().is_some_and(|f| f.is_file())
+}
+
+/// Brings VRCX's history for the signed-in account into this app. Makes a backup first.
+#[tauri::command]
+fn import_vrcx(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String) -> AppResult<serde_json::Value> {
+    let file = vrcx_file().ok_or_else(|| AppError::CannotDo("VRCX's history file was not found on this PC.".into()))?;
+    hub.import_vrcx(&file, &backups_root(&app)?, &settings)
+}
+
 /// Makes the daily automatic backup when it is due. Nothing happens otherwise.
 #[tauri::command]
 fn auto_backup(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String, keep: usize) -> AppResult<Option<backup::BackupInfo>> {
@@ -1072,6 +1090,8 @@ pub fn run() {
             backup_now,
             list_backups,
             auto_backup,
+            vrcx_found,
+            import_vrcx,
             restore_backup,
             open_backups_folder,
             photos,

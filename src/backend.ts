@@ -470,6 +470,10 @@ export interface Backend {
   quit(): Promise<void>;
   /** Copies history and settings to a new folder in Documents. */
   backupNow(settings: string): Promise<BackupInfo>;
+  /** Whether VRCX's history file is on this PC. */
+  vrcxFound(): Promise<boolean>;
+  /** Brings VRCX's history for my account into this app, after making a backup. Safe to run again. */
+  importVrcx(settings: string): Promise<{ broughtOver: { feed: number; friendLog: number; visits: number; people: number; notes: number; favourites: number }; backup: string }>;
   /** Makes the daily automatic backup if one is due and keeps the newest `keep`. Null when none was due. */
   autoBackup(settings: string, keep: number): Promise<BackupInfo | null>;
   backups(): Promise<BackupInfo[]>;
@@ -620,6 +624,8 @@ const desktop: Backend = {
   backups: () => invoke("list_backups"),
   restoreBackup: (name, settings) => invoke("restore_backup", { name, settings }),
   autoBackup: (settings, keep) => invoke("auto_backup", { settings, keep }),
+  vrcxFound: () => invoke("vrcx_found"),
+  importVrcx: (settings) => invoke("import_vrcx", { settings }),
   openBackupsFolder: () => invoke("open_backups_folder"),
   here: () => invoke("get_here"),
   visits: (limit, before) => invoke("get_visits", { limit, before: before ?? null }),

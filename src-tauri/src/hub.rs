@@ -450,6 +450,19 @@ impl Hub {
         backup::create(root, &copy, settings_json, label)
     }
 
+    /// Brings the history VRCX kept for this account into this one. A backup is made first,
+    /// named so it can be told apart, and VRCX's own file is only read.
+    pub fn import_vrcx(&self, other: &std::path::Path, backups: &std::path::Path, settings_json: &str) -> AppResult<Value> {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        if !other.is_file() {
+            return Err(AppError::CannotDo("VRCX's history file was not found on this PC.".into()));
+        }
+        let saved = self.backup(backups, settings_json, "before bringing over VRCX")?;
+        let got = self.with_store(|s| s.import_vrcx(other, &me.id))?;
+        self.send("here:changed", Value::Null);
+        Ok(json!({ "broughtOver": got, "backup": saved.name }))
+    }
+
     /// Makes an automatic backup when the last one is older than a day, then keeps only the
     /// newest `keep`. Gives back the new backup, or nothing when none was due.
     pub fn auto_backup(&self, root: &std::path::Path, settings_json: &str, keep: usize) -> AppResult<Option<BackupInfo>> {

@@ -100,6 +100,33 @@ export function SettingsPage({
   const [dataNote, setDataNote] = useState("");
   const [asking, setAsking] = useState("");
   const [restored, setRestored] = useState(false);
+  // Moving over from VRCX: whether its history is on this PC, and how the last run went.
+  const [vrcx, setVrcx] = useState(false);
+  const [bringing, setBringing] = useState(false);
+  const [brought, setBrought] = useState("");
+  useEffect(() => {
+    void backend
+      .vrcxFound()
+      .then(setVrcx)
+      .catch(() => {});
+  }, []);
+  async function bringOver() {
+    setBringing(true);
+    setBrought("");
+    try {
+      const { broughtOver: got, backup } = await backend.importVrcx(JSON.stringify(settings));
+      const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites;
+      setBrought(
+        total === 0
+          ? "Nothing new: everything VRCX has for this account is already here."
+          : `Brought over ${got.feed.toLocaleString()} activity entries, ${got.friendLog.toLocaleString()} friend log entries, ${got.visits.toLocaleString()} world visits with ${got.people.toLocaleString()} people, ${got.notes} notes and ${got.favourites} favourites kept on this PC. A backup from just before is saved as "${backup}". The lists show it after the app is opened again.`,
+      );
+    } catch (err) {
+      setBrought(`Nothing was brought over: ${errorText(err)}`);
+    } finally {
+      setBringing(false);
+    }
+  }
   const [tab, setTab] = useState(lastTab);
   // Starting with Windows is kept by Windows, so it is asked for and not read from my settings.
   const [autostart, setAutostart] = useState(false);
@@ -818,6 +845,26 @@ export function SettingsPage({
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section data-group="data">
+        <h2>Moving over from VRCX</h2>
+        <p className="setting-hint">
+          Copies what VRCX recorded for this account into this app: friend activity, the friend log, world visits with who was there, your notes, and
+          the favourites VRCX kept on this PC. VRCX's own file is only read, never changed, and a backup of this app's history is made first. Running
+          it again only adds what is new.
+        </p>
+        <div className="data-actions">
+          <button className="plain go" disabled={!vrcx || bringing} onClick={() => void bringOver()}>
+            {bringing ? "Bringing it over" : "Bring my VRCX history over"}
+          </button>
+        </div>
+        {!vrcx && <p className="setting-hint">VRCX's history was not found on this PC.</p>}
+        {brought && (
+          <p className="setting-hint" role="status">
+            {brought}
+          </p>
         )}
       </section>
 

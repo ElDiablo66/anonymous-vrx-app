@@ -301,6 +301,13 @@ export const demoBackend: Backend = {
   async backups() {
     return demoBackups;
   },
+  async vrcxFound() {
+    return true;
+  },
+  async importVrcx() {
+    await wait(900);
+    return { broughtOver: { feed: 1840, friendLog: 61, visits: 412, people: 3907, notes: 4, favourites: 12 }, backup: "before bringing over VRCX 2026-11-25 21.10.00" };
+  },
   async autoBackup() {
     return null;
   },

@@ -133,7 +133,7 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | My tags | Your own tags on avatars, like folders an avatar can be in more than one of. They filter My uploads and favourite avatars, search finds them, and Hide takes an avatar out of the lists without touching it on VRChat |
 | My stars | Your own 1 to 5 star rating on any world, and whether the game log has seen you there, both usable as filters on favourite worlds and in world search. They stay on your PC |
 | Search | People, worlds and avatars |
-| Events | The events of your groups, the ones you follow and VRChat's featured ones, month by month. Follow one and Windows reminds you before it starts |
+| Events | What is on now and coming up across VRChat, the events of your groups, the ones you follow and VRChat's featured ones. Follow one and Windows reminds you before it starts |
 
 ### Your own uploads
 
@@ -150,6 +150,7 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | Tray | Closing the window can leave the app in the tray, where it keeps recording. Starting it a second time brings the running one forward |
 | Starting up | It can start with Windows, in the tray, and open its window when VRChat starts |
 | After a crash | When VRChat closes without warning while you are in a world, the app offers to take you back to the same instance, or does it by itself if you choose that |
+| Moving over from VRCX | Copies the friend activity, friend log, world visits, notes and local favourites VRCX recorded for your account into this app. VRCX's file is only read, a backup is made first, and running it again adds only what is new |
 | Backups | History and settings go to a folder in Documents, by hand or by itself once a day (the newest 7 automatic ones are kept, you can change that). The sign-in is never part of a backup |
 | VRChat outages | A warning appears when VRChat's status page reports trouble |
 | Discord | Optional. Shows the world you are in on your Discord profile, with switches for the world name, the kind of instance, the head count and a Join button. Invite instances show as a private world. Needs your own Discord application ID |
