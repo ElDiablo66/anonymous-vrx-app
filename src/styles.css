@@ -8453,3 +8453,40 @@ body .town-card .map-switch {
 body .town-plate {
   font-size: 15px;
 }
+
+/* ---------- stage and list end on one line ---------- */
+.town-layout {
+  align-items: stretch;
+}
+
+.town-layout > .town-stage,
+.map-wrap .town-layout > .map-stage {
+  height: auto;
+  min-height: 440px;
+  max-height: none;
+}
+
+.town-layout > .town-rail {
+  max-height: none;
+  overflow: visible;
+  align-content: start;
+}
+
+@media (max-width: 1180px) {
+  .town-layout > .town-stage,
+  .map-wrap .town-layout > .map-stage {
+    height: 60vh;
+  }
+}
+
+.map-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--card-line);
+  color: var(--text);
+  font: 500 13px/1.3 var(--body);
+  cursor: pointer;
+}

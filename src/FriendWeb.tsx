@@ -80,7 +80,7 @@ function seatsFor(count: number): { seats: Array<{ x: number; y: number }>; r: n
  * Everything the picture needs: the districts with their place on the board, each friend's
  * seat, and how many friendships cross from one district to another.
  */
-function plan(friends: Friend[], pairs: Array<[string, string]>) {
+function plan(friends: Friend[], pairs: Array<[string, string]>, shape: number) {
   const byId = new Map(friends.map((f) => [f.id, f]));
   const ids = friends.map((f) => f.id).sort();
   const near = new Map<string, string[]>(ids.map((id) => [id, []]));
@@ -107,7 +107,10 @@ function plan(friends: Friend[], pairs: Array<[string, string]>) {
 
   // Districts stand in rows, biggest first, like blocks on a street map.
   const gap = 56;
-  const widest = Math.max(900, Math.sqrt(districts.reduce((sum, d) => sum + (2 * d.r + gap) ** 2, 0)) * 1.35);
+  // The rows are as long as it takes for the town to have the shape of its stage (`shape`
+  // is the stage's width over its height), so a wide stage is filled from side to side.
+  const ground = districts.reduce((sum, d) => sum + (2 * d.r + gap) ** 2, 0);
+  const widest = Math.max(2 * (districts[0]?.r ?? 0) + 2 * gap, Math.sqrt(ground * shape) * 1.08);
   let x = gap;
   let y = gap;
   let row = 0;
@@ -211,28 +214,28 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
   }
 
   const idList = useMemo(() => friends.map((f) => f.id).sort().join(","), [friends]);
-  const town = useMemo(() => plan(friends, known?.pairs ?? []), [known, idList]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The stage's own size, kept in step by an observer. It is as wide as its column and as
+  // tall as the list beside it, so the two end on one line.
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const shape = size.w > 0 && size.h > 0 ? Math.round((size.w / size.h) * 5) / 5 : 1.6;
+  const town = useMemo(() => plan(friends, known?.pairs ?? [], shape), [known, idList, shape]); // eslint-disable-line react-hooks/exhaustive-deps
   const { byId, near, districts, seat, bridges, reach, loners } = town;
 
-  // How wide the stage is, kept in step by an observer. Everything else follows from it:
-  // the stage is only as tall as the town needs at that width, up to two thirds of the
-  // window, and the town is never drawn bigger than life.
-  const [wide, setWide] = useState(0);
   const shownNow = districts.length > 0;
   useEffect(() => {
     const el = stage.current;
     if (!el) return;
-    setWide(el.clientWidth);
-    const watch = new ResizeObserver(() => setWide(el.clientWidth));
+    const read = () => setSize((old) => (old.w === el.clientWidth && old.h === el.clientHeight ? old : { w: el.clientWidth, h: el.clientHeight }));
+    read();
+    const watch = new ResizeObserver(read);
     watch.observe(el);
     return () => watch.disconnect();
   }, [shownNow]);
-  const across = wide > 0 ? Math.min(1, wide / town.width) : 1;
-  const tall = Math.round(Math.min(window.innerHeight * 0.66, Math.max(320, town.height * across)));
+  // The whole town in view, a little bigger than life at most.
   const fit = () => {
-    if (wide <= 0 || districts.length === 0) return;
-    const k = Math.min(across, tall / town.height);
-    setView({ k, x: (wide - town.width * k) / 2, y: (tall - town.height * k) / 2 });
+    if (size.w <= 0 || size.h <= 0 || districts.length === 0) return;
+    const k = Math.min(size.w / town.width, size.h / town.height, 1.3);
+    setView({ k, x: (size.w - town.width * k) / 2, y: (size.h - town.height * k) / 2 });
   };
   // The wheel zooms the town and nothing else; the page behind it stays where it is.
   const shown = districts.length > 0;
@@ -259,7 +262,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
   // Fitted again whenever the stage or the town changes size, unless I have moved it myself.
   useLayoutEffect(() => {
     if (!moved.current) fit();
-  }, [wide, tall, town.width, town.height, districts.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [size.w, size.h, town.width, town.height, districts.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function goTo(id: string) {
     const s = seat.get(id);
@@ -356,7 +359,6 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
           <div
             className={`town-stage${focus ? " town-focused" : ""}${zone >= 0 ? " town-zoned" : ""}`}
             ref={stage}
-            style={{ height: tall }}
             onPointerDown={(e) => {
               drag.current = { x: e.clientX, y: e.clientY, moved: false };
             }}

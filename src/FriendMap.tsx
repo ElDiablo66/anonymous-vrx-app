@@ -199,7 +199,7 @@ export function FriendMap({
     if (!frame || !world) return;
     const room = frame.clientHeight - 56;
     const k = world.offsetHeight <= room ? 1 : Math.max(0.4, room / world.offsetHeight);
-    setView({ k, x: ((1 - k) * world.offsetWidth) / 2, y: 0 });
+    setView({ k, x: ((1 - k) * world.offsetWidth) / 2, y: Math.max(0, (room - world.offsetHeight * k) / 2) });
   };
   // The wheel zooms the map and nothing else; the page behind it stays where it is.
   useEffect(() => {
@@ -230,6 +230,7 @@ export function FriendMap({
       if (!moved.current) fitMap();
     });
     watch.observe(world);
+    if (stage.current) watch.observe(stage.current);
     return () => watch.disconnect();
   }); // eslint-disable-line react-hooks/exhaustive-deps
   const [lines, setLines] = useState<Array<Pair & { x1: number; y1: number; x2: number; y2: number }>>([]);
@@ -530,17 +531,13 @@ export function FriendMap({
               A favourite
             </li>
           </ul>
-          <label className="setting map-switch" title="A line joins two friends you saw in the same instance at least three times, thicker the more often. From your own world history">
-            <span>
-              <span className="setting-name">Lines between friends often together</span>
-            </span>
+          <label className="map-toggle" title="A line joins two friends you saw in the same instance at least three times, thicker the more often. From your own world history">
+            <span>Lines between friends often together</span>
             <input type="checkbox" role="switch" checked={linesOn} onChange={toggleLines} />
           </label>
           {away.length > 0 && (
-            <label className="setting map-switch">
-              <span>
-                <span className="setting-name">Show the {away.length} on the website or phone</span>
-              </span>
+            <label className="map-toggle">
+              <span>Show the {away.length} on the website or phone</span>
               <input type="checkbox" role="switch" checked={showAway} onChange={(e) => setShowAway(e.target.checked)} />
             </label>
           )}
