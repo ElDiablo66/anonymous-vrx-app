@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/ElDiablo66/anonymous-vrx-app/security/advisories/new
+    about: Report it privately instead of in a public issue.
+  - name: Question
+    url: https://github.com/ElDiablo66/anonymous-vrx-app/blob/main/SUPPORT.md
+    about: Where to ask and what to include.

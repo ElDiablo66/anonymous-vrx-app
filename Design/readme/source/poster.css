@@ -1,0 +1,203 @@
+/* Shared look for the README pictures: dusk-coast gradients, heavy condensed type, framed screenshots. */
+
+@font-face {
+  font-family: "Barlow Condensed";
+  font-weight: 800;
+  font-style: italic;
+  src: url("../../../node_modules/@fontsource/barlow-condensed/files/barlow-condensed-latin-800-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Barlow Condensed";
+  font-weight: 700;
+  font-style: normal;
+  src: url("../../../node_modules/@fontsource/barlow-condensed/files/barlow-condensed-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Instrument Sans";
+  font-weight: 400 700;
+  src: url("../../../node_modules/@fontsource-variable/instrument-sans/files/instrument-sans-latin-wght-normal.woff2") format("woff2");
+}
+
+:root {
+  --frame: #0b0418;
+  --pink: #ff6a9a;
+  --peach: #ffc46b;
+  --violet: #b56dff;
+  --cream: #fff1e6;
+  --poster: linear-gradient(100deg, #ffd27a, #ff6a9a 48%, #b56dff);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+body {
+  width: 1280px;
+  height: 640px;
+  position: relative;
+  overflow: hidden;
+  font-family: "Instrument Sans", "Segoe UI", sans-serif;
+  color: var(--cream);
+  background: #12062a;
+}
+
+.sky {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #1c0b3d 0%, #4a1a7a 34%, #b8318f 58%, #ff5f86 72%, #ffa05a 80%);
+}
+.sun {
+  position: absolute;
+  left: 250px;
+  top: 300px;
+  width: 340px;
+  height: 340px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #fff1b8, #ffc46b 50%, #ff7a5c);
+  box-shadow: 0 0 120px 60px rgba(255, 150, 100, 0.35);
+}
+.sea {
+  position: absolute;
+  inset: 512px 0 0 0;
+  background:
+    repeating-linear-gradient(180deg, transparent 0 14px, rgba(255, 196, 107, 0.16) 14px 16px),
+    linear-gradient(180deg, #5a2380, #12072a);
+  border-top: 2px solid #ffb36b;
+}
+
+.stamp {
+  display: inline-block;
+  padding: 5px 12px 4px;
+  font: 700 17px "Barlow Condensed", sans-serif;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--frame);
+  background: var(--peach);
+  transform: skewX(-8deg);
+}
+
+h1 {
+  font: italic 800 112px/0.86 "Barlow Condensed", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: -0.005em;
+}
+h1 span {
+  display: block;
+  width: max-content;
+  padding-right: 14px;
+  background: var(--poster);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(5px 5px 0 var(--frame));
+}
+
+.panel {
+  position: absolute;
+  border: 5px solid var(--frame);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--frame);
+}
+.panel img {
+  display: block;
+  width: 100%;
+}
+
+/* Hero */
+
+.hero .title {
+  position: absolute;
+  left: 64px;
+  top: 92px;
+  z-index: 5;
+  width: 560px;
+}
+.hero h1 {
+  margin: 18px 0 20px;
+}
+.hero .line {
+  font-size: 22px;
+  line-height: 1.35;
+  max-width: 30ch;
+  text-shadow: 0 2px 10px rgba(11, 4, 24, 0.8);
+}
+.hero .tags {
+  display: flex;
+  gap: 10px;
+  margin-top: 22px;
+}
+.hero .tags b {
+  padding: 6px 12px 5px;
+  font: 700 18px "Barlow Condensed", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(11, 4, 24, 0.82);
+  border-left: 4px solid var(--pink);
+}
+.hero .p1 {
+  width: 560px;
+  left: 660px;
+  top: 64px;
+  transform: rotate(3deg);
+  box-shadow: 12px 12px 0 var(--pink);
+  z-index: 2;
+}
+.hero .p2 {
+  width: 390px;
+  left: 846px;
+  top: 330px;
+  transform: rotate(-4deg);
+  box-shadow: 10px 10px 0 var(--peach);
+  z-index: 3;
+}
+.hero .p3 {
+  width: 300px;
+  left: 600px;
+  top: 392px;
+  transform: rotate(5deg);
+  box-shadow: 10px 10px 0 var(--violet);
+  z-index: 4;
+}
+
+/* Theme board */
+
+.board {
+  height: 760px;
+}
+.board .head {
+  position: absolute;
+  left: 56px;
+  top: 40px;
+  z-index: 5;
+}
+.board h1 {
+  font-size: 76px;
+  margin-top: 10px;
+}
+.board .tile {
+  position: absolute;
+  width: 372px;
+  z-index: 2;
+}
+.board .tile .panel {
+  position: relative;
+}
+.board .tile figcaption {
+  position: absolute;
+  left: 14px;
+  bottom: -18px;
+  z-index: 3;
+  padding: 5px 12px 4px;
+  font: 700 19px "Barlow Condensed", sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--frame);
+  transform: skewX(-8deg);
+}
+.board .tile figcaption i {
+  font-style: normal;
+  opacity: 0.7;
+  margin-left: 8px;
+}

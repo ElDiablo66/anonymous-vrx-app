@@ -1,0 +1,20 @@
+name: Feature request
+description: Something you'd like the app to do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you're trying to do
+      description: The situation, not the button. "I never know which friend group is in a public world I can join" beats "add a filter".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How you picture it working
+  - type: textarea
+    id: elsewhere
+    attributes:
+      label: How other tools handle it
+      description: Optional. Describe it in your own words; please don't paste other tools' code or screenshots of it.

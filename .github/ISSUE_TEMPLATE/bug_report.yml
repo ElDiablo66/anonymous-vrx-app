@@ -1,0 +1,42 @@
+name: Bug report
+description: Something doesn't work the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Never paste your VRChat password, two-factor codes or cookie here. Switch on "Hide names and pictures" (Ctrl+Shift+H) before taking screenshots.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you clicked before it happened
+      placeholder: |
+        1.
+        2.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+  - type: input
+    id: version
+    attributes:
+      label: Anonymous VRX version
+      description: Settings, About
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots with names hidden, whether VRChat was running, whether it happens every time

@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- Source of Design/readme/hero.png, also the social preview. Render from this folder at 1280x640 with headless Edge: msedge --headless=new --hide-scrollbars --allow-file-access-from-files --window-size=1280,640 --screenshot=<full path>/Design/readme/hero.png hero.html (the fonts load from node_modules). -->
+<meta charset="utf-8" />
+<title>Anonymous VRX hero</title>
+<link rel="stylesheet" href="poster.css" />
+<style>
+  .hero .title { top: 88px; }
+  .hero h1 { font-size: 132px; }
+  .hero .line { max-width: 27ch; }
+  .hero .p1 { width: 600px; left: 640px; top: 56px; transform: rotate(2.5deg); }
+  .hero .p2 { width: 330px; left: 900px; top: 318px; }
+  .hero .p3 { width: 330px; left: 580px; top: 352px; }
+</style>
+<body class="hero">
+  <div class="sky"></div>
+  <div class="sun"></div>
+  <div class="sea"></div>
+
+  <section class="title">
+    <p class="stamp">A VRChat companion for Windows</p>
+    <h1><span>Anonymous</span><span>VRX</span></h1>
+    <p class="line">Who is out tonight, where they are, and whether there is room for one more.</p>
+    <p class="tags"><b>Built in Rust</b><b>No server</b><b>Free</b></p>
+  </section>
+
+  <figure class="panel p1"><img src="../shots/friend%20web%20crop.webp" alt="" /></figure>
+  <figure class="panel p2"><img src="../shots/instance.webp" alt="" /></figure>
+  <figure class="panel p3"><img src="../shots/hang%20out%20crop.webp" alt="" /></figure>
+</body>
