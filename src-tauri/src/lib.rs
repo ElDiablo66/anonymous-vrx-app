@@ -388,8 +388,9 @@ fn get_mutuals(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
 
 /// Asks VRChat about every friend in turn, slowly. Runs until done, stopped or told to slow down.
 #[tauri::command]
-async fn fetch_mutuals(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
-    hub.fetch_mutuals(std::time::Duration::from_millis(1200)).await
+async fn fetch_mutuals(hub: State<'_, Arc<Hub>>, everyone: bool) -> AppResult<serde_json::Value> {
+    // Two questions a second at most. VRChat answers "slow down" when that is too many, and the run stops there.
+    hub.fetch_mutuals(std::time::Duration::from_millis(500), everyone).await
 }
 
 #[tauri::command]

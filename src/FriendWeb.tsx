@@ -199,7 +199,8 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
     setBusy(true);
     setProgress({ done: 0, total: friends.length });
     try {
-      const ran = await backend.fetchMutuals();
+      // A run that was stopped part way picks up where it left off; a finished one starts over.
+      const ran = await backend.fetchMutuals(!known || known.asked >= friends.length);
       onDone(`${endWords[ran.ended] ?? "Done."} Asked about ${ran.done} of ${ran.total} friends.${ran.problem ? ` ${ran.problem}` : ""}`);
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
@@ -287,7 +288,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
         ) : (
           <p className="town-intro">
             This draws which of your friends are friends with each other. The app has to ask VRChat about each friend, one at a time with a pause in
-            between, so {friends.length} friends take about {Math.max(1, Math.round((friends.length * 1.5) / 60))} min. It only happens when you press the
+            between, so {friends.length} friends take about {Math.max(1, Math.round((friends.length * 0.8) / 60))} min. It only happens when you press the
             button, and the answer stays on this PC.
           </p>
         )}

@@ -533,7 +533,7 @@ export interface Backend {
   /** What is known about which of my friends are friends with each other. */
   mutuals(): Promise<{ pairs: Array<[string, string]>; asked: number; hidden: string[]; at: string; running: boolean }>;
   /** Asks VRChat about every friend in turn, slowly. Ends when done, stopped, or told to slow down. */
-  fetchMutuals(): Promise<{ done: number; total: number; ended: string; problem: string }>;
+  fetchMutuals(everyone: boolean): Promise<{ done: number; total: number; ended: string; problem: string }>;
   stopMutuals(): Promise<void>;
   /** How my own worlds stood day by day over the last `days` days. Noted each time my worlds are listed. */
   worldStats(days: number): Promise<WorldDay[]>;
@@ -727,7 +727,7 @@ const desktop: Backend = {
   worldStats: (days) => invoke("get_world_stats", { days }),
   pairs: (ids) => invoke("get_pairs", { ids }),
   mutuals: () => invoke("get_mutuals"),
-  fetchMutuals: () => invoke("fetch_mutuals"),
+  fetchMutuals: (everyone) => invoke("fetch_mutuals", { everyone }),
   stopMutuals: () => invoke("stop_mutuals"),
   updateInfo: () => invoke("update_info"),
   updateCheck: () => invoke("update_check"),

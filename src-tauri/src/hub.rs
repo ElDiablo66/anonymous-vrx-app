@@ -279,7 +279,10 @@ impl Hub {
     /// One request a friend (more for someone with over a hundred shared friends), with a
     /// pause between friends, and only when I press the button. `gap` is that pause.
     /// Gives back how many friends were asked and why it ended.
-    pub async fn fetch_mutuals(&self, gap: Duration) -> AppResult<Value> {
+    ///
+    /// Unless `everyone` is set, friends who answered within the last twelve hours are not
+    /// asked again, so a run that was stopped picks up where it left off.
+    pub async fn fetch_mutuals(&self, gap: Duration, everyone: bool) -> AppResult<Value> {
         use std::sync::atomic::Ordering;
         let me = self.me().ok_or(AppError::NotSignedIn)?;
         if self.mutuals_running.swap(true, Ordering::Relaxed) {
@@ -288,6 +291,17 @@ impl Hub {
         self.mutuals_stop.store(false, Ordering::Relaxed);
         let mut ids: Vec<String> = self.inner.lock().unwrap().friends.keys().cloned().collect();
         ids.sort();
+        if !everyone {
+            let recent = (chrono::Utc::now() - chrono::Duration::hours(12)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            let fresh: std::collections::HashSet<String> = self
+                .with_store(|s| s.mutuals_asked())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(_, at, hidden)| !hidden && at.as_str() >= recent.as_str())
+                .map(|(id, _, _)| id)
+                .collect();
+            ids.retain(|id| !fresh.contains(id));
+        }
         let total = ids.len();
         let mut done = 0;
         let mut ended = "done";

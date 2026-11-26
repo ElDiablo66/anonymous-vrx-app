@@ -922,25 +922,28 @@ async fn friends_of_friends_are_asked_one_friend_at_a_time() {
     // Asked for a page at a time, with the page size named once.
     Mock::given(method("GET")).and(path("/users/usr_a/mutuals/friends")).and(query_param("n", "100")).and(query_param("offset", "0")).respond_with(ResponseTemplate::new(200).set_body_json(json!([ { "id": "usr_b" }, { "id": "usr_c" } ]))).expect(1).mount(&server).await;
     // Someone who does not let others see their friends.
-    Mock::given(method("GET")).and(path("/users/usr_b/mutuals/friends")).respond_with(ResponseTemplate::new(403).set_body_json(json!({ "error": { "message": "hidden", "status_code": 403 } }))).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/users/usr_b/mutuals/friends")).respond_with(ResponseTemplate::new(403).set_body_json(json!({ "error": { "message": "hidden", "status_code": 403 } }))).expect(2).mount(&server).await;
     Mock::given(method("GET")).and(path("/users/usr_c/mutuals/friends")).respond_with(ResponseTemplate::new(200).set_body_json(json!([ { "id": "usr_a" } ]))).expect(1).mount(&server).await;
 
     let api = Arc::new(client(&server));
     api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
     let hub = Hub::new(api, std::env::temp_dir(), Arc::new(|_, _| {}), false, None);
-    assert!(matches!(hub.fetch_mutuals(std::time::Duration::ZERO).await, Err(AppError::NotSignedIn)));
+    assert!(matches!(hub.fetch_mutuals(std::time::Duration::ZERO, true).await, Err(AppError::NotSignedIn)));
     hub.begin(json!({ "id": "usr_me_mutuals", "displayName": "Tester" })).unwrap();
     for id in ["usr_a", "usr_b", "usr_c"] {
         hub.put_friend_for_test(id);
     }
 
-    let ran = hub.fetch_mutuals(std::time::Duration::ZERO).await.unwrap();
+    let ran = hub.fetch_mutuals(std::time::Duration::ZERO, true).await.unwrap();
     assert_eq!((ran["done"].as_i64(), ran["ended"].as_str()), (Some(3), Some("done")));
     let known = hub.mutuals().unwrap();
     // a-b and a-c, each once, whoever reported it.
     assert_eq!(known["pairs"].as_array().unwrap().len(), 2);
     assert_eq!(known["hidden"], json!(["usr_b"]));
     assert_eq!(known["running"], false);
+    // Asked a moment ago: a second run that is not told to ask everyone only asks the one who gave no answer.
+    let again = hub.fetch_mutuals(std::time::Duration::ZERO, false).await;
+    assert_eq!(again.unwrap()["total"], 1);
 
     // A refusal that is not about one friend ends the run and is reported, and nobody is marked as hiding.
     let server = MockServer::start().await;
@@ -951,7 +954,7 @@ async fn friends_of_friends_are_asked_one_friend_at_a_time() {
     hub.begin(json!({ "id": "usr_me_mutuals_two", "displayName": "Tester" })).unwrap();
     hub.put_friend_for_test("usr_a");
     hub.put_friend_for_test("usr_b");
-    let ran = hub.fetch_mutuals(std::time::Duration::ZERO).await.unwrap();
+    let ran = hub.fetch_mutuals(std::time::Duration::ZERO, true).await.unwrap();
     assert_eq!((ran["done"].as_i64(), ran["ended"].as_str()), (Some(0), Some("refused")));
     assert!(ran["problem"].as_str().unwrap().contains("bad question"));
     assert_eq!(hub.mutuals().unwrap()["hidden"], json!([]));
