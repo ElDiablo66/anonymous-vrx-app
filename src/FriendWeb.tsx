@@ -23,7 +23,6 @@ interface District {
 }
 
 const FACE = 42;
-const RING = 58;
 const colours = ["#ff4fa3", "#2de2e6", "#ff9a3c", "#b18cff", "#5fe3a1", "#4fb8ff", "#ffd166", "#ff7a5c"];
 
 /**
@@ -58,23 +57,23 @@ function circles(ids: string[], near: Map<string, string[]>): Map<string, number
   return new Map(ids.map((id) => [id, order.indexOf(of.get(id)!)]));
 }
 
-/** How many faces fit on ring `n` of a district; ring 0 is the middle. */
-const ringHolds = (n: number) => (n === 0 ? 1 : Math.floor((2 * Math.PI * n * RING) / (FACE + 14)));
+/** How far apart seats are; a face with its name under it needs about this much. */
+const STEP = 36;
 
-/** Seats for a district's members, best connected in the middle, and how big that makes it. */
+/**
+ * Seats for a district's members, best connected nearest the middle, and how big that makes
+ * the district. Seats spiral outwards the way seeds sit in a sunflower, which fills a round
+ * space evenly whatever the number, so a district is never bigger than its people need.
+ */
 function seatsFor(count: number): { seats: Array<{ x: number; y: number }>; r: number } {
-  if (count === 2) return { seats: [{ x: -RING / 2, y: 0 }, { x: RING / 2, y: 0 }], r: RING / 2 + 46 };
-  const seats: Array<{ x: number; y: number }> = [];
-  let ring = 0;
-  while (seats.length < count) {
-    const here = Math.min(ringHolds(ring), count - seats.length);
-    for (let i = 0; i < here; i++) {
-      const angle = -Math.PI / 2 + (i / here) * 2 * Math.PI + ring * 0.35;
-      seats.push({ x: Math.cos(angle) * ring * RING, y: Math.sin(angle) * ring * RING });
-    }
-    ring++;
-  }
-  return { seats, r: (ring - 1) * RING + 48 };
+  if (count === 2) return { seats: [{ x: -33, y: 0 }, { x: 33, y: 0 }], r: 82 };
+  const seats = Array.from({ length: count }, (_, i) => {
+    const far = STEP * Math.sqrt(i + 0.55);
+    const turn = i * 2.39996323;
+    return { x: Math.cos(turn) * far, y: Math.sin(turn) * far };
+  });
+  // Room past the outermost seat for the face, its name, and the ring itself.
+  return { seats, r: STEP * Math.sqrt(count - 0.45) + 46 };
 }
 
 /**
@@ -107,8 +106,8 @@ function plan(friends: Friend[], pairs: Array<[string, string]>) {
     });
 
   // Districts stand in rows, biggest first, like blocks on a street map.
-  const gap = 70;
-  const widest = Math.max(1000, Math.sqrt(districts.reduce((sum, d) => sum + (2 * d.r + gap) ** 2, 0)) * 1.35);
+  const gap = 56;
+  const widest = Math.max(900, Math.sqrt(districts.reduce((sum, d) => sum + (2 * d.r + gap) ** 2, 0)) * 1.35);
   let x = gap;
   let y = gap;
   let row = 0;
@@ -215,14 +214,52 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
   const town = useMemo(() => plan(friends, known?.pairs ?? []), [known, idList]); // eslint-disable-line react-hooks/exhaustive-deps
   const { byId, near, districts, seat, bridges, reach, loners } = town;
 
-  // The whole town, fitted into the stage.
-  const fit = () => {
+  // How wide the stage is, kept in step by an observer. Everything else follows from it:
+  // the stage is only as tall as the town needs at that width, up to two thirds of the
+  // window, and the town is never drawn bigger than life.
+  const [wide, setWide] = useState(0);
+  const shownNow = districts.length > 0;
+  useEffect(() => {
     const el = stage.current;
-    if (!el || districts.length === 0) return;
-    const k = Math.min(el.clientWidth / town.width, el.clientHeight / town.height, 1.15);
-    setView({ k, x: (el.clientWidth - town.width * k) / 2, y: (el.clientHeight - town.height * k) / 2 });
+    if (!el) return;
+    setWide(el.clientWidth);
+    const watch = new ResizeObserver(() => setWide(el.clientWidth));
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [shownNow]);
+  const across = wide > 0 ? Math.min(1, wide / town.width) : 1;
+  const tall = Math.round(Math.min(window.innerHeight * 0.66, Math.max(320, town.height * across)));
+  const fit = () => {
+    if (wide <= 0 || districts.length === 0) return;
+    const k = Math.min(across, tall / town.height);
+    setView({ k, x: (wide - town.width * k) / 2, y: (tall - town.height * k) / 2 });
   };
-  useLayoutEffect(fit, [town.width, town.height, districts.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The wheel zooms the town and nothing else; the page behind it stays where it is.
+  const shown = districts.length > 0;
+  useEffect(() => {
+    const el = stage.current;
+    if (!el) return;
+    const turn = (e: WheelEvent) => {
+      e.preventDefault();
+      moved.current = true;
+      const r = el.getBoundingClientRect();
+      // The whole window can be zoomed in Settings; the pointer comes in zoomed pixels.
+      const zoom = r.width / el.offsetWidth || 1;
+      const [px, py] = [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom];
+      setView((v) => {
+        const k = Math.min(2.4, Math.max(0.25, v.k * (e.deltaY > 0 ? 1 / 1.15 : 1.15)));
+        return { k, x: px - ((px - v.x) / v.k) * k, y: py - ((py - v.y) / v.k) * k };
+      });
+    };
+    el.addEventListener("wheel", turn, { passive: false });
+    return () => el.removeEventListener("wheel", turn);
+  }, [shown]);
+  /** True once I have dragged or zoomed; from then on the town stays where I put it. */
+  const moved = useRef(false);
+  // Fitted again whenever the stage or the town changes size, unless I have moved it myself.
+  useLayoutEffect(() => {
+    if (!moved.current) fit();
+  }, [wide, tall, town.width, town.height, districts.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function goTo(id: string) {
     const s = seat.get(id);
@@ -242,15 +279,6 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
     if (!el || zone === d.index) return;
     const k = Math.min(el.clientWidth / (2 * d.r + 160), el.clientHeight / (2 * d.r + 160), 1.4);
     setView({ k, x: el.clientWidth / 2 - d.x * k, y: el.clientHeight / 2 - d.y * k });
-  }
-
-  function wheel(e: React.WheelEvent) {
-    const el = stage.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const k = Math.min(2.4, Math.max(0.25, view.k * (e.deltaY > 0 ? 1 / 1.15 : 1.15)));
-    const [px, py] = [e.clientX - r.left, e.clientY - r.top];
-    setView({ k, x: px - ((px - view.x) / view.k) * k, y: py - ((py - view.y) / view.k) * k });
   }
 
   const focus = hover || picked;
@@ -328,7 +356,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
           <div
             className={`town-stage${focus ? " town-focused" : ""}${zone >= 0 ? " town-zoned" : ""}`}
             ref={stage}
-            onWheel={wheel}
+            style={{ height: tall }}
             onPointerDown={(e) => {
               drag.current = { x: e.clientX, y: e.clientY, moved: false };
             }}
@@ -338,6 +366,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
               const [mx, my] = [e.clientX - d.x, e.clientY - d.y];
               if (!d.moved && Math.abs(mx) + Math.abs(my) < 4) return;
               drag.current = { x: e.clientX, y: e.clientY, moved: true };
+              moved.current = true;
               setView((v) => ({ ...v, x: v.x + mx, y: v.y + my }));
             }}
             onPointerUp={() => window.setTimeout(() => (drag.current = null), 0)}
@@ -418,6 +447,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
                 className="plain"
                 onClick={() => {
                   setZone(-1);
+                  moved.current = false;
                   fit();
                 }}
               >

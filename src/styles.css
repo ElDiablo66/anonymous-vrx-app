@@ -8427,3 +8427,29 @@ body .town-card .map-switch {
   align-items: center;
   justify-content: space-between;
 }
+
+/* ---------- map and friend web: no bigger than what they show ---------- */
+.map-wrap .map-stage {
+  height: auto;
+  min-height: 0;
+  max-height: 72vh;
+}
+
+.town-stage {
+  height: 320px;
+  min-height: 0;
+}
+
+.town-rail {
+  max-height: 66vh;
+}
+
+/* A name stays inside its district: short under the face, whole when pointed at. */
+.town-name {
+  max-width: 62px;
+  font-size: 10px;
+}
+
+body .town-plate {
+  font-size: 15px;
+}

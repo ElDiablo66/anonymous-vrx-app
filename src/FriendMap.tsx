@@ -191,24 +191,47 @@ export function FriendMap({
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const stage = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
-  const wheel = (e: React.WheelEvent) => {
-    const el = stage.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const k = Math.min(2.2, Math.max(0.4, view.k * (e.deltaY > 0 ? 1 / 1.15 : 1.15)));
-    const [px, py] = [e.clientX - r.left, e.clientY - r.top];
-    setView({ k, x: px - ((px - view.x) / view.k) * k, y: py - ((py - view.y) / view.k) * k });
-  };
   const wrap = useRef<HTMLDivElement>(null);
   // Everything in view: a map taller than its stage is drawn smaller, never bigger than life.
+  // The stage is as tall as the bubbles need. Only a map taller than the stage may be is drawn smaller.
   const fitMap = () => {
     const [frame, world] = [stage.current, wrap.current];
     if (!frame || !world) return;
-    const k = Math.min(1, Math.max(0.4, (frame.clientHeight - 56) / Math.max(1, world.offsetHeight)));
-    setView({ k, x: (frame.clientWidth - 44 - world.offsetWidth * k) / 2, y: 0 });
+    const room = frame.clientHeight - 56;
+    const k = world.offsetHeight <= room ? 1 : Math.max(0.4, room / world.offsetHeight);
+    setView({ k, x: ((1 - k) * world.offsetWidth) / 2, y: 0 });
   };
+  // The wheel zooms the map and nothing else; the page behind it stays where it is.
+  useEffect(() => {
+    const el = stage.current;
+    if (!el) return;
+    const turn = (e: WheelEvent) => {
+      e.preventDefault();
+      moved.current = true;
+      const r = el.getBoundingClientRect();
+      const zoom = r.width / el.offsetWidth || 1;
+      const [px, py] = [(e.clientX - r.left) / zoom, (e.clientY - r.top) / zoom];
+      setView((v) => {
+        const k = Math.min(2.2, Math.max(0.4, v.k * (e.deltaY > 0 ? 1 / 1.15 : 1.15)));
+        return { k, x: px - ((px - v.x) / v.k) * k, y: py - ((py - v.y) / v.k) * k };
+      });
+    };
+    el.addEventListener("wheel", turn, { passive: false });
+    return () => el.removeEventListener("wheel", turn);
+  });
   const shape = `${rooms.map((r) => r.people.length).join(",")}|${hidden.length}|${moving.length}|${showAway ? away.length : 0}`;
   useLayoutEffect(fitMap, [shape]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** True once I have dragged or zoomed; from then on the map stays where I put it. */
+  const moved = useRef(false);
+  useEffect(() => {
+    const world = wrap.current;
+    if (!world) return;
+    const watch = new ResizeObserver(() => {
+      if (!moved.current) fitMap();
+    });
+    watch.observe(world);
+    return () => watch.disconnect();
+  }); // eslint-disable-line react-hooks/exhaustive-deps
   const [lines, setLines] = useState<Array<Pair & { x1: number; y1: number; x2: number; y2: number }>>([]);
   useLayoutEffect(() => {
     const box = wrap.current;
@@ -217,14 +240,20 @@ export function FriendMap({
       return;
     }
     const measure = () => {
-      const origin = box.getBoundingClientRect();
-      // The whole window can be zoomed in Settings; measurements come back in zoomed pixels.
-      const zoom = origin.width / box.offsetWidth || 1;
+      // Where a face sits on the map itself, worked out from the layout: its place in its
+      // bubble plus the bubble's place on the map. Zooming, dragging and the bubbles growing
+      // in do not change these numbers, so the lines never drift.
       const centre = (id: string) => {
-        const face = box.querySelector<HTMLElement>(`[data-uid="${CSS.escape(id)}"] .avatar`);
+        const face = box.querySelector<HTMLElement>(`[data-uid="${CSS.escape(id)}"]`);
         if (!face) return null;
-        const r = face.getBoundingClientRect();
-        return { x: (r.left + r.width / 2 - origin.left) / zoom, y: (r.top + r.height / 2 - origin.top) / zoom };
+        const [tx, ty] = (face.style.translate || "0px 0px").split(" ").map((n) => parseFloat(n) || 0);
+        let x = face.offsetLeft + face.offsetWidth / 2 + tx;
+        let y = face.offsetTop + ty + FACE / 2;
+        for (let up = face.offsetParent as HTMLElement | null; up && up !== box; up = up.offsetParent as HTMLElement | null) {
+          x += up.offsetLeft;
+          y += up.offsetTop;
+        }
+        return { x, y };
       };
       const out = [];
       for (const p of pairs) {
@@ -239,7 +268,7 @@ export function FriendMap({
       setLines(out);
     };
     measure();
-    // Bubbles grow into place for a moment; the lines follow once they have settled.
+    // Pictures and fonts arriving can still nudge the layout a moment later.
     const settled = window.setTimeout(measure, 900);
     const watch = new ResizeObserver(measure);
     watch.observe(box);
@@ -308,7 +337,6 @@ export function FriendMap({
       <div
         className="map-stage"
         ref={stage}
-        onWheel={wheel}
         onPointerDown={(e) => {
           drag.current = { x: e.clientX, y: e.clientY, moved: false };
         }}
@@ -318,6 +346,7 @@ export function FriendMap({
           const [mx, my] = [e.clientX - d.x, e.clientY - d.y];
           if (!d.moved && Math.abs(mx) + Math.abs(my) < 4) return;
           drag.current = { x: e.clientX, y: e.clientY, moved: true };
+          moved.current = true;
           setView((v) => ({ ...v, x: v.x + mx, y: v.y + my }));
         }}
         onPointerUp={() => window.setTimeout(() => (drag.current = null), 0)}
@@ -409,13 +438,19 @@ export function FriendMap({
       </ul>
       </div>
       <div className="town-zoom">
-        <button className="plain" onClick={() => setView((v) => ({ ...v, k: Math.min(2.2, v.k * 1.2) }))} aria-label="Closer" title="Closer">
+        <button className="plain" onClick={() => ((moved.current = true), setView((v) => ({ ...v, k: Math.min(2.2, v.k * 1.2) })))} aria-label="Closer" title="Closer">
           +
         </button>
-        <button className="plain" onClick={() => setView((v) => ({ ...v, k: Math.max(0.4, v.k / 1.2) }))} aria-label="Further away" title="Further away">
+        <button className="plain" onClick={() => ((moved.current = true), setView((v) => ({ ...v, k: Math.max(0.4, v.k / 1.2) })))} aria-label="Further away" title="Further away">
           −
         </button>
-        <button className="plain" onClick={fitMap}>
+        <button
+          className="plain"
+          onClick={() => {
+            moved.current = false;
+            fitMap();
+          }}
+        >
           Whole map
         </button>
       </div>
