@@ -155,7 +155,8 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | Notifications in the headset (beta) | While VRChat runs, notifications also show in VR through XSOverlay or OVR Toolkit when one of them is running. Nothing leaves the PC. New, with little testing in a headset: tell me what you see if it misbehaves. The app has no SteamVR overlay of its own yet. |
 | Month view of events | Events of a month as a grid of days; pressing a day shows only that day. The first day of the week can be set. |
 | VRChat's cache | Shows how full VRChat's download cache is, clears old versions or all of it while the game is closed (by hand, or each time VRChat closes), and sets the size limit in VRChat's `config.json`. |
-| Friend map | On Around, the Map view draws one bubble per instance with the friends in it, bigger the more of them there are, and one bubble for everyone in private worlds. |
+| Friend map | On Around, the Map view draws one bubble per instance with the friends in it and their names, a Join button, your favourites marked, your own instance marked, and lines between friends you often saw together. |
+| Friend web | On Around, shows which of your friends are friends with each other: a dot per friend, a line per friendship, circles of friends in one colour. The app asks VRChat about each friend only when you press the button, one at a time with a pause, and keeps the answer on your PC. |
 | Numbers for my worlds | Uploads, Worlds notes visits, favourites and people in your own worlds each day the app runs, and shows what they gained lately with a bar per day. |
 | Fonts, dates and name colours | Pick the heading and text font, a 12 or 24 hour clock, dates in words or as year-month-day, and the colour of each trust rank or one colour per person. |
 | Profile dress | Shows a person's icon frame and profile effect, and tints their profile window with their banner colour or picture. Each can be switched off. |

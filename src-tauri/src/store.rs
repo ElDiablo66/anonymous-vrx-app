@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS tags (
     tag     TEXT NOT NULL,
     PRIMARY KEY (item_id, tag)
 );
+CREATE TABLE IF NOT EXISTS mutuals (
+    a TEXT NOT NULL,
+    b TEXT NOT NULL,
+    PRIMARY KEY (a, b)
+);
+CREATE TABLE IF NOT EXISTS mutuals_asked (
+    user_id TEXT PRIMARY KEY,
+    at      TEXT NOT NULL,
+    hidden  INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS world_stats (
     world_id  TEXT NOT NULL,
     day       TEXT NOT NULL,
@@ -658,6 +668,62 @@ impl Store {
     }
 
     /// My own stars for a world or an avatar, 1 to 5. Nothing leaves this PC.
+    /// Keeps which of my friends `user_id` is friends with, replacing what was known before.
+    /// `hidden` notes that this person does not let others see it.
+    pub fn set_mutuals(&self, user_id: &str, others: &[String], at: &str, hidden: bool) -> AppResult<()> {
+        let tx = self.db.unchecked_transaction()?;
+        // Someone who hides their friends tells nothing new; what others said about them stays.
+        if !hidden {
+            tx.execute("DELETE FROM mutuals WHERE a = ?1 OR b = ?1", params![user_id])?;
+        }
+        for other in others.iter().filter(|o| o.as_str() != user_id) {
+            let (a, b) = if user_id < other.as_str() { (user_id, other.as_str()) } else { (other.as_str(), user_id) };
+            tx.execute("INSERT OR IGNORE INTO mutuals (a, b) VALUES (?1, ?2)", params![a, b])?;
+        }
+        tx.execute(
+            "INSERT INTO mutuals_asked (user_id, at, hidden) VALUES (?1, ?2, ?3)
+             ON CONFLICT(user_id) DO UPDATE SET at = excluded.at, hidden = excluded.hidden",
+            params![user_id, at, hidden as i64],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Every pair of my friends known to be friends with each other.
+    pub fn mutuals(&self) -> AppResult<Vec<(String, String)>> {
+        let mut stmt = self.db.prepare("SELECT a, b FROM mutuals")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Who was asked about, when, and whether they keep it hidden.
+    pub fn mutuals_asked(&self) -> AppResult<Vec<(String, String, bool)>> {
+        let mut stmt = self.db.prepare("SELECT user_id, at, hidden FROM mutuals_asked")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Which of the given people I saw in the same stay at least `least` times: two ids and
+    /// the number of stays, most often first. Only stays of mine count, since that is all
+    /// the history knows.
+    pub fn pairs(&self, ids: &[String], least: i64, limit: u32) -> AppResult<Vec<(String, String, i64)>> {
+        let ids: Vec<&String> = ids.iter().filter(|id| id.starts_with("usr_") && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')).take(200).collect();
+        if ids.len() < 2 {
+            return Ok(Vec::new());
+        }
+        // The ids were checked above to be plain, so they can stand in the question itself.
+        let list = ids.iter().map(|id| format!("'{id}'")).collect::<Vec<_>>().join(",");
+        let mut stmt = self.db.prepare(&format!(
+            "SELECT a.user_id, b.user_id, COUNT(DISTINCT a.visit_id) AS times
+             FROM sightings a JOIN sightings b ON b.visit_id = a.visit_id AND b.user_id > a.user_id
+             WHERE a.user_id IN ({list}) AND b.user_id IN ({list})
+             GROUP BY a.user_id, b.user_id HAVING times >= ?1
+             ORDER BY times DESC LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(params![least, limit], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     /// Notes how my own worlds stand on `day` ("2026-11-25"): visits and favourites so far, and
     /// the most people seen in them that day. A second note on the same day replaces the first.
     pub fn record_world_stats(&self, day: &str, worlds: &[(String, i64, i64, i64)]) -> AppResult<()> {
@@ -1234,8 +1300,11 @@ impl Store {
             }
         }
 
-        // The avatars I wore. VRCX keeps the time it noted and how long the avatar was on; the
-        // name, maker and picture come from what it remembered about the avatar.
+        // The avatars I wore. VRCX keeps one line per avatar: when it was last put on, and the
+        // time it was worn in total. An avatar this app already knows is left alone, so a later
+        // look never adds the same hours twice. The total is laid out as wearings of at most
+        // twelve hours each, ending when it was last put on, because that is the most this
+        // app counts for one wearing.
         let worn = format!("{prefix}_avatar_history");
         if has(&worn) {
             let known = has("cache_avatar");
@@ -1244,21 +1313,16 @@ impl Store {
             while let Some(r) = it.next()? {
                 let (id, at) = (text(r, 0), text(r, 1));
                 let millis = r.get::<_, Option<i64>>(2).ok().flatten().unwrap_or(0).max(0);
-                if !id.starts_with("avtr_") || at.is_empty() {
+                let Ok(last) = chrono::DateTime::parse_from_rfc3339(&at) else {
+                    continue;
+                };
+                if !id.starts_with("avtr_") {
                     continue;
                 }
-                let already: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM avatar_history WHERE avatar_id = ?1 AND ABS(strftime('%s', worn_at) - strftime('%s', ?2)) <= 10",
-                    params![id, at],
-                    |c| c.get(0),
-                )?;
+                let already: i64 = tx.query_row("SELECT COUNT(*) FROM avatar_history WHERE avatar_id = ?1", params![id], |c| c.get(0))?;
                 if already > 0 {
                     continue;
                 }
-                let ended = chrono::DateTime::parse_from_rfc3339(&at)
-                    .ok()
-                    .map(|t| (t + chrono::Duration::milliseconds(millis)).with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
-                    .unwrap_or_else(|| at.clone());
                 let (name, author_id, author, image, status) = if known {
                     old.query_row("SELECT name, author_id, author_name, thumbnail_image_url, release_status FROM cache_avatar WHERE id = ?1", params![id], |c| {
                         let get = |i: usize| c.get::<_, Option<String>>(i).map(Option::unwrap_or_default);
@@ -1268,10 +1332,25 @@ impl Store {
                 } else {
                     Default::default()
                 };
-                done.avatars += tx.execute(
-                    "INSERT INTO avatar_history (avatar_id, name, author_id, author_name, image, release_status, worn_at, ended_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![id, name, author_id, author, image, status, at, ended],
-                )?;
+                const PIECE: i64 = 12 * 3600 * 1000;
+                let stamp = |t: chrono::DateTime<chrono::FixedOffset>| t.with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+                // Newest piece first; an avatar with no time noted still gets its one line.
+                let mut left = millis.min(200 * PIECE);
+                let mut end = last;
+                loop {
+                    let piece = left.min(PIECE);
+                    let start = end - chrono::Duration::milliseconds(piece);
+                    tx.execute(
+                        "INSERT INTO avatar_history (avatar_id, name, author_id, author_name, image, release_status, worn_at, ended_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        params![id, name, author_id, author, image, status, stamp(start), stamp(end)],
+                    )?;
+                    left -= piece;
+                    end = start;
+                    if left <= 0 {
+                        break;
+                    }
+                }
+                done.avatars += 1;
             }
         }
 
@@ -1686,6 +1765,45 @@ mod tests {
     }
 
     #[test]
+    fn friends_of_friends_are_kept_as_pairs_and_replaced_on_a_new_look() {
+        let s = Store::in_memory().unwrap();
+        s.set_mutuals("usr_b", &["usr_a".into(), "usr_c".into(), "usr_b".into()], "2026-11-25T10:00:00Z", false).unwrap();
+        let mut all = s.mutuals().unwrap();
+        all.sort();
+        assert_eq!(all, vec![("usr_a".to_string(), "usr_b".to_string()), ("usr_b".to_string(), "usr_c".to_string())]);
+        // The other side reporting the same friendship does not double it.
+        s.set_mutuals("usr_a", &["usr_b".into()], "2026-11-25T10:00:01Z", false).unwrap();
+        assert_eq!(s.mutuals().unwrap().len(), 2);
+        // Someone who now hides their friends keeps the pairs others reported.
+        s.set_mutuals("usr_b", &[], "2026-11-26T09:00:00Z", true).unwrap();
+        assert_eq!(s.mutuals().unwrap().len(), 2);
+        // A new look at usr_b that does answer replaces what was known about them.
+        s.set_mutuals("usr_b", &[], "2026-11-26T10:00:00Z", false).unwrap();
+        assert!(s.mutuals().unwrap().is_empty());
+        s.set_mutuals("usr_b", &[], "2026-11-26T10:00:00Z", true).unwrap();
+        let asked = s.mutuals_asked().unwrap();
+        assert!(asked.contains(&("usr_b".to_string(), "2026-11-26T10:00:00Z".to_string(), true)));
+    }
+
+    #[test]
+    fn friends_seen_together_often_are_paired() {
+        let s = Store::in_memory().unwrap();
+        for visit in 1..=4 {
+            for user in ["usr_a", "usr_b"] {
+                s.db.execute("INSERT INTO sightings (visit_id, user_id, display_name, joined_at) VALUES (?1, ?2, 'x', '2026-01-01T00:00:00Z')", params![visit, user]).unwrap();
+            }
+        }
+        // Twice in one stay counts once, and one shared stay is not "often".
+        s.db.execute("INSERT INTO sightings (visit_id, user_id, display_name, joined_at) VALUES (1, 'usr_a', 'x', '2026-01-01T01:00:00Z')", []).unwrap();
+        s.db.execute("INSERT INTO sightings (visit_id, user_id, display_name, joined_at) VALUES (1, 'usr_c', 'x', '2026-01-01T00:00:00Z')", []).unwrap();
+        let all: Vec<String> = ["usr_a", "usr_b", "usr_c", "usr_d"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(s.pairs(&all, 3, 40).unwrap(), vec![("usr_a".to_string(), "usr_b".to_string(), 4)]);
+        // People not asked about are left out, and an id that is not one is ignored.
+        assert!(s.pairs(&["usr_a".to_string(), "usr_c".to_string()], 3, 40).unwrap().is_empty());
+        assert!(s.pairs(&["usr_a".to_string(), "x') OR 1=1 --".to_string()], 1, 40).unwrap().is_empty());
+    }
+
+    #[test]
     fn my_worlds_are_noted_once_a_day_and_read_back_in_order() {
         let s = Store::in_memory().unwrap();
         s.record_world_stats("2026-11-24", &[("wrld_a".into(), 100, 10, 3)]).unwrap();
@@ -1708,8 +1826,8 @@ mod tests {
         {
             let old = Connection::open(&other).unwrap();
             old.execute_batch(
-                "CREATE TABLE usrme0000_avatar_history (avatar_id TEXT, created_at TEXT, time INTEGER);
-                 INSERT INTO usrme0000_avatar_history VALUES ('avtr_fox', '2025-03-01T20:00:00.000Z', 5400000), ('avtr_owl', '2025-03-02T20:00:00.000Z', NULL), ('not an avatar', '2025-03-02T20:00:00.000Z', 5);
+                "CREATE TABLE usrme0000_avatar_history (avatar_id TEXT PRIMARY KEY, created_at TEXT, time INTEGER);
+                 INSERT INTO usrme0000_avatar_history VALUES ('avtr_fox', '2025-03-01T20:00:00.000Z', 5400000), ('avtr_owl', '2025-03-02T20:00:00.000Z', NULL), ('avtr_long', '2025-03-03T20:00:00.000Z', 108000000), ('not an avatar', '2025-03-02T20:00:00.000Z', 5);
                  CREATE TABLE cache_avatar (id TEXT, name TEXT, author_id TEXT, author_name TEXT, thumbnail_image_url TEXT, release_status TEXT);
                  INSERT INTO cache_avatar VALUES ('avtr_fox', 'Sunset Fox', 'usr_r', 'Rook', 'https://example.test/fox.png', 'public');
                  CREATE TABLE avatar_tags (avatar_id TEXT, tag TEXT, color TEXT);
@@ -1719,18 +1837,30 @@ mod tests {
         }
         let s = Store::in_memory().unwrap();
         let got = s.import_vrcx(&other, "usr_me-0000", false, None).unwrap();
-        assert_eq!((got.avatars, got.tags), (2, 1));
+        assert_eq!((got.avatars, got.tags), (3, 1));
         let worn = s.avatar_history(10).unwrap();
         let fox = worn.iter().find(|a| a.avatar_id == "avtr_fox").unwrap();
         assert_eq!((fox.name.as_str(), fox.author_name.as_str()), ("Sunset Fox", "Rook"));
+        // The time worn ends when the avatar was last put on.
         let (start, end): (String, String) = s.db.query_row("SELECT worn_at, ended_at FROM avatar_history WHERE avatar_id = 'avtr_fox'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-        assert_eq!((start.as_str(), end.as_str()), ("2025-03-01T20:00:00.000Z", "2025-03-01T21:30:00.000Z"));
+        assert_eq!((start.as_str(), end.as_str()), ("2025-03-01T18:30:00.000Z", "2025-03-01T20:00:00.000Z"));
+        // Thirty hours in total come over as three wearings, none longer than twelve hours.
+        let (pieces, seconds): (i64, i64) = s
+            .db
+            .query_row("SELECT COUNT(*), CAST(ROUND(SUM((julianday(ended_at) - julianday(worn_at)) * 86400)) AS INTEGER) FROM avatar_history WHERE avatar_id = 'avtr_long'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((pieces, seconds), (3, 108000));
+        // VRCX notes a later wearing by changing the same line; nothing is added for an avatar already here.
+        {
+            let old = Connection::open(&other).unwrap();
+            old.execute("UPDATE usrme0000_avatar_history SET created_at = '2025-04-01T20:00:00.000Z', time = 9000000 WHERE avatar_id = 'avtr_fox'", []).unwrap();
+        }
         assert_eq!(s.tags().unwrap().len(), 1);
         // A second run adds nothing, and the quiet run leaves tags alone.
         assert_eq!(s.import_vrcx(&other, "usr_me-0000", false, None).unwrap(), BroughtOver::default());
         let quiet = Store::in_memory().unwrap();
         let got = quiet.import_vrcx(&other, "usr_me-0000", true, None).unwrap();
-        assert_eq!((got.avatars, got.tags), (2, 0));
+        assert_eq!((got.avatars, got.tags), (3, 0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

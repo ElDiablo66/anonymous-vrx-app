@@ -915,3 +915,29 @@ async fn frames_and_effects_are_listed_once_by_id() {
     // Kept: a second profile asks VRChat nothing.
     hub.cosmetics().await.unwrap();
 }
+
+#[tokio::test]
+async fn friends_of_friends_are_asked_one_friend_at_a_time() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/users/usr_a/mutuals/friends")).respond_with(ResponseTemplate::new(200).set_body_json(json!([ { "id": "usr_b" }, { "id": "usr_c" } ]))).expect(1).mount(&server).await;
+    // Someone who does not let others see their friends.
+    Mock::given(method("GET")).and(path("/users/usr_b/mutuals/friends")).respond_with(ResponseTemplate::new(403).set_body_json(json!({ "error": { "message": "hidden", "status_code": 403 } }))).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/users/usr_c/mutuals/friends")).respond_with(ResponseTemplate::new(200).set_body_json(json!([ { "id": "usr_a" } ]))).expect(1).mount(&server).await;
+
+    let api = Arc::new(client(&server));
+    api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
+    let hub = Hub::new(api, std::env::temp_dir(), Arc::new(|_, _| {}), false, None);
+    assert!(matches!(hub.fetch_mutuals(std::time::Duration::ZERO).await, Err(AppError::NotSignedIn)));
+    hub.begin(json!({ "id": "usr_me_mutuals", "displayName": "Tester" })).unwrap();
+    for id in ["usr_a", "usr_b", "usr_c"] {
+        hub.put_friend_for_test(id);
+    }
+
+    let ran = hub.fetch_mutuals(std::time::Duration::ZERO).await.unwrap();
+    assert_eq!((ran["done"].as_i64(), ran["ended"].as_str()), (Some(3), Some("done")));
+    let known = hub.mutuals().unwrap();
+    // a-b and a-c, each once, whoever reported it.
+    assert_eq!(known["pairs"].as_array().unwrap().len(), 2);
+    assert_eq!(known["hidden"], json!(["usr_b"]));
+    assert_eq!(known["running"], false);
+}

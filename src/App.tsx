@@ -246,7 +246,14 @@ export function App() {
   // `auto` installs it straight away, `tell` puts up a note with a button.
   const [update, setUpdate] = useState<{ version: string; notes: string } | null>(null);
   const [updating, setUpdating] = useState("");
+  /** True until the first look after the app started is over. */
+  const freshStart = useRef(true);
   const installUpdate = (version: string) => {
+    try {
+      localStorage.setItem("update-tried", version);
+    } catch {
+      // Without storage a failed update is tried again at the next start.
+    }
     setUpdating(`Getting version ${version}`);
     void backend.updateInstall().catch((err) => {
       setUpdating("");
@@ -262,12 +269,25 @@ export function App() {
         .then((found) => {
           if (!alive || !found) return;
           setUpdate(found);
-          // Only right after the start: later in the day a restart would cut into whatever I am doing.
-          if (atStart && settingsNow.current.updates === "auto") installUpdate(found.version);
+          // Only right after the start: later in the day a restart would cut into whatever I am
+          // doing. And only once for a version: one that did not install the first time waits
+          // for me to press the button, so the app can never close itself at every start.
+          let tried = "";
+          try {
+            tried = localStorage.getItem("update-tried") ?? "";
+          } catch {
+            tried = "";
+          }
+          if (atStart && settingsNow.current.updates === "auto" && tried !== found.version) installUpdate(found.version);
         })
         // No connection, or GitHub is slow: the next look tries again.
         .catch(() => {});
-    const first = window.setTimeout(() => look(true), 12_000);
+    // Switching updates back on in Settings is not a start.
+    const atStart = freshStart.current;
+    const first = window.setTimeout(() => {
+      freshStart.current = false;
+      look(atStart);
+    }, 12_000);
     const later = window.setInterval(() => look(false), 6 * 3_600_000);
     return () => {
       alive = false;
@@ -800,7 +820,7 @@ export function App() {
           </p>
         )}
         {view === "around" && (
-          <Around friends={list} worlds={worlds} favorites={favorites} instances={instances} query={query} onDone={setToast} />
+          <Around friends={list} worlds={worlds} favorites={favorites} instances={instances} query={query} here={hereNow?.visit ?? null} onDone={setToast} />
         )}
         {view === "here" && <Here friends={friends} worlds={worlds} instances={instances} meId={me.id} tick={logTick} onDone={setToast} />}
         {view === "history" && <History friends={friends} worlds={worlds} meId={me.id} tick={logTick} onDone={setToast} />}

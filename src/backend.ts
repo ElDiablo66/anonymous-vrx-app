@@ -366,6 +366,8 @@ export type LiveEvents = {
   "avatars:changed": null;
   "notice:new": Notice;
   "here:changed": null;
+  /** How far the look at friends of friends is. */
+  "mutuals:progress": { done: number; total: number };
   /** VRChat closed and its cache was emptied, as asked for in Settings. */
   "cache:cleared": { bytes: number };
   /** How far the download of an update is, in bytes. `total` is 0 when the size is not known. */
@@ -526,6 +528,13 @@ export interface Backend {
   /** Whether VRCX's history file is on this PC. */
   vrcxFound(): Promise<boolean>;
   /** Brings VRCX's history for my account into this app, after making a backup. Safe to run again. */
+  /** Which of these people I saw in the same instance at least three times, most often first. From my own history. */
+  pairs(ids: string[]): Promise<Array<{ a: string; b: string; times: number }>>;
+  /** What is known about which of my friends are friends with each other. */
+  mutuals(): Promise<{ pairs: Array<[string, string]>; asked: number; hidden: string[]; at: string; running: boolean }>;
+  /** Asks VRChat about every friend in turn, slowly. Ends when done, stopped, or told to slow down. */
+  fetchMutuals(): Promise<{ done: number; total: number; ended: string }>;
+  stopMutuals(): Promise<void>;
   /** How my own worlds stood day by day over the last `days` days. Noted each time my worlds are listed. */
   worldStats(days: number): Promise<WorldDay[]>;
   /** The running version, and whether this edition can update itself. */
@@ -716,6 +725,10 @@ const desktop: Backend = {
   vrcxStamp: () => invoke("vrcx_stamp"),
   cosmetics: () => invoke("get_cosmetics"),
   worldStats: (days) => invoke("get_world_stats", { days }),
+  pairs: (ids) => invoke("get_pairs", { ids }),
+  mutuals: () => invoke("get_mutuals"),
+  fetchMutuals: () => invoke("fetch_mutuals"),
+  stopMutuals: () => invoke("stop_mutuals"),
   updateInfo: () => invoke("update_info"),
   updateCheck: () => invoke("update_check"),
   updateInstall: () => invoke("update_install"),

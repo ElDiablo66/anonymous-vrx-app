@@ -1,5 +1,5 @@
 import { Children, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { backend, errorText, type Favorites, type Friend, type Instance, type World } from "./backend";
+import { backend, errorText, type Favorites, type Friend, type Instance, type Visit, type World } from "./backend";
 import { accessName, deviceLine, deviceWords, regionName, tidy } from "./bits";
 import { WayBack } from "./History";
 import { openThing } from "./Detail";
@@ -7,6 +7,7 @@ import { parsePlace } from "./place";
 import { FriendChip } from "./App";
 import { whereText } from "./Everyone";
 import { FriendMap } from "./FriendMap";
+import { FriendWeb } from "./FriendWeb";
 
 interface Room {
   location: string;
@@ -85,8 +86,11 @@ export function Around({
   favorites,
   instances,
   query,
+  here,
   onDone,
 }: {
+  /** The instance I am in myself, when I am in one. */
+  here: Visit | null;
   friends: Friend[];
   worlds: Map<string, World>;
   favorites: Favorites;
@@ -96,16 +100,16 @@ export function Around({
 }) {
   const [showOffline, setShowOffline] = useState(false);
   // Cards, or the same people as a picture. The choice is kept.
-  const [view, setView] = useState<"cards" | "map">(() => {
+  const [view, setView] = useState<"cards" | "map" | "web">(() => {
     try {
       // The browser demo can ask for the map by address ("?view=map").
-      if (new URLSearchParams(location.search).get("view") === "map") return "map";
-      return localStorage.getItem("around-view") === "map" ? "map" : "cards";
+      const asked = new URLSearchParams(location.search).get("view") ?? localStorage.getItem("around-view");
+      return asked === "map" || asked === "web" ? asked : "cards";
     } catch {
       return "cards";
     }
   });
-  const pickView = (next: "cards" | "map") => {
+  const pickView = (next: "cards" | "map" | "web") => {
     setView(next);
     try {
       localStorage.setItem("around-view", next);
@@ -202,7 +206,11 @@ export function Around({
         <button role="radio" aria-checked={view === "map"} className={view === "map" ? "on" : ""} onClick={() => pickView("map")}>
           Map
         </button>
+        <button role="radio" aria-checked={view === "web"} className={view === "web" ? "on" : ""} onClick={() => pickView("web")} title="Which of your friends are friends with each other">
+          Friend web
+        </button>
       </div>
+      {view === "web" && <FriendWeb friends={friends} onDone={onDone} />}
       {view === "map" && (
         <FriendMap
           rooms={groups.rooms}
@@ -212,10 +220,11 @@ export function Around({
           worlds={worlds}
           instances={instances}
           starred={starred}
+          here={here}
           onDone={onDone}
         />
       )}
-      <div className="around-cards" hidden={view === "map"}>
+      <div className="around-cards" hidden={view !== "cards"}>
       {pinned.length > 0 && (
         <Bricks className="pinned">
           {pinned.map((g) => (

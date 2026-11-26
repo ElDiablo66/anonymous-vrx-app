@@ -33,10 +33,24 @@ function lately(days: WorldDay[]): { visits: number; favorites: number; span: nu
   return { visits: last.visits - base.visits, favorites: last.favorites - base.favorites, span: daysBetween(base.day, last.day) };
 }
 
-/** What was gained from one note to the next, newest last. */
-function gains(days: WorldDay[], pick: (d: WorldDay) => number): number[] {
-  return days.slice(1).map((d, i) => Math.max(0, pick(d) - pick(days[i])));
+/**
+ * What was gained on each day, by day. A gap of several days between two notes (the app was
+ * not running) is shared out evenly over those days.
+ */
+function perDay(days: WorldDay[], pick: (d: WorldDay) => number): Map<string, number> {
+  const out = new Map<string, number>();
+  days.slice(1).forEach((d, i) => {
+    const span = Math.max(1, daysBetween(days[i].day, d.day));
+    const each = Math.max(0, pick(d) - pick(days[i])) / span;
+    for (let back = 0; back < span; back++) {
+      const day = new Date(Date.parse(d.day) - back * 86_400_000).toISOString().slice(0, 10);
+      out.set(day, (out.get(day) ?? 0) + each);
+    }
+  });
+  return out;
 }
+
+const inOrder = (m: Map<string, number>) => [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => Math.round(v));
 
 const signed = (n: number) => `${n > 0 ? "+" : ""}${n.toLocaleString()}`;
 const spanWords = (span: number) => (span === 1 ? "since yesterday" : `in ${span} days`);
@@ -58,7 +72,7 @@ export function WorldTrend({ days }: { days: WorldDay[] | undefined }) {
   if (!days || days.length === 0) return null;
   const move = lately(days);
   if (!move) return <span className="tile-note trend">Keeping count from today. Changes show from tomorrow.</span>;
-  const perDay = gains(days, (d) => d.visits).slice(-14);
+  const bars = inOrder(perDay(days, (d) => d.visits)).slice(-14);
   return (
     <span className="tile-note trend" title="From the times this app looked at your worlds">
       <span>
@@ -69,7 +83,7 @@ export function WorldTrend({ days }: { days: WorldDay[] | undefined }) {
           </>
         )}
       </span>
-      <Bars values={perDay} label={`Visits gained per day over the last ${perDay.length} days`} />
+      <Bars values={bars} label={`Visits gained per day over the last ${bars.length} days`} />
     </span>
   );
 }
@@ -78,23 +92,26 @@ export function WorldTrend({ days }: { days: WorldDay[] | undefined }) {
 export function WorldSummary({ stats, now }: { stats: Map<string, WorldDay[]>; now: { visits: number; favorites: number; occupants: number; count: number } }) {
   const total = useMemo(() => {
     // Every world's gains, added up by day.
-    const perDay = new Map<string, number>();
+    const byDay = new Map<string, number>();
     let visits = 0;
     let favorites = 0;
     let span = 0;
     let any = false;
+    let even = true;
     for (const days of stats.values()) {
       const move = lately(days);
       if (move) {
         any = true;
         visits += move.visits;
         favorites += move.favorites;
+        // Worlds counted for different lengths of time cannot share one "in N days".
+        if (span && span !== move.span) even = false;
         span = Math.max(span, move.span);
       }
-      days.slice(1).forEach((d, i) => perDay.set(d.day, (perDay.get(d.day) ?? 0) + Math.max(0, d.visits - days[i].visits)));
+      for (const [day, gained] of perDay(days, (d) => d.visits)) byDay.set(day, (byDay.get(day) ?? 0) + gained);
     }
-    const bars = [...perDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v).slice(-30);
-    return { visits, favorites, span, any, bars };
+    const bars = inOrder(byDay).slice(-30);
+    return { visits, favorites, span, any, bars, even };
   }, [stats]);
 
   if (now.count === 0) return null;
@@ -106,7 +123,7 @@ export function WorldSummary({ stats, now }: { stats: Map<string, WorldDay[]>; n
           <dd>{now.visits.toLocaleString()}</dd>
           {total.any && (
             <small className={total.visits > 0 ? "up" : ""}>
-              {signed(total.visits)} {spanWords(total.span)}
+              {signed(total.visits)} {total.even ? spanWords(total.span) : "since the app started counting"}
             </small>
           )}
         </div>
@@ -115,7 +132,7 @@ export function WorldSummary({ stats, now }: { stats: Map<string, WorldDay[]>; n
           <dd>{now.favorites.toLocaleString()}</dd>
           {total.any && (
             <small className={total.favorites > 0 ? "up" : total.favorites < 0 ? "down" : ""}>
-              {signed(total.favorites)} {spanWords(total.span)}
+              {signed(total.favorites)} {total.even ? spanWords(total.span) : "since the app started counting"}
             </small>
           )}
         </div>

@@ -90,6 +90,9 @@ pub struct Hub {
     cosmetics: Mutex<Option<(Instant, Value)>>,
     /// Group id to its name, for lists where VRChat sends only the id.
     group_names: Mutex<HashMap<String, String>>,
+    /// A look at who of my friends are friends with each other is under way, or was told to stop.
+    mutuals_running: std::sync::atomic::AtomicBool,
+    mutuals_stop: std::sync::atomic::AtomicBool,
     /// Put my own world, avatar and status changes into the feed too.
     own_feed: std::sync::atomic::AtomicBool,
 }
@@ -176,6 +179,8 @@ impl Hub {
             calendars: Mutex::new(HashMap::new()),
             cosmetics: Mutex::new(None),
             group_names: Mutex::new(HashMap::new()),
+            mutuals_running: std::sync::atomic::AtomicBool::new(false),
+            mutuals_stop: std::sync::atomic::AtomicBool::new(false),
             own_feed: std::sync::atomic::AtomicBool::new(false),
         })
     }
@@ -244,6 +249,88 @@ impl Hub {
 
     pub fn ratings(&self) -> AppResult<HashMap<String, i64>> {
         self.with_store(|s| Ok(s.ratings()?.into_iter().collect()))
+    }
+
+    /// Puts a friend on the list without asking VRChat. For tests.
+    #[doc(hidden)]
+    pub fn put_friend_for_test(&self, id: &str) {
+        self.inner.lock().unwrap().friends.insert(id.to_string(), Friend { id: id.to_string(), ..Friend::default() });
+    }
+
+    /// What is known about which of my friends are friends with each other.
+    pub fn mutuals(&self) -> AppResult<Value> {
+        let (pairs, asked) = self.with_store(|s| Ok((s.mutuals()?, s.mutuals_asked()?)))?;
+        let newest = asked.iter().map(|(_, at, _)| at.as_str()).max().unwrap_or_default().to_string();
+        Ok(json!({
+            "pairs": pairs.into_iter().map(|(a, b)| json!([a, b])).collect::<Vec<_>>(),
+            "asked": asked.len(),
+            "hidden": asked.iter().filter(|(_, _, hidden)| *hidden).map(|(id, _, _)| id.clone()).collect::<Vec<_>>(),
+            "at": newest,
+            "running": self.mutuals_running.load(std::sync::atomic::Ordering::Relaxed),
+        }))
+    }
+
+    /// Tells a look that is under way to end after the friend it is on.
+    pub fn stop_mutuals(&self) {
+        self.mutuals_stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Asks VRChat, one friend at a time, which of my other friends they are friends with.
+    /// One request a friend (more for someone with over a hundred shared friends), with a
+    /// pause between friends, and only when I press the button. `gap` is that pause.
+    /// Gives back how many friends were asked and why it ended.
+    pub async fn fetch_mutuals(&self, gap: Duration) -> AppResult<Value> {
+        use std::sync::atomic::Ordering;
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        if self.mutuals_running.swap(true, Ordering::Relaxed) {
+            return Err(AppError::CannotDo("That is already under way.".into()));
+        }
+        self.mutuals_stop.store(false, Ordering::Relaxed);
+        let mut ids: Vec<String> = self.inner.lock().unwrap().friends.keys().cloned().collect();
+        ids.sort();
+        let total = ids.len();
+        let mut done = 0;
+        let mut ended = "done";
+        for id in &ids {
+            if self.mutuals_stop.load(Ordering::Relaxed) || self.me().is_none_or(|now| now.id != me.id) {
+                ended = "stopped";
+                break;
+            }
+            let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            match self.api.read_all(&format!("/users/{}/mutuals/friends?n=100", utf8(id))).await {
+                Ok(list) => {
+                    let others: Vec<String> = list.iter().filter_map(|u| u["id"].as_str().map(str::to_string)).collect();
+                    let _ = self.with_store(|s| s.set_mutuals(id, &others, &now, false));
+                }
+                Err(AppError::RateLimited) => {
+                    ended = "slow";
+                    break;
+                }
+                Err(AppError::Unauthorized) => {
+                    ended = "signedOut";
+                    break;
+                }
+                // Someone who keeps their friends to themselves, or an account that is gone.
+                Err(AppError::Api { .. }) => {
+                    let _ = self.with_store(|s| s.set_mutuals(id, &[], &now, true));
+                }
+                Err(_) => {
+                    ended = "network";
+                    break;
+                }
+            }
+            done += 1;
+            self.send("mutuals:progress", json!({ "done": done, "total": total }));
+            tokio::time::sleep(gap).await;
+        }
+        self.mutuals_running.store(false, Ordering::Relaxed);
+        Ok(json!({ "done": done, "total": total, "ended": ended }))
+    }
+
+    /// Which of these people I often saw in the same instance: at least three stays together.
+    pub fn pairs(&self, ids: &[String]) -> AppResult<Value> {
+        let rows = self.with_store(|s| s.pairs(ids, 3, 40))?;
+        Ok(Value::Array(rows.into_iter().map(|(a, b, times)| json!({ "a": a, "b": b, "times": times })).collect()))
     }
 
     /// What was noted about my own worlds over the last `days` days, oldest first.

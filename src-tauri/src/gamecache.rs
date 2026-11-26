@@ -132,7 +132,9 @@ pub struct Cleared {
 }
 
 /// Removes everything in the cache, or with `old_only` just the versions a newer one replaced.
-pub fn clear(game: &Path, old_only: bool) -> AppResult<Cleared> {
+/// `still_closed` is asked before each folder; the first "no" ends the clearing where it is,
+/// so a game that starts meanwhile keeps what is left.
+pub fn clear(game: &Path, old_only: bool, still_closed: &dyn Fn() -> bool) -> AppResult<Cleared> {
     let cache = cache_folder(game);
     // Never anything but VRChat's cache folder, whatever config.json points at.
     if cache.file_name().and_then(|n| n.to_str()) != Some(CACHE_FOLDER) || !cache.is_dir() {
@@ -149,6 +151,9 @@ pub fn clear(game: &Path, old_only: bool) -> AppResult<Cleared> {
         }
     };
     for item in items(&cache) {
+        if !still_closed() {
+            break;
+        }
         if old_only {
             for version in versions(&item).iter().skip(1) {
                 remove(version);
@@ -202,13 +207,15 @@ mod tests {
         let before = measure(&game);
         assert_eq!((before.items, before.old_versions, before.old_bytes), (2, 1, 1006));
 
-        let swept = clear(&game, true).unwrap();
+        let swept = clear(&game, true, &|| true).unwrap();
         assert_eq!((swept.folders, swept.bytes, swept.kept), (1, 1006, 0));
         assert!(!game.join(CACHE_FOLDER).join("111").join("0001").exists());
         assert!(game.join(CACHE_FOLDER).join("111").join("0002").join("__data").is_file());
         assert!(game.join(CACHE_FOLDER).join("222").join("0001").is_dir());
 
-        let all = clear(&game, false).unwrap();
+        // A game that has started keeps its files.
+        assert_eq!(clear(&game, false, &|| false).unwrap().folders, 0);
+        let all = clear(&game, false, &|| true).unwrap();
         assert_eq!(all.folders, 2);
         assert_eq!(measure(&game).bytes, 0);
         // The cache folder itself and everything beside it are still there.
@@ -241,7 +248,7 @@ mod tests {
         let other = scratch("moved-to");
         fs::write(config_file(&game), serde_json::json!({ "cache_directory": other.display().to_string() }).to_string()).unwrap();
         assert_eq!(cache_folder(&game), other.join(CACHE_FOLDER));
-        assert!(clear(&game, false).is_err(), "nothing to clear where there is no cache folder");
+        assert!(clear(&game, false, &|| true).is_err(), "nothing to clear where there is no cache folder");
         let _ = fs::remove_dir_all(&game);
         let _ = fs::remove_dir_all(&other);
     }

@@ -380,6 +380,29 @@ fn get_last_seen(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMa
     hub.last_seen()
 }
 
+/// What is known about which of my friends are friends with each other.
+#[tauri::command]
+fn get_mutuals(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
+    hub.mutuals()
+}
+
+/// Asks VRChat about every friend in turn, slowly. Runs until done, stopped or told to slow down.
+#[tauri::command]
+async fn fetch_mutuals(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
+    hub.fetch_mutuals(std::time::Duration::from_millis(1200)).await
+}
+
+#[tauri::command]
+fn stop_mutuals(hub: State<'_, Arc<Hub>>) {
+    hub.stop_mutuals();
+}
+
+/// Which of these people I often saw in the same instance, for the lines on the friend map.
+#[tauri::command]
+fn get_pairs(hub: State<'_, Arc<Hub>>, ids: Vec<String>) -> AppResult<serde_json::Value> {
+    hub.pairs(&ids)
+}
+
 /// How my own worlds stood day by day: visits, favourites and the most people seen.
 #[tauri::command]
 fn get_world_stats(hub: State<'_, Arc<Hub>>, days: i64) -> AppResult<serde_json::Value> {
@@ -665,9 +688,12 @@ async fn update_check(app: AppHandle) -> AppResult<Option<serde_json::Value>> {
 /// closes the app and opens the new version.
 #[tauri::command]
 async fn update_install(app: AppHandle) -> AppResult<()> {
-    let Some(update) = UPDATE_FOUND.lock().unwrap().take() else {
+    // A copy: when the download fails, the update is still there for a second try.
+    let Some(mut update) = UPDATE_FOUND.lock().unwrap().clone() else {
         return Err(AppError::CannotDo("No update is waiting. Look for one first.".into()));
     };
+    // The twenty seconds were for asking; the download takes as long as the line needs.
+    update.timeout = None;
     let progress = app.clone();
     let mut got: u64 = 0;
     let bytes = update
@@ -769,10 +795,10 @@ async fn game_cache() -> AppResult<gamecache::CacheInfo> {
 async fn clear_game_cache(old_only: bool) -> AppResult<gamecache::Cleared> {
     let game = game_folder()?;
     tauri::async_runtime::spawn_blocking(move || {
-        if is_running("VRChat.exe") {
-            return Err(AppError::CannotDo("Close VRChat first. It is using the cache right now.".into()));
+        if !game_surely_closed() {
+            return Err(AppError::CannotDo("Close VRChat first. It is using the cache right now, or is just starting.".into()));
         }
-        gamecache::clear(&game, old_only)
+        gamecache::clear(&game, old_only, &game_surely_closed)
     })
     .await
     .map_err(|e| AppError::Storage(e.to_string()))?
@@ -849,6 +875,26 @@ fn quiet_output(program: &str, args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+/// Whether a program with this file name is running, or nothing when Windows did not say.
+fn running_state(image: &str) -> Option<bool> {
+    let filter = format!("IMAGENAME eq {image}");
+    let text = quiet_output("tasklist", &["/FI", &filter, "/NH", "/FO", "CSV"])?;
+    if text.trim().is_empty() {
+        return None;
+    }
+    Some(text.to_ascii_lowercase().contains(&image.to_ascii_lowercase()))
+}
+
+/// When this app last started VRChat, so nothing touches the game's files while it comes up.
+static LAUNCHED_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// True only when VRChat and its launcher are known to be closed and this app did not just
+/// start the game. "Could not tell" counts as running.
+fn game_surely_closed() -> bool {
+    let just_started = LAUNCHED_AT.lock().unwrap().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(120));
+    !just_started && ["VRChat.exe", "start_protected_game.exe", "launch.exe"].iter().all(|image| running_state(image) == Some(false))
+}
+
 /// Whether a program with this file name is running. Reads the process list only.
 fn is_running(image: &str) -> bool {
     let filter = format!("IMAGENAME eq {image}");
@@ -877,6 +923,7 @@ fn vrchat_launcher() -> Option<std::path::PathBuf> {
 fn launch_instance(location: String, mode: String) -> AppResult<&'static str> {
     let url = vrchat::model::launch_link(&location)
         .ok_or_else(|| AppError::CannotDo("That is not an instance VRChat can be started in.".into()))?;
+    *LAUNCHED_AT.lock().unwrap() = Some(std::time::Instant::now());
     let hand_over = |url: &str| {
         std::process::Command::new("rundll32.exe")
             .args(["url.dll,FileProtocolHandler", url])
@@ -1054,9 +1101,9 @@ fn watch_game(app: AppHandle) {
             }
             // The cache is emptied when I asked for that, but not while the game is being
             // started again after a crash: it would be reading those files.
-            let starting_again = last_rejoin.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60));
-            if watch.clear_cache && !starting_again && !is_running("VRChat.exe") {
-                if let Some(Ok(done)) = gamecache::game_folder().map(|game| gamecache::clear(&game, false)) {
+            let starting_again = last_rejoin.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(120));
+            if watch.clear_cache && !starting_again && game_surely_closed() {
+                if let Some(Ok(done)) = gamecache::game_folder().map(|game| gamecache::clear(&game, false, &game_surely_closed)) {
                     if done.folders > 0 {
                         let _ = app.emit("cache:cleared", serde_json::json!({ "bytes": done.bytes }));
                     }
@@ -1353,6 +1400,10 @@ pub fn run() {
             vrcx_stamp,
             get_cosmetics,
             get_world_stats,
+            get_pairs,
+            get_mutuals,
+            fetch_mutuals,
+            stop_mutuals,
             update_info,
             update_check,
             update_install,

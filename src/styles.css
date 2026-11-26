@@ -7556,3 +7556,222 @@ body .map-go {
 :root[data-hide="on"] body .map-name {
   color: transparent;
 }
+
+/* ---------- friend map: lines between friends, and where I am ---------- */
+.map-stage {
+  position: relative;
+}
+
+.map-lines {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.map-lines line {
+  stroke: var(--teal);
+  stroke-linecap: round;
+  opacity: 0.38;
+  transition: opacity 0.16s ease;
+}
+
+.map-lines.map-focused line {
+  opacity: 0.06;
+}
+
+.map-lines.map-focused line.on {
+  stroke: var(--lamp);
+  opacity: 0.95;
+}
+
+.map-lines-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font: 500 12.5px/1.3 var(--body);
+  cursor: pointer;
+}
+
+.map-room.map-mine .map-bubble {
+  box-shadow: inset 0 0 0 3px var(--lamp), 0 0 46px -6px var(--lamp);
+}
+
+.map-here {
+  position: absolute;
+  top: -11px;
+  z-index: 1;
+  padding: 3px 10px;
+  border-radius: 9px;
+  background: var(--lamp);
+  color: #fff;
+  font: 700 11.5px/1.3 var(--body);
+  white-space: nowrap;
+}
+
+.map-alone {
+  max-width: 80%;
+  color: var(--text-soft);
+  font: 500 12.5px/1.3 var(--body);
+  text-align: center;
+}
+
+.map-lines line {
+  opacity: 0.3;
+}
+
+/* The cards view sits in a wrapper for the Cards / Map switch; it lays out as if it were not there. */
+.around-cards {
+  display: contents;
+}
+
+.around-cards[hidden] {
+  display: none;
+}
+
+/* "and 5 more" sits on the rim under the bubble, clear of the faces. */
+.map-bubble .map-more {
+  bottom: -11px;
+  border: 1px solid var(--card-line);
+  background: var(--solid);
+  white-space: nowrap;
+}
+
+/* =====================================================================
+   Friend web: which of my friends are friends with each other
+   ===================================================================== */
+.web-wrap {
+  display: grid;
+  gap: 12px;
+}
+
+.web-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+}
+
+.web-facts p {
+  max-width: 78ch;
+  margin: 0;
+  color: var(--text-soft);
+  font: 500 14px/1.45 var(--body);
+}
+
+.web-facts b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.web-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.web-actions .plain {
+  margin: 0;
+}
+
+.web-actions select {
+  height: var(--btn-h);
+  max-width: 240px;
+  padding: 0 12px;
+  border: 1px solid var(--card-line);
+  border-radius: var(--btn-radius);
+  background: rgb(0 0 0 / 0.28);
+  color: var(--text);
+  font: 500 13.5px/1 var(--body);
+  color-scheme: dark;
+}
+
+.web-progress {
+  display: grid;
+  gap: 4px;
+  color: var(--text-soft);
+  font: 500 12.5px/1.3 var(--body);
+  font-variant-numeric: tabular-nums;
+}
+
+.web-progress .cache-meter {
+  margin: 0;
+}
+
+.web {
+  width: 100%;
+  height: min(68vh, 760px);
+  min-height: 360px;
+  border: 1px solid var(--card-line);
+  border-radius: var(--card-radius);
+  background: radial-gradient(circle at 50% 45%, rgb(255 255 255 / 0.04), rgb(0 0 0 / 0.3));
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.web:active {
+  cursor: grabbing;
+}
+
+.web-lines line {
+  stroke: color-mix(in srgb, var(--text-soft) 55%, transparent);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  transition: opacity 0.14s ease;
+}
+
+.web-focused .web-lines line {
+  opacity: 0.08;
+}
+
+.web-focused .web-lines line.on {
+  stroke: var(--lamp);
+  stroke-width: 1.8;
+  opacity: 1;
+}
+
+.web-dot {
+  color: var(--offline);
+  cursor: pointer;
+  transition: opacity 0.14s ease;
+}
+
+.web-dot circle {
+  stroke: rgb(12 5 28 / 0.9);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.web-focused .web-dot {
+  opacity: 0.25;
+}
+
+.web-focused .web-dot.on {
+  opacity: 1;
+}
+
+.web-dot text {
+  fill: var(--text);
+  font-family: var(--body);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: rgb(12 5 28 / 0.85);
+  stroke-width: 3px;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.web-hint {
+  margin: 0;
+}
+
+:root[data-hide="on"] body .web-dot text {
+  display: none;
+}

@@ -304,6 +304,28 @@ export const demoBackend: Backend = {
   async vrcxFound() {
     return true;
   },
+  async mutuals() {
+    // Three circles of friends with a few bridges between them.
+    const ids = people.map((f) => f.id);
+    const pairs: Array<[string, string]> = [];
+    for (let i = 0; i < ids.length; i++)
+      for (let j = i + 1; j < ids.length; j++) {
+        const same = i % 3 === j % 3;
+        if ((same && (i * 5 + j * 3) % 3 !== 0 && (i + j) % 2 === 0) || (!same && (i * 13 + j * 7) % 41 === 0)) pairs.push([ids[i], ids[j]]);
+      }
+    return { pairs, asked: ids.length, hidden: ids.slice(0, 2), at: ago(60 * 26), running: false };
+  },
+  async fetchMutuals() {
+    await wait(1200);
+    return { done: people.length, total: people.length, ended: "done" };
+  },
+  async stopMutuals() {},
+  async pairs(ids) {
+    // Every third pair of the people asked about, so the demo shows a few lines.
+    const out = [];
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) if ((i * 7 + j * 3) % 11 === 0) out.push({ a: ids[i], b: ids[j], times: 3 + ((i + j) % 9) });
+    return out.slice(0, 14);
+  },
   async worldStats(days) {
     const out = [];
     for (const [n, id] of ["wrld_demo_pier", "wrld_demo_arcade"].entries()) {
