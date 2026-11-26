@@ -28,6 +28,8 @@ const tabNames: Array<[Tab, string]> = [
 ];
 
 const NL_CHAR = String.fromCharCode(10);
+/** The tab each open profile was on, so Back returns to it. */
+const openTabs = new Map<string, Tab>();
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 const list = (v: unknown): Json[] => (Array.isArray(v) ? (v.filter((x) => x && typeof x === "object") as Json[]) : []);
@@ -152,7 +154,7 @@ export function ProfilePanel({
   alertRule,
   setAlertRule,
   onBack,
-  onClose,
+  onClose: closeWindow,
   onDone,
 }: {
   /** My notification rule for this person, when they have one of their own. */
@@ -200,6 +202,11 @@ export function ProfilePanel({
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("info");
+  // Closing puts every window away, so no tab is remembered past that. Back keeps them.
+  const onClose = () => {
+    openTabs.clear();
+    closeWindow();
+  };
   /** Each tab's data, fetched the first time the tab is opened. `null` means it failed. */
   const [parts, setParts] = useState<Record<string, unknown>>({});
   const friend = friends.get(userId);
@@ -209,8 +216,11 @@ export function ProfilePanel({
     let alive = true;
     setProfile(null);
     setProblem("");
-    setTab("info");
     setParts({});
+    // Coming back from something opened out of a tab lands on that tab again.
+    const before = openTabs.get(userId);
+    if (before && before !== "info") open(before);
+    else setTab("info");
     void backend
       .profile(userId)
       .then((p) => {
@@ -251,6 +261,7 @@ export function ProfilePanel({
 
   function open(next: Tab) {
     setTab(next);
+    openTabs.set(userId, next);
     const needs: Record<string, string[]> = {
       mutuals: ["mutualFriends"],
       groups: ["groups", "mutualGroups"],

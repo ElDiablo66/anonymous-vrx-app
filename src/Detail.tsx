@@ -36,12 +36,15 @@ const fallbackGroups: Record<string, string[]> = {
   avatar: ["avatars1"],
 };
 
+/** The tab each open window was on, so Back returns to it. */
+const openTabs = new Map<string, string>();
+
 export function DetailPanel({
   kind,
   id,
   meId,
   onBack,
-  onClose,
+  onClose: closeWindow,
   onDone,
 }: {
   /** The signed-in user's id; their own uploads get more buttons. */
@@ -57,6 +60,11 @@ export function DetailPanel({
   const [data, setData] = useState<Json | null>(null);
   const [problem, setProblem] = useState("");
   const [tab, setTab] = useState("info");
+  // Closing puts every window away, so no tab is remembered past that. Back keeps them.
+  const onClose = () => {
+    openTabs.clear();
+    closeWindow();
+  };
   const [extra, setExtra] = useState<Record<string, Json[] | null>>({});
   const [groups, setGroups] = useState<Array<{ name: string; label: string; full: boolean }>>([]);
   const [reload, setReload] = useState(0);
@@ -88,8 +96,11 @@ export function DetailPanel({
     let alive = true;
     setData(null);
     setProblem("");
-    setTab("info");
     setExtra({});
+    // Coming back from something opened out of a tab lands on that tab again.
+    const before = openTabs.get(id);
+    if (before && before !== "info") open(before);
+    else setTab("info");
     void backend
       .thing(kind, id)
       .then((d) => alive && setData((d ?? {}) as Json))
@@ -155,6 +166,7 @@ export function DetailPanel({
 
   function open(next: string) {
     setTab(next);
+    openTabs.set(id, next);
     const part = next === "members" ? "groupMembers" : next === "posts" ? "groupPosts" : next === "instances" ? "groupInstances" : "";
     if (next === "photos") showGallery(gallery || str(list((data ?? {}).galleries)[0]?.id));
     if (part && !(part in extra)) {
@@ -425,7 +437,7 @@ export function DetailPanel({
             {!data && !problem && <p className="profile-fine">Asking VRChat</p>}
 
             {tab === "info" && data && (
-              <>
+              <div className="detail-grid">
                 <section>
                   <h3>{kind === "group" ? "About" : "Description"}</h3>
                   {str(d.description) ? <p className="profile-bio">{str(d.description)}</p> : <p className="profile-fine">Nothing written.</p>}
@@ -518,7 +530,7 @@ export function DetailPanel({
                     </div>
                   </section>
                 )}
-              </>
+              </div>
             )}
 
             {tab === "posts" && (

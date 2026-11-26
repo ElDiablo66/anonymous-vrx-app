@@ -147,9 +147,11 @@ export function App() {
   const [toast, setToast] = useState("");
   /** Open windows, newest last. Only the newest shows; Back goes to the one before it. */
   const [windows, setWindows] = useState<Array<{ kind: ThingKind | "profile"; id: string }>>(() => {
-    // The browser demo can start with someone's profile open: "?open=<user id>".
+    // The browser demo can start with a window open: "?open=<user, world, avatar or group id>".
     const asked = backend.demo ? new URLSearchParams(location.search).get("open") : null;
-    return asked ? [{ kind: "profile", id: asked }] : [];
+    if (!asked) return [];
+    const kind = asked.startsWith("wrld_") ? "world" : asked.startsWith("avtr_") ? "avatar" : asked.startsWith("grp_") ? "group" : "profile";
+    return [{ kind, id: asked }];
   });
   const top = windows[windows.length - 1];
 

@@ -4916,3 +4916,280 @@ time,
     scroll-behavior: auto !important;
   }
 }
+
+/* =====================================================================
+   One system for every screen: a calmer sky, the same card on every list,
+   the same spacing between things.
+   ===================================================================== */
+
+:root {
+  --gap: 14px;
+  --card-radius: 14px;
+  --card-line: inset 0 0 0 1px color-mix(in srgb, var(--line) 62%, transparent);
+}
+
+/* The sunset is now the last light on the horizon and the sky above it is night. It was a
+   full-brightness blend from corner to corner before. */
+:root:is([data-bg="sunset"], [data-bg="custom"], [data-bg="image"]) {
+  --panel: rgb(12 6 28 / 0.56);
+  --panel-high: rgb(58 30 98 / 0.55);
+  --line: rgb(190 140 225 / 0.22);
+}
+
+:root[data-bg="sunset"] .shell {
+  background:
+    radial-gradient(120% 62% at 82% 112%, rgb(255 128 64 / 0.3), transparent 62%),
+    radial-gradient(95% 58% at 22% 114%, rgb(255 62 150 / 0.26), transparent 64%),
+    linear-gradient(168deg, #120829 0%, #1d0d45 34%, #2f1057 64%, #45164f 100%) fixed;
+}
+
+:root[data-bg="sunset"] {
+  --solid: #231047;
+}
+
+/* ---------- Lists sit on a card, not straight on the sky ---------- */
+
+/* The friend table */
+.people {
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--panel);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-line);
+}
+
+.people th {
+  padding: 11px 14px;
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--line);
+}
+
+.people th:first-child {
+  border-top-left-radius: var(--card-radius);
+}
+
+.people th:last-child {
+  border-top-right-radius: var(--card-radius);
+}
+
+.people td {
+  padding: 3px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
+}
+
+.people tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.people tbody tr {
+  transition: background-color 0.12s ease;
+}
+
+.people tbody tr:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+/* World history: one card per day's worth of rows */
+.visits .visit {
+  margin-bottom: 4px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--card-line);
+  overflow: hidden;
+}
+
+.visit-row {
+  padding: 4px 14px;
+}
+
+.visit-row:hover,
+.visit-row[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.visits .day,
+.inbox .day,
+.activity .day {
+  margin: 14px 0 8px;
+}
+
+/* Favourites: each group is one card with its things inside */
+.fav-group {
+  margin-top: var(--gap);
+  padding: 16px 18px 18px;
+  border-radius: var(--card-radius);
+  background: var(--panel);
+  box-shadow: var(--card-line);
+}
+
+.fav-group h2 {
+  font-size: 20px;
+}
+
+.fav-item {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-radius: 12px;
+}
+
+/* Tiles and results share one card */
+.tile,
+.avatar-result,
+.world-result {
+  border-radius: var(--card-radius);
+  background: var(--panel);
+  box-shadow: var(--card-line);
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+
+.tile:hover,
+.avatar-result:hover,
+.world-result:hover {
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 55%, transparent);
+}
+
+/* Tools above a list line up the same everywhere */
+.list-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin: 0 0 var(--gap);
+}
+
+.tabs {
+  margin-bottom: var(--gap);
+}
+
+/* Settings: each group of switches is a card */
+.settings section {
+  padding: 18px 20px 20px;
+  margin-bottom: var(--gap);
+  border-radius: var(--card-radius);
+  background: var(--panel);
+  box-shadow: var(--card-line);
+}
+
+.settings-cols {
+  column-gap: var(--gap);
+  column-rule: 0;
+}
+
+.settings h2 {
+  font-size: 20px;
+  margin-bottom: 10px;
+}
+
+/* ---------- Every window that opens over the app ---------- */
+
+/* Cards in a window: same edge, same spacing, whichever tab is open */
+.profile-body > section,
+.profile-body > .detail-grid > section {
+  margin-top: var(--gap);
+  padding: 16px 18px 18px;
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-line);
+}
+
+.profile-body > section > h3,
+.detail-grid > section > h3 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+
+/* A world, an avatar or a group: its sections flow into two columns of cards */
+.detail-grid {
+  columns: 2 360px;
+  column-gap: var(--gap);
+  margin-top: var(--gap);
+}
+
+.profile-body > .detail-grid > section {
+  margin: 0 0 var(--gap);
+  break-inside: avoid;
+}
+
+/* Facts read as rows in these windows too */
+.detail-grid .facts {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.detail-grid .facts div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.detail-grid .facts dt {
+  font-size: 13.5px;
+}
+
+.detail-grid .facts dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-grid p {
+  max-width: 68ch;
+  line-height: 1.55;
+}
+
+/* Lists inside a window (mutual friends, groups, worlds, avatars) */
+.profile-body .rows {
+  gap: 8px;
+}
+
+.profile-body .rows > li {
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  transition: background-color 0.12s ease;
+}
+
+.profile-body .rows > li:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.profile-body .tiles {
+  gap: 12px;
+}
+
+/* The side of a window: name, tags and actions keep one rhythm */
+.profile-side .badges {
+  gap: 6px;
+}
+
+.profile-side h3 {
+  margin-top: 18px;
+}
+
+/* The window itself: a little more room, one soft edge */
+.profile-top {
+  padding-bottom: 4px;
+}
+
+/* Rows inside a window have less width than the same rows on a screen, so they lay
+   themselves out by content and never overlap. */
+.profile-body .instance-list .visit-row,
+.profile-body .instance-list button {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.profile-body .instance-list li {
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
+}
+
+.profile-body .instance-list li:last-child {
+  border-bottom: 0;
+}
