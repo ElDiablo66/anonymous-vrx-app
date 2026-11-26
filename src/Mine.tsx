@@ -206,6 +206,13 @@ export function passesTag(id: string, tags: Record<string, string[]>, filter: st
   return mine.some((t) => t.toLowerCase() === filter.toLowerCase());
 }
 
+/** The filter to really use: a tag nothing carries any more (the last hidden avatar was
+ *  unhidden, the last one with a tag lost it) falls back to everything, so a list never
+ *  ends up empty with no filter row to get out of it. */
+export function liveTag(ids: string[], tags: Record<string, string[]>, value: string): string {
+  return value === ALL_TAGS || ids.some((id) => passesTag(id, tags, value)) ? value : ALL_TAGS;
+}
+
 /** A row of filters: everything, each tag in use among `ids` with its count, untagged, hidden. */
 export function TagFilter({ ids, tags, value, set }: { ids: string[]; tags: Record<string, string[]>; value: string; set: (next: string) => void }) {
   const counts = new Map<string, number>();

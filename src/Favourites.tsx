@@ -5,7 +5,7 @@ import { Avatar, statusTone, tidy } from "./bits";
 import { openThing } from "./Detail";
 import { openProfile } from "./Profile";
 import { openPicture } from "./Viewer";
-import { ALL_TAGS, MarkBadges, TagChips, TagFilter, passesTag, useTags, useWorldMarks } from "./Mine";
+import { ALL_TAGS, MarkBadges, TagChips, TagFilter, liveTag, passesTag, useTags, useWorldMarks } from "./Mine";
 
 type Kind = "friend" | "world" | "avatar";
 type Json = Record<string, unknown>;
@@ -105,7 +105,7 @@ export function Favourites({
   const marks = useWorldMarks();
   const [mine, setMine] = useState<"all" | "top" | "unrated" | "been" | "new">("all");
   const tags = useTags();
-  const [tag, setTag] = useState(ALL_TAGS);
+  const [pickedTag, setTag] = useState(ALL_TAGS);
   const passes = (id: string) =>
     kind === "avatar" ? passesTag(id, tags, tag) :
     kind !== "world" ||
@@ -115,6 +115,7 @@ export function Favourites({
     (mine === "been" && !!marks.visits[id]) ||
     (mine === "new" && !marks.visits[id]);
   const [data, setData] = useState<Loaded | null>(null);
+  const tag = kind === "avatar" && data ? liveTag(data.entries.map((e) => str(e.favoriteId)), tags, pickedTag) : pickedTag;
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);

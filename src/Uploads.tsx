@@ -3,7 +3,7 @@ import { backend, errorText } from "./backend";
 import { tidy } from "./bits";
 import { openThing } from "./Detail";
 import { usePic } from "./Pic";
-import { ALL_TAGS, TagChips, TagEditor, TagFilter, passesTag, useTags } from "./Mine";
+import { ALL_TAGS, TagChips, TagEditor, TagFilter, liveTag, passesTag, useTags } from "./Mine";
 
 type Kind = "avatars" | "worlds";
 type Json = Record<string, unknown>;
@@ -31,7 +31,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
   const [only, setOnly] = useState<"all" | "public" | "private">("all");
   const [busy, setBusy] = useState("");
   const tags = useTags();
-  const [tag, setTag] = useState(ALL_TAGS);
+  const [pickedTag, setTag] = useState(ALL_TAGS);
   /** The avatar whose tags are being edited. */
   const [tagging, setTagging] = useState("");
   /** The upload whose Delete was pressed once and waits for the second click. */
@@ -74,6 +74,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
   }, [kind, meId]);
 
   const all = rows[kind];
+  const tag = liveTag((rows.avatars ?? []).map((r) => str(r.id)), tags, pickedTag);
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (all ?? []).filter(
