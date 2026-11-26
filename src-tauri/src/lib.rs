@@ -799,7 +799,7 @@ async fn clear_game_cache(old_only: bool) -> AppResult<gamecache::Cleared> {
         if !game_surely_closed() {
             return Err(AppError::CannotDo("Close VRChat first. It is using the cache right now, or is just starting.".into()));
         }
-        gamecache::clear(&game, old_only, &game_surely_closed)
+        gamecache::clear(&game, old_only, &still_closed())
     })
     .await
     .map_err(|e| AppError::Storage(e.to_string()))?
@@ -894,6 +894,22 @@ static LAUNCHED_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 fn game_surely_closed() -> bool {
     let just_started = LAUNCHED_AT.lock().unwrap().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(120));
     !just_started && ["VRChat.exe", "start_protected_game.exe", "launch.exe"].iter().all(|image| running_state(image) == Some(false))
+}
+
+/// `game_surely_closed` for use while clearing: asked again every two seconds at most, since
+/// each look at the process list takes a moment and a cache has thousands of folders. Made
+/// right after a look that said "closed", so it starts from that.
+fn still_closed() -> impl Fn() -> bool {
+    let last = std::cell::Cell::new((std::time::Instant::now(), true));
+    move || {
+        let (at, closed) = last.get();
+        if !closed || at.elapsed() < std::time::Duration::from_secs(2) {
+            return closed;
+        }
+        let now = game_surely_closed();
+        last.set((std::time::Instant::now(), now));
+        now
+    }
 }
 
 /// Whether a program with this file name is running. Reads the process list only.
@@ -1104,7 +1120,7 @@ fn watch_game(app: AppHandle) {
             // started again after a crash: it would be reading those files.
             let starting_again = last_rejoin.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(120));
             if watch.clear_cache && !starting_again && game_surely_closed() {
-                if let Some(Ok(done)) = gamecache::game_folder().map(|game| gamecache::clear(&game, false, &game_surely_closed)) {
+                if let Some(Ok(done)) = gamecache::game_folder().map(|game| gamecache::clear(&game, false, &still_closed())) {
                     if done.folders > 0 {
                         let _ = app.emit("cache:cleared", serde_json::json!({ "bytes": done.bytes }));
                     }

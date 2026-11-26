@@ -259,7 +259,13 @@ impl Hub {
 
     /// What is known about which of my friends are friends with each other.
     pub fn mutuals(&self) -> AppResult<Value> {
-        let (pairs, asked) = self.with_store(|s| Ok((s.mutuals()?, s.mutuals_asked()?)))?;
+        let (pairs, mut asked) = self.with_store(|s| Ok((s.mutuals()?, s.mutuals_asked()?)))?;
+        // Only people who are still friends count; someone unfriended since would make a
+        // stopped run look finished.
+        {
+            let inner = self.inner.lock().unwrap();
+            asked.retain(|(id, _, _)| inner.friends.contains_key(id));
+        }
         let newest = asked.iter().map(|(_, at, _)| at.as_str()).max().unwrap_or_default().to_string();
         Ok(json!({
             "pairs": pairs.into_iter().map(|(a, b)| json!([a, b])).collect::<Vec<_>>(),
@@ -349,6 +355,8 @@ impl Hub {
             tokio::time::sleep(gap).await;
         }
         self.mutuals_running.store(false, Ordering::Relaxed);
+        // Heard by the window even when the view that started the run was closed meanwhile.
+        self.send("mutuals:ended", Value::Null);
         Ok(json!({ "done": done, "total": total, "ended": ended, "problem": problem }))
     }
 

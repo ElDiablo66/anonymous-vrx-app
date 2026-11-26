@@ -199,8 +199,12 @@ export function FriendMap({
     if (!frame || !world) return;
     const room = frame.clientHeight - 56;
     const k = world.offsetHeight <= room ? 1 : Math.max(0.4, room / world.offsetHeight);
-    setView({ k, x: ((1 - k) * world.offsetWidth) / 2, y: Math.max(0, (room - world.offsetHeight * k) / 2) });
+    const [x, y] = [((1 - k) * world.offsetWidth) / 2, Math.max(0, (room - world.offsetHeight * k) / 2)];
+    // The same answer as before changes nothing, so an observer that fires again does not redraw.
+    setView((v) => (v.k === k && v.x === x && v.y === y ? v : { k, x, y }));
   };
+  // Changes whenever the bubbles on the map do, the stage coming and going included.
+  const shape = `${rooms.map((r) => r.people.length).join(",")}|${hidden.length}|${moving.length}|${showAway ? away.length : 0}`;
   // The wheel zooms the map and nothing else; the page behind it stays where it is.
   useEffect(() => {
     const el = stage.current;
@@ -218,8 +222,7 @@ export function FriendMap({
     };
     el.addEventListener("wheel", turn, { passive: false });
     return () => el.removeEventListener("wheel", turn);
-  });
-  const shape = `${rooms.map((r) => r.people.length).join(",")}|${hidden.length}|${moving.length}|${showAway ? away.length : 0}`;
+  }, [shape]);
   useLayoutEffect(fitMap, [shape]); // eslint-disable-line react-hooks/exhaustive-deps
   /** True once I have dragged or zoomed; from then on the map stays where I put it. */
   const moved = useRef(false);
@@ -232,7 +235,7 @@ export function FriendMap({
     watch.observe(world);
     if (stage.current) watch.observe(stage.current);
     return () => watch.disconnect();
-  }); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [shape]); // eslint-disable-line react-hooks/exhaustive-deps
   const [lines, setLines] = useState<Array<Pair & { x1: number; y1: number; x2: number; y2: number }>>([]);
   useLayoutEffect(() => {
     const box = wrap.current;

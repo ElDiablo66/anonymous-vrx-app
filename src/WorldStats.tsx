@@ -50,7 +50,8 @@ function perDay(days: WorldDay[], pick: (d: WorldDay) => number): Map<string, nu
   return out;
 }
 
-const inOrder = (m: Map<string, number>) => [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => Math.round(v));
+// Not rounded: two visits over five days are five low bars, not five empty ones.
+const inOrder = (m: Map<string, number>) => [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, v]) => v);
 
 const signed = (n: number) => `${n > 0 ? "+" : ""}${n.toLocaleString()}`;
 const spanWords = (span: number) => (span === 1 ? "since yesterday" : `in ${span} days`);

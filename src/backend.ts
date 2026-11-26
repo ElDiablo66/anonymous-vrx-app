@@ -368,6 +368,8 @@ export type LiveEvents = {
   "here:changed": null;
   /** How far the look at friends of friends is. */
   "mutuals:progress": { done: number; total: number };
+  /** That look is over, however it ended. */
+  "mutuals:ended": null;
   /** VRChat closed and its cache was emptied, as asked for in Settings. */
   "cache:cleared": { bytes: number };
   /** How far the download of an update is, in bytes. `total` is 0 when the size is not known. */

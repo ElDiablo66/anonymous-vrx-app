@@ -105,6 +105,8 @@ export function DetailPanel({
   async function favouritesChanged() {
     await showFavouriteGroups(true);
     window.dispatchEvent(new Event("favourites:changed"));
+    // Once more a little later, for an add VRChat had not listed yet or a read that failed.
+    window.setTimeout(() => void showFavouriteGroups(true), 2500);
   }
   const [note, setNote] = useState("");
   const [savedNote, setSavedNote] = useState("");
@@ -182,7 +184,9 @@ export function DetailPanel({
       const all = ((fresh ? null : await backend.favoritesCached(kind)) ?? (await backend.favoritesOf(kind))) as Json;
       const mine = list(all.entries).find((e) => str(e.favoriteId) === id);
       const group = mine ? list(all.groups).find((g) => str(g.name) === str((mine.tags as unknown[])?.[0])) : undefined;
-      setFav(mine ? { entryId: str(mine.id), tag: str((mine.tags as unknown[])?.[0]), label: prettyGroup(str(group?.displayName) || str((mine.tags as unknown[])?.[0])) } : null);
+      // One added a moment ago may not be on VRChat's list yet; it stays shown as a favourite
+      // until the list has it, and is looked for once more a little later.
+      setFav((old) => (mine ? { entryId: str(mine.id), tag: str((mine.tags as unknown[])?.[0]), label: prettyGroup(str(group?.displayName) || str((mine.tags as unknown[])?.[0])) } : old && !old.entryId ? old : null));
       const capacity = num(all.capacity);
       const used = new Map<string, number>();
       for (const e of list(all.entries)) {
@@ -211,12 +215,25 @@ export function DetailPanel({
   async function moveFavourite(to: string) {
     if (!fav?.entryId || !to) return;
     const from = fav.tag;
-    await backend.removeFavorites([fav.entryId]);
+    const fromLabel = fav.label;
+    if ((await backend.removeFavorites([fav.entryId])) === 0) throw new Error("VRChat did not take it out of its group, so nothing was moved. Try again in a moment.");
     try {
       await backend.addFavorite(kind, id, to);
     } catch (err) {
-      await backend.addFavorite(kind, id, from).catch(() => {});
-      await favouritesChanged();
+      // Back where it was. When that fails too, I have to be told plainly: it is in no group now.
+      let back = await backend.addFavorite(kind, id, from).then(
+        () => true,
+        () => false,
+      );
+      if (!back) {
+        await new Promise((r) => window.setTimeout(r, 2000));
+        back = await backend.addFavorite(kind, id, from).then(
+          () => true,
+          () => false,
+        );
+      }
+      await favouritesChanged().catch(() => {});
+      if (!back) throw new Error(`It is no longer a favourite. VRChat took it out of ${fromLabel}, refused the new group, and refused to put it back. Add it again by hand.`);
       throw err;
     }
     await favouritesChanged();
@@ -434,7 +451,8 @@ export function DetailPanel({
                     disabled={busy || !fav.entryId}
                     onClick={() =>
                       void act(async () => {
-                        await backend.removeFavorites([fav.entryId]);
+                        // VRChat reports how many it removed; none means it is still a favourite.
+                        if ((await backend.removeFavorites([fav.entryId])) === 0) throw new Error("VRChat did not remove it. Try again in a moment.");
                         await favouritesChanged();
                       }, `${name} is no longer a favourite.`)
                     }

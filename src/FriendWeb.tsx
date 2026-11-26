@@ -114,23 +114,23 @@ function plan(friends: Friend[], pairs: Array<[string, string]>, shape: number) 
   let x = gap;
   let y = gap;
   let row = 0;
+  const rows: Array<{ top: number; blocks: District[] }> = [{ top: gap, blocks: [] }];
   for (const d of districts) {
     if (x + 2 * d.r + gap > widest && x > gap) {
       x = gap;
       y += row + gap;
       row = 0;
+      rows.push({ top: y, blocks: [] });
     }
     d.x = x + d.r;
-    d.y = y + d.r;
+    rows[rows.length - 1].blocks.push(d);
     x += 2 * d.r + gap;
     row = Math.max(row, 2 * d.r);
   }
-  // Rows are centred on the tallest block in them.
-  const rows = new Map<number, District[]>();
-  for (const d of districts) rows.set(d.y - d.r, [...(rows.get(d.y - d.r) ?? []), d]);
-  for (const [top, inRow] of rows) {
-    const tall = Math.max(...inRow.map((d) => d.r));
-    for (const d of inRow) d.y = top + tall;
+  // Each row is centred on the tallest block in it.
+  for (const { top, blocks } of rows) {
+    const tall = Math.max(0, ...blocks.map((d) => d.r));
+    for (const d of blocks) d.y = top + tall;
   }
   const width = Math.max(...districts.map((d) => d.x + d.r), 600) + gap;
   const height = Math.max(...districts.map((d) => d.y + d.r), 300) + gap;
@@ -184,25 +184,35 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
       .then((k) => {
         setKnown(k);
         setBusy(k.running);
+        // The circles may have changed; one picked before means nothing now.
+        setZone(-1);
       })
       .catch(() => setKnown({ pairs: [], asked: 0, hidden: [], at: "", running: false }));
   useEffect(() => void load(), []);
   useEffect(() => {
     let stop: (() => void) | undefined;
     let gone = false;
+    let stopEnd: (() => void) | undefined;
     void backend.on("mutuals:progress", (p) => setProgress(p)).then((off) => (gone ? off() : (stop = off)));
+    void backend
+      .on("mutuals:ended", () => {
+        setProgress(null);
+        void load();
+      })
+      .then((off) => (gone ? off() : (stopEnd = off)));
     return () => {
       gone = true;
       stop?.();
+      stopEnd?.();
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function ask() {
     setBusy(true);
     setProgress({ done: 0, total: friends.length });
     try {
       // A run that was stopped part way picks up where it left off; a finished one starts over.
-      const ran = await backend.fetchMutuals(!known || known.asked >= friends.length);
+      const ran = await backend.fetchMutuals(!known || known.asked >= friends.length || known.asked === 0);
       onDone(`${endWords[ran.ended] ?? "Done."} Asked about ${ran.done} of ${ran.total} friends.${ran.problem ? ` ${ran.problem}` : ""}`);
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
@@ -217,9 +227,15 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
   // The stage's own size, kept in step by an observer. It is as wide as its column and as
   // tall as the list beside it, so the two end on one line.
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const shape = size.w > 0 && size.h > 0 ? Math.round((size.w / size.h) * 5) / 5 : 1.6;
+  // The town is laid out for the stage's width against a usual height. The real height moves
+  // with the list beside it (a friend's card opening makes it taller), and that must not
+  // send districts to other rows.
+  const shape = size.w > 0 ? Math.round((size.w / Math.max(440, window.innerHeight * 0.6)) * 5) / 5 : 1.6;
   const town = useMemo(() => plan(friends, known?.pairs ?? [], shape), [known, idList, shape]); // eslint-disable-line react-hooks/exhaustive-deps
-  const { byId, near, districts, seat, bridges, reach, loners } = town;
+  const { near, districts, seat, bridges, reach, loners } = town;
+  // Names, pictures and status rings follow the friends as they are now, not as they were
+  // when the town was laid out.
+  const byId = useMemo(() => new Map(friends.map((f) => [f.id, f])), [friends]);
 
   const shownNow = districts.length > 0;
   useEffect(() => {
@@ -270,6 +286,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
     setPicked(id);
     setFind("");
     if (!s || !el) return;
+    moved.current = true;
     setZone(-1);
     const k = Math.max(view.k, 1);
     setView({ k, x: el.clientWidth / 2 - s.x * k, y: el.clientHeight / 2 - s.y * k });
@@ -280,11 +297,23 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
     setZone(zone === d.index ? -1 : d.index);
     setPicked("");
     if (!el || zone === d.index) return;
+    moved.current = true;
     const k = Math.min(el.clientWidth / (2 * d.r + 160), el.clientHeight / (2 * d.r + 160), 1.4);
     setView({ k, x: el.clientWidth / 2 - d.x * k, y: el.clientHeight / 2 - d.y * k });
   }
 
   const focus = hover || picked;
+  // Friendships inside a district are always drawn. They are worked out once for a town, so
+  // pointing at a face does not redraw thousands of lines.
+  const withinLines = useMemo(
+    () =>
+      town.links.map(([a, b]) => {
+        const [p, q] = [town.seat.get(a)!, town.seat.get(b)!];
+        if (p.district !== q.district) return null;
+        return <line key={`${a}:${b}`} x1={p.x} y1={p.y} x2={q.x} y2={q.y} style={{ stroke: town.districts[p.district].colour }} />;
+      }),
+    [town],
+  );
   const knows = useMemo(() => new Set(focus ? near.get(focus) ?? [] : []), [focus, near]);
   const friendships = town.links.length;
   const top = districts[0]?.members[0];
@@ -391,13 +420,13 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
                     </g>
                   );
                 })}
-                {town.links.map(([a, b]) => {
-                  const [p, q] = [seat.get(a)!, seat.get(b)!];
-                  const lit = !!focus && (a === focus || b === focus);
-                  // Friendships inside a district are always drawn; ones that cross only for the friend looked at.
-                  if (p.district !== q.district && !lit) return null;
-                  return <line key={`${a}:${b}`} x1={p.x} y1={p.y} x2={q.x} y2={q.y} className={lit ? "on" : ""} style={{ stroke: lit ? undefined : districts[p.district].colour }} />;
-                })}
+                {withinLines}
+                {focus &&
+                  seat.has(focus) &&
+                  (near.get(focus) ?? []).map((other) => {
+                    const [p, q] = [seat.get(focus)!, seat.get(other)!];
+                    return <line key={other} x1={p.x} y1={p.y} x2={q.x} y2={q.y} className="on" />;
+                  })}
               </svg>
 
               {districts.map((d) => (
@@ -439,10 +468,10 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
             </div>
 
             <div className="town-zoom">
-              <button className="plain" onClick={() => setView((v) => ({ ...v, k: Math.min(2.4, v.k * 1.2) }))} aria-label="Closer" title="Closer">
+              <button className="plain" onClick={() => ((moved.current = true), setView((v) => ({ ...v, k: Math.min(2.4, v.k * 1.2) })))} aria-label="Closer" title="Closer">
                 +
               </button>
-              <button className="plain" onClick={() => setView((v) => ({ ...v, k: Math.max(0.25, v.k / 1.2) }))} aria-label="Further away" title="Further away">
+              <button className="plain" onClick={() => ((moved.current = true), setView((v) => ({ ...v, k: Math.max(0.25, v.k / 1.2) })))} aria-label="Further away" title="Further away">
                 −
               </button>
               <button
