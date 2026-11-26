@@ -380,6 +380,23 @@ fn get_last_seen(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMa
     hub.last_seen()
 }
 
+/// The full instances I am waiting to get into.
+#[tauri::command]
+fn get_waiting(hub: State<'_, Arc<Hub>>) -> serde_json::Value {
+    hub.waiting()
+}
+
+/// Starts waiting for room in a full instance. The app looks every 45 seconds and tells me.
+#[tauri::command]
+async fn wait_for_room(hub: State<'_, Arc<Hub>>, location: String, world_name: String) -> AppResult<()> {
+    hub.inner().wait_for_room(&location, &world_name)
+}
+
+#[tauri::command]
+fn stop_waiting(hub: State<'_, Arc<Hub>>, location: String) {
+    hub.stop_waiting(&location);
+}
+
 /// What is known about which of my friends are friends with each other.
 #[tauri::command]
 fn get_mutuals(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
@@ -1418,6 +1435,9 @@ pub fn run() {
             get_cosmetics,
             get_world_stats,
             get_pairs,
+            get_waiting,
+            wait_for_room,
+            stop_waiting,
             get_mutuals,
             fetch_mutuals,
             stop_mutuals,

@@ -90,8 +90,13 @@ pub struct Hub {
     cosmetics: Mutex<Option<(Instant, Value)>>,
     /// Group id to its name, for lists where VRChat sends only the id.
     group_names: Mutex<HashMap<String, String>>,
+    /// Full instances I am waiting to get into: location to the world's name and when the wait began.
+    waiting: Mutex<HashMap<String, (String, Instant)>>,
+    waiting_watched: std::sync::atomic::AtomicBool,
     /// A look at who of my friends are friends with each other is under way, or was told to stop.
     mutuals_running: std::sync::atomic::AtomicBool,
+    /// When the app last set my status itself, and to what.
+    status_set: Mutex<Option<(Instant, String, String)>>,
     mutuals_stop: std::sync::atomic::AtomicBool,
     /// Put my own world, avatar and status changes into the feed too.
     own_feed: std::sync::atomic::AtomicBool,
@@ -179,7 +184,10 @@ impl Hub {
             calendars: Mutex::new(HashMap::new()),
             cosmetics: Mutex::new(None),
             group_names: Mutex::new(HashMap::new()),
+            waiting: Mutex::new(HashMap::new()),
+            waiting_watched: std::sync::atomic::AtomicBool::new(false),
             mutuals_running: std::sync::atomic::AtomicBool::new(false),
+            status_set: Mutex::new(None),
             mutuals_stop: std::sync::atomic::AtomicBool::new(false),
             own_feed: std::sync::atomic::AtomicBool::new(false),
         })
@@ -224,6 +232,19 @@ impl Hub {
         {
             let mut inner = self.inner.lock().unwrap();
             let Some(me) = inner.me.as_mut() else { return };
+            // Only my own account counts.
+            if user.get("id").and_then(Value::as_str).is_some_and(|id| id != me.id) {
+                return;
+            }
+            // Right after the app set my status, VRChat can still send word of the one
+            // before it. That late word must not put the old status back in the window.
+            if let Some((at, set_status, set_text)) = self.status_set.lock().unwrap().as_ref() {
+                let late = user.get("status").and_then(Value::as_str).is_some_and(|s| s != set_status)
+                    || user.get("statusDescription").and_then(Value::as_str).is_some_and(|t| t.trim() != set_text.trim());
+                if late && at.elapsed() < Duration::from_secs(8) {
+                    return;
+                }
+            }
             if let Some(now) = user.get("status").and_then(Value::as_str) {
                 if !now.is_empty() && now != me.status {
                     status = Some((now.to_string(), std::mem::replace(&mut me.status, now.to_string())));
@@ -235,11 +256,18 @@ impl Hub {
                 }
             }
         }
+        let told = status.is_some() || text.is_some();
         if let Some((now, before)) = status {
             self.own_entry("status", &now, &before, "");
         }
         if let Some((now, before)) = text {
             self.own_entry("statusText", &now, &before, "");
+        }
+        // The window keeps my status in step, whether I changed it here, in VRChat or on the website.
+        if let Some(me) = self.me() {
+            if told {
+                self.send("me:status", json!({ "status": me.status, "statusDescription": me.status_description }));
+            }
         }
     }
 
@@ -249,6 +277,116 @@ impl Hub {
 
     pub fn ratings(&self) -> AppResult<HashMap<String, i64>> {
         self.with_store(|s| Ok(s.ratings()?.into_iter().collect()))
+    }
+
+    /// The full instances I am waiting for, longest wait first.
+    pub fn waiting(&self) -> Value {
+        let mut list: Vec<(String, String, Instant)> = self.waiting.lock().unwrap().iter().map(|(l, (w, at))| (l.clone(), w.clone(), *at)).collect();
+        list.sort_by_key(|(_, _, at)| *at);
+        Value::Array(list.into_iter().map(|(location, world, at)| json!({ "location": location, "worldName": world, "minutes": at.elapsed().as_secs() / 60 })).collect())
+    }
+
+    /// Starts waiting for room in a full instance. Three at a time at most, so the app never
+    /// asks VRChat about many instances over and over.
+    pub fn wait_for_room(self: &Arc<Self>, location: &str, world_name: &str) -> AppResult<()> {
+        if self.me().is_none() {
+            return Err(AppError::NotSignedIn);
+        }
+        if crate::vrchat::model::launch_link(location).is_none() {
+            return Err(AppError::CannotDo("That is not an instance VRChat can be started in.".into()));
+        }
+        {
+            let mut waiting = self.waiting.lock().unwrap();
+            if !waiting.contains_key(location) && waiting.len() >= 3 {
+                return Err(AppError::CannotDo("You are already waiting for three instances. Stop one of those first.".into()));
+            }
+            waiting.entry(location.to_string()).or_insert_with(|| (world_name.to_string(), Instant::now()));
+        }
+        self.send("queue:changed", Value::Null);
+        // One watcher looks at all of them, and goes away when nothing is waited for.
+        if !self.waiting_watched.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let hub = self.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(45)).await;
+                    if hub.look_for_room().await == 0 {
+                        break;
+                    }
+                }
+                hub.waiting_watched.store(false, std::sync::atomic::Ordering::Relaxed);
+                // Something added in the instant before the watcher left gets a watcher of its own.
+                let again = hub.waiting.lock().unwrap().iter().next().map(|(l, (w, _))| (l.clone(), w.clone()));
+                if let Some((location, world)) = again {
+                    let _ = hub.wait_for_room(&location, &world);
+                }
+            });
+        }
+        Ok(())
+    }
+
+    /// Stops waiting for one instance.
+    pub fn stop_waiting(&self, location: &str) {
+        if self.waiting.lock().unwrap().remove(location).is_some() {
+            self.send("queue:changed", Value::Null);
+        }
+    }
+
+    /// Asks VRChat once about every instance waited for. One with room is announced and
+    /// dropped from the list; so is one that has closed, or has been waited for an hour.
+    /// Gives back how many are still waited for.
+    pub async fn look_for_room(&self) -> usize {
+        let list: Vec<(String, String, Instant)> = self.waiting.lock().unwrap().iter().map(|(l, (w, at))| (l.clone(), w.clone(), *at)).collect();
+        if self.me().is_none() {
+            self.waiting.lock().unwrap().clear();
+            self.send("queue:changed", Value::Null);
+            return 0;
+        }
+        for (location, world, _) in list {
+            // Stopped while this round was under way.
+            if !self.waiting.lock().unwrap().contains_key(&location) {
+                continue;
+            }
+            let reply = self.api.instance(&location).await;
+            // Stopped, or stopped and asked for again, while VRChat answered: the wait as it
+            // stands now decides, and one that is gone gets no word at all.
+            let Some(since) = self.waiting.lock().unwrap().get(&location).map(|(_, at)| *at) else {
+                continue;
+            };
+            let gone = |why: &str| ("queue:gone", json!({ "location": location, "worldName": world, "why": why }));
+            let done = match reply {
+                Ok(i) => {
+                    let users = i["n_users"].as_i64().or_else(|| i["userCount"].as_i64());
+                    let capacity = i["capacity"].as_i64().unwrap_or(0);
+                    let closed = i["closedAt"].as_str().is_some_and(|c| !c.is_empty());
+                    // Without a head count or VRChat's own word, nothing is known this round.
+                    let full = match (i["full"].as_bool(), users) {
+                        (Some(true), _) => Some(true),
+                        (_, Some(n)) if capacity > 0 => Some(n >= capacity),
+                        (Some(false), _) => Some(false),
+                        _ => None,
+                    };
+                    if closed {
+                        Some(gone("closed"))
+                    } else if full == Some(false) {
+                        let free = users.filter(|_| capacity > 0).map_or(1, |n| (capacity - n).max(1));
+                        self.send("popup", json!({ "title": format!("Room in {world}"), "body": format!("{free} {} free. Open Anonymous VRX to join.", if free == 1 { "place is" } else { "places are" }) }));
+                        Some(("queue:room", json!({ "location": location, "worldName": world, "free": free })))
+                    } else {
+                        None
+                    }
+                }
+                Err(AppError::Api { status: 403 | 404, .. }) => Some(gone("closed")),
+                // Told to slow down, or no connection: the rest of this round is skipped, the waits go on.
+                Err(_) => break,
+            };
+            let done = done.or_else(|| (since.elapsed() >= Duration::from_secs(3600)).then(|| gone("hour")));
+            if let Some((event, payload)) = done {
+                self.waiting.lock().unwrap().remove(&location);
+                self.send(event, payload);
+                self.send("queue:changed", Value::Null);
+            }
+        }
+        self.waiting.lock().unwrap().len()
     }
 
     /// Puts a friend on the list without asking VRChat. For tests.
@@ -499,6 +637,7 @@ impl Hub {
         self.api
             .update_me(&me.id, json!({ "status": status, "statusDescription": text }))
             .await?;
+        *self.status_set.lock().unwrap() = Some((Instant::now(), status.to_string(), text.to_string()));
         // VRChat's own update for my account may land before or after this line. Whichever
         // comes first finds the old value and writes the feed entry; the other finds nothing changed.
         let (mut was_status, mut was_text) = (None, None);
@@ -1781,6 +1920,7 @@ impl Hub {
     fn forget(&self) {
         // What was kept for the account that is leaving must not greet the next one.
         self.fav_cache.lock().unwrap().clear();
+        self.waiting.lock().unwrap().clear();
         *self.blocked.lock().unwrap() = None;
         self.briefs.lock().unwrap().clear();
         self.calendars.lock().unwrap().clear();

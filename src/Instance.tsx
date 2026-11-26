@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { backend, errorText, type Friend } from "./backend";
-import { Avatar, accessName, ageGated, regionName, statusTone, tidy } from "./bits";
+import { Avatar, accessName, ageGated, regionName, sinceWords, statusTone, tidy } from "./bits";
 import { live } from "./settings";
 import { openThing } from "./Detail";
 import { WayBack } from "./History";
 import { parsePlace } from "./place";
 import { openProfile } from "./Profile";
 import { openPicture } from "./Viewer";
+import { QueueButton } from "./Queue";
 
 type Json = Record<string, unknown>;
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -70,6 +71,17 @@ export function InstancePanel({
   // VRChat lists everyone only to people who are inside the instance themselves.
   const everyone = Array.isArray(info?.users) ? (info.users as Json[]).filter((u) => u && typeof u === "object") : [];
   const others = everyone.filter((u) => !friends.has(str(u.id)));
+  const full = info?.full === true || (capacity > 0 && count >= capacity);
+  const known = info !== null && count > 0;
+  const free = capacity > 0 && known ? Math.max(0, capacity - count) : null;
+  const share = capacity > 0 && known ? Math.min(1, count / capacity) : 0;
+  // Past the size the world's maker recommends, a world gets crowded before it is full.
+  const comfy = num(world?.recommendedCapacity);
+  const crowded = comfy > 0 && comfy < capacity && count > comfy;
+  const tone = full ? "full" : crowded || share >= 0.85 ? "busy" : "open";
+  const about = tidy(str(world?.description));
+  const author = tidy(str(world?.authorName));
+  const elsewhere = Array.isArray(world?.instances) ? Math.max(0, (world.instances as unknown[]).length - 1) : 0;
 
   return (
     <div className="veil" onClick={onClose}>
@@ -95,6 +107,7 @@ export function InstancePanel({
             {place.instance && live().showInstanceId && <li>#{place.instance}</li>}
             {ageGated(location) && <li className="chip-adult" title="Only people VRChat has verified as 18 or older get in">18+</li>}
           </ul>
+          <QueueButton location={location} worldName={name} full={full} onDone={onDone} />
           <WayBack location={location} onDone={onDone} />
         </aside>
 
@@ -106,44 +119,87 @@ export function InstancePanel({
               <button onClick={onClose}>Close</button>
             </span>
           </div>
-          <div className="profile-body">
-            <section>
-              <h3>People</h3>
-              <dl className="facts">
-                <div>
-                  <dt>In the instance</dt>
-                  <dd>{info === null ? "Asking VRChat" : count ? `${count}${capacity ? ` of ${capacity}` : ""}` : "VRChat did not say"}</dd>
+          <div className="profile-body inst-body">
+            <section className={`inst-count inst-${tone}`}>
+              <div className="inst-figures">
+                <p className="inst-big">
+                  {info === null ? <span className="inst-wait">Asking VRChat</span> : known ? <b>{count}</b> : <span className="inst-wait">No head count</span>}
+                  {known && capacity > 0 && <span>of {capacity} people</span>}
+                  {known && capacity === 0 && <span>{count === 1 ? "person" : "people"}</span>}
+                </p>
+                <p className="inst-state">{info === null ? "" : full ? "Full" : free !== null ? `${free} ${free === 1 ? "place" : "places"} free` : ""}</p>
+              </div>
+              {capacity > 0 && (
+                <div className="inst-meter" role="img" aria-label={known ? `${count} of ${capacity} places taken` : "Head count not known"}>
+                  <i style={{ width: `${Math.round(share * 100)}%` }} />
+                  {comfy > 0 && comfy < capacity && <u style={{ left: `${Math.round((comfy / capacity) * 100)}%` }} title={`The world's maker recommends ${comfy} people at most`} />}
                 </div>
-                <div>
-                  <dt>Your friends here</dt>
-                  <dd>{here.length}</dd>
-                </div>
-              </dl>
+              )}
+              <p className="inst-notes">
+                <span>
+                  {here.length === 0 ? "None of your friends" : here.length === 1 ? "1 friend of yours" : `${here.length} friends of yours`}
+                  {known ? `, ${Math.max(0, count - here.length)} ${count - here.length === 1 ? "other" : "others"}` : ""}
+                </span>
+                {comfy > 0 && comfy < capacity && <span>{crowded ? `Past the ${comfy} its maker recommends` : `Comfortable up to ${comfy}`}</span>}
+              </p>
               {problem && <p className="profile-fine">VRChat did not share the head count: {problem}</p>}
             </section>
 
             <section>
               <h3>Friends here</h3>
               {here.length === 0 ? (
-                <p className="profile-fine">None of your friends are in this instance right now.</p>
+                <p className="profile-fine">None of your friends are in this instance right now. They may have moved on since the card was drawn.</p>
               ) : (
-                <ul className="chips">
+                <ul className="inst-friends">
                   {here.map((f) => (
-                    <li className="chip chip-friend chip-open" data-person={f.id} data-person-name={f.displayName} role="button" tabIndex={0} key={f.id} onClick={() => openProfile(f.id)} onKeyDown={(e) => e.key === "Enter" && openProfile(f.id)}>
-                      <Avatar name={f.displayName} image={f.image} tone={statusTone(f)} />
-                      <span className="chip-text">
-                        <span className="chip-name">{f.displayName}</span>
-                        {f.statusDescription && <span className="chip-note">{f.statusDescription}</span>}
-                      </span>
+                    <li key={f.id}>
+                      <button className="inst-friend" data-person={f.id} data-person-name={f.displayName} onClick={() => openProfile(f.id)} title={`Open ${f.displayName}'s profile`}>
+                        <Avatar name={f.displayName} image={f.image} tone={statusTone(f)} />
+                        <span className="inst-friend-text">
+                          <b className="hide-me">{f.displayName}</b>
+                          {f.statusDescription && <small>{f.statusDescription}</small>}
+                        </span>
+                        {f.since && (
+                          <span className="inst-since" title="How long they have been in this instance">
+                            {sinceWords(f.since)}
+                            {f.sinceAtLeast ? "+" : ""}
+                          </span>
+                        )}
+                      </button>
                     </li>
                   ))}
                 </ul>
               )}
             </section>
 
-            <section>
-              <h3>Everyone else</h3>
-              {others.length > 0 ? (
+            {(about || author) && (
+              <section>
+                <h3>The world</h3>
+                {about && <p className="inst-about">{about}</p>}
+                <p className="inst-world-line">
+                  {author && (
+                    <span>
+                      by{" "}
+                      <button className="name-link" disabled={!str(world?.authorId)} onClick={() => openProfile(str(world?.authorId))}>
+                        {author}
+                      </button>
+                    </span>
+                  )}
+                  {elsewhere > 0 && (
+                    <span>
+                      {elsewhere} other open {elsewhere === 1 ? "instance" : "instances"},{" "}
+                      <button className="name-link" onClick={() => openThing("world", worldId)}>
+                        see them
+                      </button>
+                    </span>
+                  )}
+                </p>
+              </section>
+            )}
+
+            {others.length > 0 ? (
+              <section>
+                <h3>Everyone else</h3>
                 <ul className="chips">
                   {others.map((u) => (
                     <li className="chip chip-open" data-person={str(u.id)} data-person-name={str(u.displayName)} role="button" tabIndex={0} key={str(u.id)} onClick={() => openProfile(str(u.id))} onKeyDown={(e) => e.key === "Enter" && openProfile(str(u.id))}>
@@ -154,13 +210,10 @@ export function InstancePanel({
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <p className="profile-fine">
-                  VRChat names everyone only to people who are inside the instance. From outside, the head count and
-                  your friends are all it shares.
-                </p>
-              )}
-            </section>
+              </section>
+            ) : (
+              <p className="inst-foot">VRChat names everyone only to people inside the instance. From outside it shares the head count and your friends.</p>
+            )}
           </div>
         </div>
       </div>

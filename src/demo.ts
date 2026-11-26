@@ -205,6 +205,8 @@ function demoPerson(f: Friend): Person {
 }
 const demoBackups: Array<{ name: string; path: string; bytes: number }> = [];
 
+const demoWaiting: Array<{ location: string; worldName: string; since: number }> = [];
+
 type Handler = (payload: never) => void;
 const handlers = new Map<string, Set<Handler>>();
 function emit<K extends keyof LiveEvents>(name: K, payload: LiveEvents[K]) {
@@ -320,6 +322,27 @@ export const demoBackend: Backend = {
     return { done: people.length, total: people.length, ended: "done", problem: "" };
   },
   async stopMutuals() {},
+  async waiting() {
+    return demoWaiting.map((w) => ({ location: w.location, worldName: w.worldName, minutes: Math.floor((Date.now() - w.since) / 60000) }));
+  },
+  async waitForRoom(location, worldName) {
+    if (demoWaiting.some((w) => w.location === location)) return;
+    demoWaiting.push({ location, worldName, since: Date.now() });
+    emit("queue:changed", null);
+    // The demo finds room after a few seconds.
+    window.setTimeout(() => {
+      const at = demoWaiting.findIndex((w) => w.location === location);
+      if (at < 0) return;
+      demoWaiting.splice(at, 1);
+      emit("queue:room", { location, worldName, free: 2 });
+      emit("queue:changed", null);
+    }, 9000);
+  },
+  async stopWaiting(location) {
+    const at = demoWaiting.findIndex((w) => w.location === location);
+    if (at >= 0) demoWaiting.splice(at, 1);
+    emit("queue:changed", null);
+  },
   async pairs(ids) {
     // Every third pair of the people asked about, so the demo shows a few lines.
     const out = [];
@@ -434,7 +457,7 @@ export const demoBackend: Backend = {
     await wait(250);
     if (kind === "groupMembers") return people.slice(0, 9).map((p) => ({ userId: p.id, user: { displayName: p.displayName } }));
     if (kind === "groupPosts") return { posts: [{ id: "post_1", title: "Friday meet-up", text: "Same pier, same time.", createdAt: ago(60 * 30) }] };
-    if (kind === "instance") return { n_users: 6, capacity: 32 };
+    if (kind === "instance") return id === spots[1] ? { n_users: 40, capacity: 40, full: true } : { n_users: 6, capacity: 32 };
     if (kind === "groupInstances") return [{ instanceId: "40211", location: spots[0], memberCount: 3, world: { id: "wrld_demo_pier", name: "Quiet Pier at Dusk" } }];
     if (kind === "groupPhotos") return [];
     if (kind === "group") return { galleries: [{ id: "ggal_demo_1", name: "Meet-ups" }], id, name: "Night Owls", description: "A late-hours hangout group.", rules: "Be kind.", shortCode: "OWLS", discriminator: "0042", memberCount: 412, onlineMemberCount: 23, joinState: "open", membershipStatus: demoMember ? "member" : "inactive", ownerId: people[0].id, createdAt: ago(60 * 24 * 400) };

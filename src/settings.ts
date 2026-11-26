@@ -1,3 +1,4 @@
+import { cleanRules, type StatusRule } from "./statusrules";
 import { useEffect, useRef, useState } from "react";
 import { backend } from "./backend";
 
@@ -64,6 +65,11 @@ export interface Settings {
   profileBackdropStrength: number;
   /** Take over what is new in VRCX's history by itself. */
   vrcxAuto: boolean;
+  /** When a full instance I waited for has room: join it by itself, without asking me first. */
+  queueJoin: boolean;
+  /** My status follows the rules below. */
+  statusRulesOn: boolean;
+  statusRules: StatusRule[];
   /** Send my notifications into the headset through XSOverlay or OVR Toolkit. */
   vrXs: boolean;
   vrOvrHud: boolean;
@@ -246,6 +252,9 @@ function load(): Settings {
     profileBackdrop: true,
     profileBackdropStrength: 0.5,
     vrcxAuto: true,
+    queueJoin: false,
+    statusRulesOn: false,
+    statusRules: [],
     vrXs: false,
     vrOvrHud: false,
     vrOvrWrist: false,
@@ -283,6 +292,7 @@ function load(): Settings {
     if (!["off", "left", "right"].includes(merged.vrWrist)) merged.vrWrist = defaults.vrWrist;
     if (!(merged.vrWristSize >= 0.08 && merged.vrWristSize <= 0.4)) merged.vrWristSize = defaults.vrWristSize;
     if (!["pc", "mon", "sun", "sat"].includes(merged.weekStart)) merged.weekStart = defaults.weekStart;
+    merged.statusRules = cleanRules(merged.statusRules);
     return merged;
   } catch {
     return defaults;

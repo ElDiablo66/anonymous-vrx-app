@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { backend, errorText, type Me } from "./backend";
+import { errorText, type Me } from "./backend";
 import { openProfile } from "./Profile";
+import { saveStatusByHand, useRuleNow } from "./statusrules";
 
 const choices: Array<[string, string, string]> = [
   ["join me", "Join me", "Anyone can join you"],
@@ -15,6 +16,7 @@ export function MyStatus({ me, onSaved, onClose }: { me: Me; onSaved: (me: Me, m
   const [text, setText] = useState(me.statusDescription);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
+  const rule = useRuleNow();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -26,7 +28,7 @@ export function MyStatus({ me, onSaved, onClose }: { me: Me; onSaved: (me: Me, m
     setBusy(true);
     setProblem("");
     try {
-      await backend.setStatus(status, text.trim());
+      await saveStatusByHand(me.id, { status, text: text.trim() });
       onSaved({ ...me, status, statusDescription: text.trim() }, "Status changed.");
     } catch (err) {
       setProblem(errorText(err));
@@ -55,6 +57,7 @@ export function MyStatus({ me, onSaved, onClose }: { me: Me; onSaved: (me: Me, m
           <input value={text} maxLength={32} onChange={(e) => setText(e.target.value)} placeholder="What you are up to" />
           <small>{32 - text.length} left</small>
         </label>
+        {rule.fit && rule.holding && <p className="status-rule-note">A status rule set this. What you save here stays until no rule fits any more.</p>}
         {problem && (
           <p className="banner" role="alert">
             {problem}

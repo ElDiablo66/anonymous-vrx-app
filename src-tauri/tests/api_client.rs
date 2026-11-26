@@ -959,3 +959,45 @@ async fn friends_of_friends_are_asked_one_friend_at_a_time() {
     assert!(ran["problem"].as_str().unwrap().contains("bad question"));
     assert_eq!(hub.mutuals().unwrap()["hidden"], json!([]));
 }
+
+#[tokio::test]
+async fn a_full_instance_is_watched_until_it_has_room() {
+    let server = MockServer::start().await;
+    // Full at the first look, one place free at the second.
+    Mock::given(method("GET")).and(path("/instances/wrld_a:1~region(eu)")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "n_users": 16, "capacity": 16, "full": true }))).up_to_n_times(1).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/instances/wrld_a:1~region(eu)")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "n_users": 15, "capacity": 16, "full": false }))).expect(1).mount(&server).await;
+    // A third answers with no head count at all, both times: nothing is known, so it stays waited for.
+    Mock::given(method("GET")).and(path("/instances/wrld_c:3~region(eu)")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "capacity": 16 }))).expect(2).mount(&server).await;
+    // The other one has closed.
+    Mock::given(method("GET")).and(path("/instances/wrld_b:2~region(eu)")).respond_with(ResponseTemplate::new(404).set_body_json(json!({ "error": { "message": "gone", "status_code": 404 } }))).expect(1).mount(&server).await;
+
+    let heard: Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let keep = heard.clone();
+    let api = Arc::new(client(&server));
+    api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
+    let hub = Hub::new(api, std::env::temp_dir(), Arc::new(move |name, payload| keep.lock().unwrap().push((name.to_string(), payload))), false, None);
+    assert!(matches!(hub.wait_for_room("wrld_a:1~region(eu)", "Pier"), Err(AppError::NotSignedIn)));
+    hub.begin(json!({ "id": "usr_me_queue", "displayName": "Tester" })).unwrap();
+    assert!(hub.wait_for_room("not a place", "Nowhere").is_err());
+
+    hub.wait_for_room("wrld_a:1~region(eu)", "Pier").unwrap();
+    hub.wait_for_room("wrld_b:2~region(eu)", "Arcade").unwrap();
+    hub.wait_for_room("wrld_c:3~region(eu)", "Loft").unwrap();
+    assert!(hub.wait_for_room("wrld_d:4~region(eu)", "Fourth").is_err());
+    assert_eq!(hub.waiting().as_array().unwrap().len(), 3);
+
+    // First look: the pier is still full, the arcade is gone.
+    assert_eq!(hub.look_for_room().await, 2);
+    assert!(heard.lock().unwrap().iter().any(|(n, p)| n == "queue:gone" && p["worldName"] == "Arcade"));
+    assert!(!heard.lock().unwrap().iter().any(|(n, _)| n == "queue:room"));
+
+    // Second look: room, said once, and nothing is waited for any more.
+    assert_eq!(hub.look_for_room().await, 1);
+    hub.stop_waiting("wrld_c:3~region(eu)");
+    assert_eq!(hub.waiting().as_array().unwrap().len(), 0);
+    let all = heard.lock().unwrap();
+    assert!(!all.iter().any(|(_, p)| p["worldName"] == "Loft"));
+    let room = all.iter().find(|(n, _)| n == "queue:room").expect("room is announced");
+    assert_eq!((room.1["worldName"].as_str(), room.1["free"].as_i64()), (Some("Pier"), Some(1)));
+    assert!(all.iter().any(|(n, p)| n == "popup" && p["title"] == "Room in Pier"));
+}

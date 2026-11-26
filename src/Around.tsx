@@ -3,6 +3,7 @@ import { backend, errorText, type Favorites, type Friend, type Instance, type Vi
 import { accessName, deviceLine, deviceWords, regionName, tidy } from "./bits";
 import { WayBack } from "./History";
 import { openThing } from "./Detail";
+import { toggleWait, useWaiting } from "./Queue";
 import { parsePlace } from "./place";
 import { FriendChip } from "./App";
 import { whereText } from "./Everyone";
@@ -118,6 +119,7 @@ export function Around({
     }
   };
   const [busy, setBusy] = useState("");
+  const waiting = useWaiting();
 
   async function getIn(room: Room) {
     const host = room.people[0];
@@ -283,14 +285,22 @@ export function Around({
         const ask = askFirst.has(place.access ?? "");
         return (
           <article className="room" key={room.location}>
-            <div className="room-pic" style={world?.image ? { backgroundImage: `url("${world.image}")` } : undefined}>
+            <div
+              className="room-pic room-pic-open"
+              role="button"
+              tabIndex={0}
+              title="Open this instance"
+              onClick={() => openThing("instance", room.location)}
+              onKeyDown={(e) => e.key === "Enter" && openThing("instance", room.location)}
+              style={world?.image ? { backgroundImage: `url("${world.image}")` } : undefined}
+            >
               <span className="room-count" aria-label={`${room.people.length} friends here`}>
                 {room.people.length}
               </span>
             </div>
             <div className="room-body">
               <h2>
-                <button className="title-link" onClick={() => openThing("world", room.worldId)} title="Open this world">
+                <button className="title-link" onClick={() => openThing("instance", room.location)} title="Open this instance: who is in it, how full it is, and the way in">
                   {world ? tidy(world.name) : "Looking up this world"}
                 </button>
               </h2>
@@ -330,6 +340,20 @@ export function Around({
               ) : (
                 <WayBack location={room.location} onDone={onDone} />
               )}
+              {!ask &&
+                (count?.full || waiting.some((w) => w.location === room.location)) &&
+                (() => {
+                  const waits = waiting.some((w) => w.location === room.location);
+                  return (
+                    <button
+                      className="plain room-wait"
+                      title={waits ? "Stops looking for room in this instance" : "The app looks every 45 seconds and tells you when a place is free"}
+                      onClick={() => void toggleWait(room.location, world ? tidy(world.name) : "A world", waits, onDone)}
+                    >
+                      {waits ? "Stop waiting" : "Tell me when there is room"}
+                    </button>
+                  );
+                })()}
             </div>
           </article>
         );

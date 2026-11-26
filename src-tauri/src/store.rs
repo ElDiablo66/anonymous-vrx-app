@@ -972,7 +972,9 @@ impl Store {
         let tx = self.db.unchecked_transaction()?;
         let mut changed = false;
         if fresh_file {
-            // A new log file means the game was started again.
+            // A new log file means the game was started again. A stay that this ends counts
+            // as a change, so the window stops showing the instance of the last session.
+            changed = tx.query_row("SELECT EXISTS(SELECT 1 FROM visits WHERE left_at IS NULL)", [], |r| r.get::<_, bool>(0))?;
             close_visits(&tx, None)?;
         }
         let mut room_name = String::new();

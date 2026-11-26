@@ -34,6 +34,8 @@ import { InstancePanel } from "./Instance";
 import { Uploads } from "./Uploads";
 import { Events, monthOf } from "./Events";
 import { useSettings } from "./settings";
+import { QueueBar } from "./Queue";
+import { useStatusRules } from "./statusrules";
 import logo from "./assets/logo.svg";
 
 type View = "around" | "here" | "history" | "everyone" | "favourites" | "events" | "uploads" | "search" | "inbox" | "settings";
@@ -650,6 +652,7 @@ export function App() {
     void hold(backend.on("instance:info", (i) => setInstances((old) => new Map(old).set(i.location, i))));
     void hold(backend.on("pipeline:status", (s) => setLink(s)));
     void hold(backend.on("sync:error", (e) => setNotice(e.message)));
+    void hold(backend.on("me:status", (s) => setMe((old) => (old ? { ...old, status: s.status, statusDescription: s.statusDescription } : old))));
     void hold(
       backend.on("game:crashed", (c) => {
         if (c.rejoined) {
@@ -672,6 +675,8 @@ export function App() {
       stops.forEach((stop) => stop());
     };
   }, [me]);
+
+  useStatusRules(me, setMe, settings, hereNow, friends, setToast);
 
   const list = useMemo(() => [...friends.values()], [friends]);
   const counts = useMemo(
@@ -795,6 +800,7 @@ export function App() {
             )}
           </div>
         )}
+        <QueueBar settings={settings} onDone={setToast} />
         {crash && (
           <div className="banner crash-note" role="alert">
             <span>VRChat closed without warning while you were in {crash.worldName}.</span>

@@ -1,6 +1,7 @@
 import type { Favorites, Me } from "./backend";
 import { useEffect, useRef, useState } from "react";
 import { backend, errorText, type BackupInfo } from "./backend";
+import { StatusRuleSettings } from "./RuleSettings";
 import { Avatar } from "./bits";
 import { DEFAULT_AVATAR_PROVIDER, EXTRA_AVATAR_PROVIDERS, shrinkPicture, sizes, themeColours, type Settings } from "./settings";
 import { DateSettings, FontSettings, UpdateSettings, GameCacheSettings, InstanceSettings, PeopleColourSettings, PerformanceSettings, ProfileLookSettings, VrNoticeSettings } from "./SettingsMore";
@@ -544,9 +545,24 @@ export function SettingsPage({
             ))}
           </div>
         </div>
+        <label className="setting">
+          <span>
+            <span className="setting-name">
+              Join by itself when a full instance has room <span className="mark">Beta</span>
+            </span>
+            <span className="setting-hint">
+              On a full instance you can ask the app to tell you when a place is free. Off, it tells you and you press
+              Join. On, it starts VRChat there or moves you the moment it sees room. The room alarm is new and has not
+              been tried on many full instances yet.
+            </span>
+          </span>
+          <input type="checkbox" role="switch" checked={settings.queueJoin} onChange={(e) => change({ queueJoin: e.target.checked })} />
+        </label>
       </section>
 
       <InstanceSettings settings={settings} change={change} />
+
+      <StatusRuleSettings settings={settings} change={change} />
 
       <section data-group="general">
         <h2>Starting up</h2>

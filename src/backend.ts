@@ -153,6 +153,14 @@ export interface DiscordPresence {
   smallText: string;
 }
 
+/** A full instance I am waiting to get into. */
+export interface Waiting {
+  location: string;
+  worldName: string;
+  /** How long I have waited. */
+  minutes: number;
+}
+
 export interface HereNow {
   visit: Visit;
   people: Sighting[];
@@ -380,6 +388,14 @@ export type LiveEvents = {
   "instance:info": Instance;
   "pipeline:status": string;
   "session:ended": null;
+  /** The list of full instances I wait for changed. */
+  "queue:changed": null;
+  /** An instance I waited for has room. It is off the list already. */
+  "queue:room": { location: string; worldName: string; free: number };
+  /** An instance I waited for closed, or stayed full for an hour. */
+  "queue:gone": { location: string; worldName: string; why: "closed" | "hour" };
+  /** My own status changed, here, in VRChat or on the website. */
+  "me:status": { status: string; statusDescription: string };
   "window:close-asked": null;
   "sync:error": BackendError;
 };
@@ -537,6 +553,11 @@ export interface Backend {
   /** Asks VRChat about every friend in turn, slowly. Ends when done, stopped, or told to slow down. */
   fetchMutuals(everyone: boolean): Promise<{ done: number; total: number; ended: string; problem: string }>;
   stopMutuals(): Promise<void>;
+  /** The full instances I am waiting to get into, longest wait first. */
+  waiting(): Promise<Waiting[]>;
+  /** Starts waiting for room in a full instance. The app asks VRChat every 45 seconds, for an hour at most, three instances at a time. */
+  waitForRoom(location: string, worldName: string): Promise<void>;
+  stopWaiting(location: string): Promise<void>;
   /** How my own worlds stood day by day over the last `days` days. Noted each time my worlds are listed. */
   worldStats(days: number): Promise<WorldDay[]>;
   /** The running version, and whether this edition can update itself. */
@@ -731,6 +752,9 @@ const desktop: Backend = {
   mutuals: () => invoke("get_mutuals"),
   fetchMutuals: (everyone) => invoke("fetch_mutuals", { everyone }),
   stopMutuals: () => invoke("stop_mutuals"),
+  waiting: () => invoke("get_waiting"),
+  waitForRoom: (location, worldName) => invoke("wait_for_room", { location, worldName }),
+  stopWaiting: (location) => invoke("stop_waiting", { location }),
   updateInfo: () => invoke("update_info"),
   updateCheck: () => invoke("update_check"),
   updateInstall: () => invoke("update_install"),

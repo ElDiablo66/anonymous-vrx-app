@@ -6,6 +6,7 @@ import { launched } from "./History";
 import { parsePlace } from "./place";
 import { openProfile } from "./Profile";
 import { savedLaunchMode } from "./settings";
+import { toggleWait, useWaiting } from "./Queue";
 
 interface Room {
   location: string;
@@ -155,6 +156,7 @@ export function FriendMap({
   onDone: (message: string) => void;
 }) {
   const [busy, setBusy] = useState("");
+  const waiting = useWaiting();
   const [showAway, setShowAway] = useState(false);
 
   // Lines between friends I often saw in the same instance. Which pairs comes from my own
@@ -485,14 +487,25 @@ export function FriendMap({
                     {mine ? (
                       <span className="mark mark-live">You</span>
                     ) : (
-                      <button
-                        className={ask ? "plain" : "plain go"}
-                        disabled={busy === room.location || (!ask && instance?.full === true)}
-                        title={ask ? `Asks ${room.people[0].displayName} for an invite` : instance?.full ? "This instance is full" : "Starts VRChat in this instance, or moves you there"}
-                        onClick={() => void go(room, ask)}
-                      >
-                        {ask ? "Ask" : instance?.full ? "Full" : "Join"}
-                      </button>
+                      (() => {
+                        const full = !ask && instance?.full === true;
+                        const waits = waiting.some((w) => w.location === room.location);
+                        const worldName = tidy(worlds.get(room.worldId)?.name ?? "") || "A world";
+                        return (
+                          <button
+                            className={ask || full ? "plain" : "plain go"}
+                            disabled={busy === room.location}
+                            title={ask ? `Asks ${room.people[0].displayName} for an invite` : waits ? "You are waiting for room here. Press to stop" : full ? "This instance is full. Press to be told when it has room" : "Starts VRChat in this instance, or moves you there"}
+                            onClick={() => {
+                              if (!full && !waits) return void go(room, ask);
+                              setBusy(room.location);
+                              void toggleWait(room.location, worldName, waits, onDone).finally(() => setBusy(""));
+                            }}
+                          >
+                            {ask ? "Ask" : waits ? "Waiting" : full ? "Full, wait" : "Join"}
+                          </button>
+                        );
+                      })()
                     )}
                   </li>
                 );
