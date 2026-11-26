@@ -168,6 +168,7 @@ export function Around({
   }, [friends, worlds, q]);
 
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const starred = useMemo(() => new Set(Object.keys(favorites.friends)), [favorites]);
   const pinned = useMemo(() => {
     return favorites.groups
       .map((group) => {
@@ -202,7 +203,18 @@ export function Around({
           Map
         </button>
       </div>
-      {view === "map" && <FriendMap rooms={groups.rooms} hidden={groups.hidden} moving={groups.moving} worlds={worlds} instances={instances} />}
+      {view === "map" && (
+        <FriendMap
+          rooms={groups.rooms}
+          hidden={groups.hidden}
+          moving={groups.moving}
+          away={[...groups.web, ...groups.phone, ...groups.elsewhere]}
+          worlds={worlds}
+          instances={instances}
+          starred={starred}
+          onDone={onDone}
+        />
+      )}
       <div className="around-cards" hidden={view === "map"}>
       {pinned.length > 0 && (
         <Bricks className="pinned">

@@ -7384,3 +7384,175 @@ body .events-main .event .event-main {
   right: -5px;
   box-shadow: 0 0 0 2px var(--solid);
 }
+
+/* =====================================================================
+   Friend map, second pass: names, a way in, favourites, a key
+   ===================================================================== */
+.map-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 24px;
+  margin-bottom: 6px;
+}
+
+.map-count {
+  margin: 0;
+  color: var(--text-soft);
+  font: 500 14px/1.3 var(--body);
+}
+
+.map-count b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-soft);
+  font: 500 12.5px/1.3 var(--body);
+}
+
+.map-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  --ring: var(--online);
+}
+
+.map-legend li.map-friends {
+  --ring: var(--join);
+}
+
+.map-legend li.map-invite {
+  --ring: var(--ask);
+}
+
+.map-legend li.map-group {
+  --ring: var(--web);
+}
+
+.map-legend li.map-private {
+  --ring: var(--offline);
+}
+
+.map-legend i {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--ring);
+  border-radius: 50%;
+}
+
+.map-wrap .friend-map {
+  gap: 30px 34px;
+  padding-top: 18px;
+}
+
+.map-room.map-away {
+  --ring: var(--web);
+}
+
+.map-room.map-away .map-bubble {
+  background: rgb(0 0 0 / 0.22);
+  outline: 1px dashed color-mix(in srgb, var(--ring) 60%, transparent);
+  outline-offset: 5px;
+}
+
+/* One entrance for the whole picture: bubbles come in one after the other. */
+@media (prefers-reduced-motion: no-preference) {
+  .map-room {
+    animation: map-in 0.42s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+    animation-delay: calc(var(--order, 0) * 55ms);
+  }
+}
+
+@keyframes map-in {
+  from {
+    opacity: 0;
+    scale: 0.86;
+  }
+}
+
+.map-bubble {
+  transition: box-shadow 0.2s ease;
+}
+
+.map-room:hover .map-bubble {
+  box-shadow: inset 0 0 0 2px var(--ring), 0 0 44px -8px var(--ring);
+}
+
+body .map-face {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  width: 78px;
+  cursor: pointer;
+}
+
+.map-face:hover,
+.map-face:focus-visible {
+  scale: 1.08;
+}
+
+.map-face:active {
+  scale: 0.97;
+}
+
+.map-name {
+  max-width: 76px;
+  padding: 1px 6px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: rgb(12 5 28 / 0.72);
+  color: var(--text);
+  font: 600 11.5px/1.35 var(--body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-face:hover .map-name,
+.map-face:focus-visible .map-name {
+  max-width: 180px;
+  background: rgb(12 5 28 / 0.95);
+}
+
+.map-star {
+  color: var(--sunset);
+}
+
+.map-face .map-star {
+  position: absolute;
+  top: -5px;
+  right: 9px;
+  font-size: 13px;
+  line-height: 1;
+  text-shadow: 0 0 4px rgb(0 0 0 / 0.9);
+}
+
+body .map-face.map-starred .avatar {
+  box-shadow: 0 0 0 2px var(--sunset);
+}
+
+.map-more {
+  bottom: 9%;
+}
+
+body .map-go {
+  min-width: 108px;
+  margin: 0;
+  justify-content: center;
+}
+
+.map-away {
+  margin-top: 4px;
+}
+
+:root[data-hide="on"] body .map-name {
+  color: transparent;
+}
