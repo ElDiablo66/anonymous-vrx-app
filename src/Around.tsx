@@ -308,8 +308,8 @@ export function Around({
                 <span className={`access access-${place.access}`}>{accessName(place)}</span>
                 {regionName(place) && <span>{regionName(place)}</span>}
                 {count && (
-                  <span className={count.full ? "room-full" : ""}>
-                    {count.capacity > 0 ? `${count.users} of ${count.capacity} people` : `${count.users} people`}
+                  <span className={count.full ? "room-full" : ""} title={count.users < room.people.length ? "VRChat's count is behind; at least your friends are there" : undefined}>
+                    {count.capacity > 0 ? `${Math.max(count.users, room.people.length)} of ${count.capacity} people` : `${Math.max(count.users, room.people.length)} people`}
                     {count.full ? ", full" : ""}
                   </span>
                 )}

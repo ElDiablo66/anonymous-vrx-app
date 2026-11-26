@@ -1,3 +1,4 @@
+import { Find } from "./Find";
 import { Photos } from "./Photos";
 import { useEffect, useRef, useState } from "react";
 import { backend, errorText, type Friend, type Sighting, type Visit, type World } from "./backend";
@@ -219,15 +220,17 @@ interface HistoryProps {
   onDone: (message: string) => void;
 }
 
-const historyTabs: Array<["worlds" | "avatars" | "feed" | "photos", string]> = [
+type HistoryTab = "worlds" | "find" | "avatars" | "feed" | "photos";
+const historyTabs: Array<[HistoryTab, string]> = [
   ["worlds", "Worlds"],
+  ["find", "Find"],
   ["photos", "Photos"],
   ["avatars", "Avatars"],
   ["feed", "Friend activity"],
 ];
 
 export function History(props: HistoryProps) {
-  const [tab, setTab] = useState<"worlds" | "avatars" | "feed" | "photos">("worlds");
+  const [tab, setTab] = useState<HistoryTab>(() => (backend.demo && new URLSearchParams(location.search).get("tab") === "find" ? "find" : "worlds"));
   return (
     <div className="table-wrap">
       <div className="tabs" role="tablist" aria-label="History">
@@ -238,6 +241,7 @@ export function History(props: HistoryProps) {
         ))}
       </div>
       {tab === "worlds" && <WorldVisits {...props} />}
+      {tab === "find" && <Find friends={props.friends} />}
       {tab === "photos" && <Photos onDone={props.onDone} />}
       {tab === "avatars" && <AvatarHistory onDone={props.onDone} />}
       {tab === "feed" && <FeedBrowser friends={props.friends} worlds={props.worlds} />}

@@ -153,6 +153,64 @@ export interface DiscordPresence {
   smallText: string;
 }
 
+/** A person found in my own history. */
+export interface FoundPerson {
+  userId: string;
+  /** The name they were last seen under. */
+  name: string;
+  /** The name that matched; another one when they have renamed since. */
+  matched: string;
+  times: number;
+  seconds: number;
+  first: string;
+  last: string;
+  lastWorldId: string;
+  lastWorld: string;
+  lastLocation: string;
+}
+
+/** A world found in my own history. */
+export interface FoundWorld {
+  worldId: string;
+  name: string;
+  times: number;
+  seconds: number;
+  last: string;
+  lastLocation: string;
+}
+
+/** One stay of mine as a search result. */
+export interface LogStay {
+  visitId: number;
+  worldId: string;
+  worldName: string;
+  location: string;
+  from: string;
+  to: string;
+  /** How long the person and I overlapped, or how long I was there. */
+  seconds: number;
+  /** Others seen during the stay: without me, and without the person the stays are of. */
+  people: number;
+}
+
+export interface HabitWorld {
+  worldId: string;
+  name: string;
+  times: number;
+  seconds: number;
+}
+
+/** Where and when I meet a person, and where they go by themselves. */
+export interface Habits {
+  worlds: HabitWorld[];
+  company: Array<{ userId: string; name: string; times: number }>;
+  /** When we were together: start and seconds, newest first. */
+  together: Array<[string, number]>;
+  ownWorlds: HabitWorld[];
+  /** When the friend activity saw them come online or move. */
+  seenAt: string[];
+}
+
 /** A full instance I am waiting to get into. */
 export interface Waiting {
   location: string;
@@ -548,6 +606,12 @@ export interface Backend {
   /** Brings VRCX's history for my account into this app, after making a backup. Safe to run again. */
   /** Which of these people I saw in the same instance at least three times, most often first. From my own history. */
   pairs(ids: string[]): Promise<Array<{ a: string; b: string; times: number }>>;
+  /** People and worlds in my own history whose name has the words in it, latest seen first. */
+  logFind(query: string): Promise<{ people: FoundPerson[]; worlds: FoundWorld[] }>;
+  /** Every stay of mine with one person or in one world, newest first. Without an id, the name decides. */
+  logStays(kind: "person" | "world", id: string, name: string): Promise<LogStay[]>;
+  /** Where and when I meet one person, and where they go by themselves. From this PC's history. */
+  habits(userId: string): Promise<Habits>;
   /** What is known about which of my friends are friends with each other. */
   mutuals(): Promise<{ pairs: Array<[string, string]>; asked: number; hidden: string[]; at: string; running: boolean }>;
   /** Asks VRChat about every friend in turn, slowly. Ends when done, stopped, or told to slow down. */
@@ -749,6 +813,9 @@ const desktop: Backend = {
   cosmetics: () => invoke("get_cosmetics"),
   worldStats: (days) => invoke("get_world_stats", { days }),
   pairs: (ids) => invoke("get_pairs", { ids }),
+  logFind: (query) => invoke("log_find", { query }),
+  logStays: (kind, id, name) => invoke("log_stays", { kind, id, name }),
+  habits: (userId) => invoke("get_habits", { userId }),
   mutuals: () => invoke("get_mutuals"),
   fetchMutuals: (everyone) => invoke("fetch_mutuals", { everyone }),
   stopMutuals: () => invoke("stop_mutuals"),

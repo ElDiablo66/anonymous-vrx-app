@@ -32,7 +32,8 @@ const RESYNC_AFTER: Duration = Duration::from_secs(300);
 /// Pause between two world-name lookups.
 const WORLD_GAP: Duration = Duration::from_millis(300);
 /// How long a head count is trusted before it is asked for again.
-const COUNT_FRESH: Duration = Duration::from_secs(300);
+const COUNT_FRESH: Duration = Duration::from_secs(150);
+const COUNT_STALE: Duration = Duration::from_secs(30);
 /// How long to leave an instance alone after VRChat refused to describe it.
 const COUNT_RETRY: Duration = Duration::from_secs(1800);
 /// How often occupied instances are checked for a stale head count.
@@ -502,6 +503,27 @@ impl Hub {
     pub fn pairs(&self, ids: &[String]) -> AppResult<Value> {
         let rows = self.with_store(|s| s.pairs(ids, 3, 40))?;
         Ok(Value::Array(rows.into_iter().map(|(a, b, times)| json!({ "a": a, "b": b, "times": times })).collect()))
+    }
+
+    /// People and worlds in my own history by name.
+    pub fn log_find(&self, query: &str) -> AppResult<Value> {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        let (people, worlds) = self.with_store(|s| s.log_find(query, &me.id))?;
+        Ok(json!({ "people": people, "worlds": worlds }))
+    }
+
+    /// Every stay of mine with one person (`kind` "person") or in one world ("world").
+    pub fn log_stays(&self, kind: &str, id: &str, name: &str) -> AppResult<Value> {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        let stays = self.with_store(|s| if kind == "world" { s.stays_in(id, name, &me.id, 200) } else { s.stays_with(id, name, &me.id, 200) })?;
+        Ok(json!(stays))
+    }
+
+    /// Where and when I meet one person, and where they go by themselves, over the last 90 days of friend activity.
+    pub fn habits(&self, user_id: &str) -> AppResult<Value> {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        let since = (chrono::Utc::now() - chrono::Duration::days(90)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        Ok(json!(self.with_store(|s| s.habits(user_id, &me.id, &since))?))
     }
 
     /// What was noted about my own worlds over the last `days` days, oldest first.
@@ -1058,7 +1080,15 @@ impl Hub {
                 }
                 _ => Err(AppError::CannotDo("That is not a group gallery.".into())),
             },
-            "instance" if raw_id.starts_with("wrld_") || raw_id.starts_with("wld_") => self.api.instance(raw_id).await,
+            "instance" if raw_id.starts_with("wrld_") || raw_id.starts_with("wld_") => {
+                let json = self.api.instance(raw_id).await?;
+                // The head count just read is news for the cards too.
+                if let Some(instance) = Instance::from_json(raw_id, &json) {
+                    self.inner.lock().unwrap().instances.insert(raw_id.to_string(), (instance.clone(), Instant::now()));
+                    self.send("instance:info", json!(instance));
+                }
+                Ok(json)
+            }
             _ => Err(AppError::CannotDo("There is no such thing to open.".into())),
         }
     }
@@ -2133,10 +2163,13 @@ impl Hub {
     /// Queues a head count for an instance unless a recent one is already known.
     fn want_count(&self, location: &str) {
         let mut inner = self.inner.lock().unwrap();
+        // A count below the friends I know are there is out of date already: it was taken
+        // while the instance was filling. That one is asked again after half a minute.
+        let friends_there = inner.friends.values().filter(|f| f.state == "online" && f.location == location).count() as i64;
         let fresh = inner
             .instances
             .get(location)
-            .is_some_and(|(_, at)| at.elapsed() < COUNT_FRESH);
+            .is_some_and(|(i, at)| at.elapsed() < if i.users < friends_there { COUNT_STALE } else { COUNT_FRESH });
         let refused = inner
             .refused
             .get(location)

@@ -125,6 +125,9 @@ CREATE TABLE IF NOT EXISTS own_avatars (
 CREATE INDEX IF NOT EXISTS feed_at ON feed(at);
 CREATE INDEX IF NOT EXISTS sightings_visit ON sightings(visit_id);
 CREATE INDEX IF NOT EXISTS sightings_user ON sightings(user_id, id);
+CREATE INDEX IF NOT EXISTS sightings_name ON sightings(display_name, user_id);
+CREATE INDEX IF NOT EXISTS visits_world ON visits(world_id);
+CREATE INDEX IF NOT EXISTS visits_name ON visits(world_name);
 ";
 
 /// One stay in an instance, taken from the game log.
@@ -192,6 +195,97 @@ pub struct LocalFavorite {
 const FEED_KINDS: &[&str] = &[
     "online", "offline", "location", "status", "statusText", "name", "avatar", "friendAdded", "friendRemoved",
 ];
+
+/// A person found in my own history.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FoundPerson {
+    pub user_id: String,
+    /// The name they were last seen under.
+    pub name: String,
+    /// The name that matched the search; another one when they have renamed since.
+    pub matched: String,
+    pub times: i64,
+    pub seconds: i64,
+    pub first: String,
+    pub last: String,
+    pub last_world_id: String,
+    pub last_world: String,
+    pub last_location: String,
+}
+
+/// A world found in my own history.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FoundWorld {
+    pub world_id: String,
+    pub name: String,
+    pub times: i64,
+    pub seconds: i64,
+    pub last: String,
+    pub last_location: String,
+}
+
+/// One stay of mine, as a search result: how long the person and I overlapped, or how long I was there.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogStay {
+    pub visit_id: i64,
+    pub world_id: String,
+    pub world_name: String,
+    pub location: String,
+    pub from: String,
+    pub to: String,
+    pub seconds: i64,
+    /// Different people seen during the stay, me included.
+    pub people: i64,
+}
+
+fn stay_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<LogStay> {
+    Ok(LogStay {
+        visit_id: r.get(0)?,
+        world_id: r.get(1)?,
+        world_name: r.get(2)?,
+        location: r.get(3)?,
+        from: r.get(4)?,
+        to: r.get(5)?,
+        seconds: r.get::<_, f64>(6)?.max(0.0).round() as i64,
+        people: r.get(7)?,
+    })
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HabitWorld {
+    pub world_id: String,
+    pub name: String,
+    pub times: i64,
+    pub seconds: i64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HabitPerson {
+    pub user_id: String,
+    pub name: String,
+    pub times: i64,
+}
+
+/// Where and when I meet a person, and where they go by themselves.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Habits {
+    /// Worlds we were in together most.
+    pub worlds: Vec<HabitWorld>,
+    /// Who else was usually there at the same time.
+    pub company: Vec<HabitPerson>,
+    /// When we were together: start and seconds, newest first.
+    pub together: Vec<(String, i64)>,
+    /// Worlds the friend activity shows them going to most.
+    pub own_worlds: Vec<HabitWorld>,
+    /// When the friend activity saw them come online or move.
+    pub seen_at: Vec<String>,
+}
 
 fn like_pattern(text: &str) -> String {
     let escaped = text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
@@ -748,6 +842,244 @@ impl Store {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// People and worlds in my own history whose name has `query` in it, the ones seen
+    /// latest first. A person counts with every name they were seen under. Capitals and
+    /// small letters are the same, in every alphabet.
+    pub fn log_find(&self, query: &str, my_id: &str) -> AppResult<(Vec<FoundPerson>, Vec<FoundWorld>)> {
+        let q = query.trim().to_lowercase();
+        if q.chars().count() < 2 {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let at = now();
+        // The names are compared here and not by the database, which only folds a to z.
+        let names = |sql: &str| -> AppResult<Vec<String>> {
+            let mut stmt = self.db.prepare(sql)?;
+            let all = stmt.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+            Ok(all.into_iter().filter(|n| n.to_lowercase().contains(&q)).take(400).collect())
+        };
+
+        // Who these names belong to: an id where the log gave one, the bare name otherwise.
+        let mut keys: Vec<(String, String, i64)> = Vec::new();
+        for name in names("SELECT DISTINCT display_name FROM sightings")? {
+            let mut stmt = self.db.prepare(
+                "SELECT user_id, MAX(id) FROM sightings WHERE display_name = ?1 AND (user_id = '' OR user_id != ?2) GROUP BY user_id",
+            )?;
+            let rows = stmt.query_map(params![name, my_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+            for (user_id, newest) in rows {
+                match keys.iter_mut().find(|(id, n, _)| if user_id.is_empty() { id.is_empty() && *n == name } else { *id == user_id }) {
+                    Some(known) => {
+                        if newest > known.2 {
+                            *known = (user_id, name.clone(), newest);
+                        }
+                    }
+                    None => keys.push((user_id, name.clone(), newest)),
+                }
+            }
+        }
+        keys.sort_by(|a, b| b.2.cmp(&a.2));
+        keys.truncate(15);
+
+        let mut people = Vec::new();
+        for (user_id, matched, _) in keys {
+            // Two questions with the same answer shape: by id where there is one, so the index on it is used.
+            let whose = if user_id.is_empty() { "s.user_id = '' AND s.display_name = ?1" } else { "s.user_id = ?1" };
+            let key = if user_id.is_empty() { &matched } else { &user_id };
+            let found = self.db.query_row(
+                &format!(
+                    "SELECT COUNT(DISTINCT s.visit_id), MIN(s.joined_at) FROM sightings s WHERE {whose}"
+                ),
+                params![key],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)),
+            )?;
+            let last = self.db.query_row(
+                &format!(
+                    "SELECT s.display_name, COALESCE(s.left_at, v.left_at, ?2), v.world_id, v.world_name, v.location
+                     FROM sightings s JOIN visits v ON v.id = s.visit_id WHERE {whose} ORDER BY s.id DESC LIMIT 1"
+                ),
+                params![key, at],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?)),
+            )?;
+            people.push(FoundPerson {
+                seconds: self.spans(whose, key, &at)?.iter().map(|(_, _, secs)| secs).sum(),
+                user_id,
+                name: last.0,
+                matched,
+                times: found.0,
+                first: found.1.unwrap_or_default(),
+                last: last.1,
+                last_world_id: last.2,
+                last_world: last.3,
+                last_location: last.4,
+            });
+        }
+
+        let mut worlds: Vec<FoundWorld> = Vec::new();
+        let mut newest_of: Vec<i64> = Vec::new();
+        for name in names("SELECT DISTINCT world_name FROM visits")? {
+            let mut stmt = self.db.prepare(
+                "SELECT v.world_id, COUNT(*),
+                        COALESCE(SUM(MAX(0, (julianday(COALESCE(v.left_at, ?2)) - julianday(v.joined_at)) * 86400)), 0),
+                        MAX(v.id)
+                 FROM visits v WHERE v.world_name = ?1 GROUP BY v.world_id",
+            )?;
+            let rows = stmt
+                .query_map(params![name, at], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?, r.get::<_, i64>(3)?)))?
+                .collect::<Result<Vec<_>, _>>()?;
+            for (world_id, times, seconds, newest) in rows {
+                let seconds = seconds.max(0.0).round() as i64;
+                // A world that was renamed is one world: its visits under both names add up.
+                match worlds.iter().position(|w| !world_id.is_empty() && w.world_id == world_id) {
+                    Some(i) => {
+                        worlds[i].times += times;
+                        worlds[i].seconds += seconds;
+                        if newest > newest_of[i] {
+                            newest_of[i] = newest;
+                            worlds[i].name = name.clone();
+                        }
+                    }
+                    None => {
+                        worlds.push(FoundWorld { world_id, name: name.clone(), times, seconds, last: String::new(), last_location: String::new() });
+                        newest_of.push(newest);
+                    }
+                }
+            }
+        }
+        let mut order: Vec<usize> = (0..worlds.len()).collect();
+        order.sort_by(|a, b| newest_of[*b].cmp(&newest_of[*a]));
+        let mut listed = Vec::new();
+        for i in order.into_iter().take(15) {
+            let mut world = worlds[i].clone();
+            (world.last, world.last_location) = self.db.query_row("SELECT joined_at, location FROM visits WHERE id = ?1", params![newest_of[i]], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            listed.push(world);
+        }
+        Ok((people, listed))
+    }
+
+    /// When one person was in my instance, stay by stay: (visit, start, seconds). Rows of the
+    /// same person that overlap, as a doubled log line makes them, count once.
+    fn spans(&self, whose: &str, key: &str, at: &str) -> AppResult<Vec<(i64, String, i64)>> {
+        let mut stmt = self.db.prepare(&format!(
+            "SELECT s.visit_id, s.joined_at, julianday(s.joined_at), julianday(COALESCE(s.left_at, v.left_at, ?2))
+             FROM sightings s JOIN visits v ON v.id = s.visit_id WHERE {whose} ORDER BY s.visit_id, s.joined_at"
+        ))?;
+        let rows = stmt
+            .query_map(params![key, at], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<f64>>(2)?, r.get::<_, Option<f64>>(3)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut out: Vec<(i64, String, i64)> = Vec::new();
+        let mut reach = (0i64, f64::MIN);
+        for (visit, start_text, start, end) in rows {
+            let (Some(start), Some(end)) = (start, end) else { continue };
+            if visit != reach.0 {
+                reach = (visit, f64::MIN);
+            }
+            // Only the part after what was already counted in this stay is new.
+            let from = start.max(reach.1);
+            let secs = ((end - from) * 86400.0).max(0.0).round() as i64;
+            reach.1 = reach.1.max(end);
+            out.push((visit, start_text, secs));
+        }
+        Ok(out)
+    }
+
+    /// Every stay of mine in which one person was seen, newest first. A person without an
+    /// id (an old log line) is found by name. `people` counts the others there, without
+    /// that person and without me.
+    pub fn stays_with(&self, user_id: &str, name: &str, my_id: &str, limit: u32) -> AppResult<Vec<LogStay>> {
+        let at = now();
+        let whose = if user_id.is_empty() { "s.user_id = '' AND s.display_name = ?1" } else { "s.user_id = ?1" };
+        let key = if user_id.is_empty() { name } else { user_id };
+        let mut seconds: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        for (visit, _, secs) in self.spans(whose, key, &at)? {
+            *seconds.entry(visit).or_default() += secs;
+        }
+        let mut stmt = self.db.prepare(&format!(
+            "SELECT v.id, v.world_id, v.world_name, v.location, MIN(s.joined_at), MAX(COALESCE(s.left_at, v.left_at, ?2)), 0.0,
+                    (SELECT COUNT(DISTINCT CASE WHEN o.user_id != '' THEN o.user_id ELSE o.display_name END) FROM sightings o
+                      WHERE o.visit_id = v.id AND o.user_id != ?3 AND NOT ((?4 != '' AND o.user_id = ?4) OR (?4 = '' AND o.user_id = '' AND o.display_name = ?1)))
+             FROM sightings s JOIN visits v ON v.id = s.visit_id
+             WHERE {whose} GROUP BY v.id ORDER BY v.id DESC LIMIT ?5"
+        ))?;
+        let rows = stmt.query_map(params![key, at, my_id, user_id, limit.min(500)], stay_row)?;
+        let mut stays = rows.collect::<Result<Vec<_>, _>>()?;
+        for stay in &mut stays {
+            stay.seconds = seconds.get(&stay.visit_id).copied().unwrap_or(0);
+        }
+        Ok(stays)
+    }
+
+    /// Every stay of mine in one world, newest first. `people` counts the others seen there, without me.
+    pub fn stays_in(&self, world_id: &str, name: &str, my_id: &str, limit: u32) -> AppResult<Vec<LogStay>> {
+        let which = if world_id.is_empty() { "v.world_id = '' AND v.world_name = ?1" } else { "v.world_id = ?1" };
+        let mut stmt = self.db.prepare(&format!(
+            "SELECT v.id, v.world_id, v.world_name, v.location, v.joined_at, COALESCE(v.left_at, ?2),
+                    MAX(0, (julianday(COALESCE(v.left_at, ?2)) - julianday(v.joined_at)) * 86400),
+                    (SELECT COUNT(DISTINCT CASE WHEN o.user_id != '' THEN o.user_id ELSE o.display_name END) FROM sightings o
+                      WHERE o.visit_id = v.id AND o.user_id != ?3)
+             FROM visits v WHERE {which} ORDER BY v.id DESC LIMIT ?4"
+        ))?;
+        let rows = stmt.query_map(params![if world_id.is_empty() { name } else { world_id }, now(), my_id, limit.min(500)], stay_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Where and when I meet one person, and where they go by themselves as far as the
+    /// friend activity on this PC shows. Nothing here asks VRChat.
+    pub fn habits(&self, user_id: &str, my_id: &str, since: &str) -> AppResult<Habits> {
+        let at = now();
+        let spans = self.spans("s.user_id = ?1", user_id, &at)?;
+        let mut per_visit: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        for (visit, _, secs) in &spans {
+            *per_visit.entry(*visit).or_default() += secs;
+        }
+        // Each stay's world, newest stay first, so a renamed world carries its newest name.
+        let mut stmt = self.db.prepare(
+            "SELECT DISTINCT v.id, v.world_id, v.world_name FROM sightings s JOIN visits v ON v.id = s.visit_id WHERE s.user_id = ?1 ORDER BY v.id DESC",
+        )?;
+        let visited = stmt.query_map(params![user_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?.collect::<Result<Vec<_>, _>>()?;
+        let mut worlds: Vec<HabitWorld> = Vec::new();
+        for (visit, world_id, name) in visited {
+            let secs = per_visit.get(&visit).copied().unwrap_or(0);
+            match worlds.iter_mut().find(|w| if world_id.is_empty() { w.world_id.is_empty() && w.name == name } else { w.world_id == world_id }) {
+                Some(w) => {
+                    w.times += 1;
+                    w.seconds += secs;
+                }
+                None => worlds.push(HabitWorld { world_id, name, times: 1, seconds: secs }),
+            }
+        }
+        worlds.sort_by(|a, b| b.times.cmp(&a.times).then(b.seconds.cmp(&a.seconds)));
+        worlds.truncate(6);
+
+        // Others who were in the instance at the same time as this person, in at least two stays.
+        let mut stmt = self.db.prepare(
+            "SELECT o.user_id, o.display_name, MAX(o.id), COUNT(DISTINCT o.visit_id) AS times
+             FROM sightings s JOIN sightings o ON o.visit_id = s.visit_id
+             WHERE s.user_id = ?1 AND o.user_id != '' AND o.user_id != ?1 AND o.user_id != ?2
+               AND o.joined_at < COALESCE(s.left_at, '9999') AND COALESCE(o.left_at, '9999') > s.joined_at
+             GROUP BY o.user_id HAVING times >= 2
+             ORDER BY times DESC, 3 DESC LIMIT 8",
+        )?;
+        let company = stmt
+            .query_map(params![user_id, my_id], |r| Ok(HabitPerson { user_id: r.get(0)?, name: r.get(1)?, times: r.get(3)? }))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let together: Vec<(String, i64)> = spans.into_iter().rev().filter(|(_, _, secs)| *secs > 0).take(1500).map(|(_, start, secs)| (start, secs)).collect();
+
+        let mut stmt = self.db.prepare(
+            "SELECT f.wid, COALESCE(w.name, ''), f.n FROM (
+                 SELECT substr(location, 1, instr(location || ':', ':') - 1) AS wid, COUNT(*) AS n
+                 FROM feed WHERE user_id = ?1 AND kind = 'location' AND location LIKE 'wrld\\_%' ESCAPE '\\' AND at >= ?2
+                 GROUP BY wid ORDER BY n DESC LIMIT 6
+             ) f LEFT JOIN worlds w ON w.world_id = f.wid ORDER BY f.n DESC",
+        )?;
+        let own_worlds = stmt
+            .query_map(params![user_id, since], |r| Ok(HabitWorld { world_id: r.get(0)?, name: r.get(1)?, times: r.get(2)?, seconds: 0 }))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut stmt = self.db.prepare("SELECT at FROM feed WHERE user_id = ?1 AND kind IN ('online', 'location') AND at >= ?2 ORDER BY id DESC LIMIT 1500")?;
+        let seen_at = stmt.query_map(params![user_id, since], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+        Ok(Habits { worlds, company, together, own_worlds, seen_at })
+    }
+
     pub fn ratings(&self) -> AppResult<Vec<(String, i64)>> {
         let mut stmt = self.db.prepare("SELECT item_id, stars FROM ratings")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -998,7 +1330,9 @@ impl Store {
                 LogEvent::PlayerJoined { name, id } => {
                     let done = tx.execute(
                         "INSERT INTO sightings (visit_id, user_id, display_name, joined_at)
-                         SELECT id, ?1, ?2, ?3 FROM visits WHERE left_at IS NULL ORDER BY id DESC LIMIT 1",
+                         SELECT v.id, ?1, ?2, ?3 FROM (SELECT id FROM visits WHERE left_at IS NULL ORDER BY id DESC LIMIT 1) v
+                         WHERE NOT EXISTS (SELECT 1 FROM sightings s WHERE s.visit_id = v.id AND s.left_at IS NULL
+                                           AND ((?1 <> '' AND s.user_id = ?1) OR (?1 = '' AND s.user_id = '' AND s.display_name = ?2)))",
                         params![id, name, at],
                     )?;
                     changed |= done > 0;
@@ -1785,6 +2119,75 @@ mod tests {
         s.set_mutuals("usr_b", &[], "2026-11-26T10:00:00Z", true).unwrap();
         let asked = s.mutuals_asked().unwrap();
         assert!(asked.contains(&("usr_b".to_string(), "2026-11-26T10:00:00Z".to_string(), true)));
+    }
+
+    #[test]
+    fn my_history_is_searched_by_person_and_by_world() {
+        let s = Store::in_memory().unwrap();
+        let visit = |id: i64, world: &str, name: &str, from: &str, to: &str| {
+            s.db.execute("INSERT INTO visits (id, location, world_id, world_name, joined_at, left_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", params![id, format!("{world}:1~region(eu)"), world, name, from, to]).unwrap();
+        };
+        let seen = |visit: i64, user: &str, name: &str, from: &str, to: &str| {
+            s.db.execute("INSERT INTO sightings (visit_id, user_id, display_name, joined_at, left_at) VALUES (?1, ?2, ?3, ?4, ?5)", params![visit, user, name, from, to]).unwrap();
+        };
+        visit(1, "wrld_pier", "Quiet Pier", "2026-11-01T10:00:00Z", "2026-11-01T12:00:00Z");
+        visit(2, "wrld_arcade", "Basement Arcade", "2026-11-02T10:00:00Z", "2026-11-02T11:00:00Z");
+        visit(3, "wrld_pier", "Quiet Pier", "2026-11-03T10:00:00Z", "2026-11-03T10:30:00Z");
+        for v in 1..=3 {
+            seen(v, "usr_me", "Me", "2026-11-01T10:00:00Z", "2026-11-03T10:30:00Z");
+        }
+        seen(1, "usr_a", "Mossy", "2026-11-01T10:00:00Z", "2026-11-01T11:00:00Z");
+        seen(1, "usr_b", "Wren", "2026-11-01T10:10:00Z", "2026-11-01T10:50:00Z");
+        seen(2, "usr_a", "Mossy", "2026-11-02T10:00:00Z", "2026-11-02T10:30:00Z");
+        seen(2, "usr_b", "Wren", "2026-11-02T10:05:00Z", "2026-11-02T10:20:00Z");
+        // Renamed since: found under the old name, shown under the new one, counted once.
+        seen(3, "usr_a", "Mossy Stone", "2026-11-03T10:00:00Z", "2026-11-03T10:30:00Z");
+        // Someone who came after Mossy had left is no company of theirs.
+        seen(1, "usr_c", "Latecomer", "2026-11-01T11:30:00Z", "2026-11-01T11:50:00Z");
+        seen(2, "usr_c", "Latecomer", "2026-11-02T10:40:00Z", "2026-11-02T10:50:00Z");
+
+        let (people, worlds) = s.log_find("moss", "usr_me").unwrap();
+        assert_eq!(people.len(), 1);
+        assert_eq!((people[0].name.as_str(), people[0].times, people[0].seconds), ("Mossy Stone", 3, 3600 + 1800 + 1800));
+        assert_eq!((people[0].last_world.as_str(), people[0].first.as_str()), ("Quiet Pier", "2026-11-01T10:00:00Z"));
+        assert!(worlds.is_empty());
+        // I am not a find in my own history, and one letter is no search.
+        assert!(s.log_find("Me", "usr_me").unwrap().0.iter().all(|p| p.user_id != "usr_me"));
+        assert!(s.log_find("m", "usr_me").unwrap().0.is_empty());
+        // A percent sign is a plain character.
+        assert!(s.log_find("%%", "usr_me").unwrap().0.is_empty());
+
+        let (_, worlds) = s.log_find("pier", "usr_me").unwrap();
+        assert_eq!((worlds.len(), worlds[0].times, worlds[0].seconds), (1, 2, 7200 + 1800));
+        assert_eq!(worlds[0].last, "2026-11-03T10:00:00Z");
+
+        let stays = s.stays_with("usr_a", "", "usr_me", 50).unwrap();
+        assert_eq!(stays.iter().map(|x| (x.visit_id, x.seconds)).collect::<Vec<_>>(), vec![(3, 1800), (2, 1800), (1, 3600)]);
+        // Others there: Wren and the latecomer, not Mossy and not me.
+        assert_eq!((stays[2].people, stays[0].people), (2, 0));
+        let stays = s.stays_in("wrld_pier", "", "usr_me", 50).unwrap();
+        assert_eq!(stays.iter().map(|x| (x.visit_id, x.people)).collect::<Vec<_>>(), vec![(3, 1), (1, 3)]);
+
+        // A doubled log line for someone already there counts their time once.
+        seen(2, "usr_b", "Wren", "2026-11-02T10:05:00Z", "2026-11-02T10:20:00Z");
+        let (people, _) = s.log_find("WREN", "usr_me").unwrap();
+        assert_eq!((people[0].times, people[0].seconds), (2, 2400 + 900));
+        // Letters outside a to z fold too.
+        seen(3, "usr_e", "Émile", "2026-11-03T10:00:00Z", "2026-11-03T10:10:00Z");
+        assert_eq!(s.log_find("émi", "usr_me").unwrap().0.len(), 1);
+
+        s.db.execute("INSERT INTO worlds (world_id, name, fetched_at) VALUES ('wrld_club', 'Night Club', '2026-11-01T00:00:00Z')", []).unwrap();
+        for at in ["2026-11-02T20:00:00Z", "2026-11-03T21:00:00Z"] {
+            s.db.execute("INSERT INTO feed (at, user_id, display_name, kind, location) VALUES (?1, 'usr_a', 'Mossy', 'location', 'wrld_club:9~region(eu)')", params![at]).unwrap();
+        }
+        s.db.execute("INSERT INTO feed (at, user_id, display_name, kind, location) VALUES ('2026-10-01T20:00:00Z', 'usr_a', 'Mossy', 'location', 'wrld_old:9')", []).unwrap();
+        let h = s.habits("usr_a", "usr_me", "2026-11-01T00:00:00Z").unwrap();
+        assert_eq!((h.worlds[0].name.as_str(), h.worlds[0].times), ("Quiet Pier", 2));
+        assert_eq!(h.company.iter().map(|p| (p.user_id.as_str(), p.times)).collect::<Vec<_>>(), vec![("usr_b", 2)]);
+        assert_eq!(h.together.len(), 3);
+        assert_eq!(h.worlds[0].seconds, 3600 + 1800);
+        assert_eq!(h.own_worlds.iter().map(|w| (w.name.as_str(), w.times)).collect::<Vec<_>>(), vec![("Night Club", 2)]);
+        assert_eq!(h.seen_at.len(), 2);
     }
 
     #[test]

@@ -343,6 +343,54 @@ export const demoBackend: Backend = {
     if (at >= 0) demoWaiting.splice(at, 1);
     emit("queue:changed", null);
   },
+  async logFind(query) {
+    await wait(180);
+    const q = query.trim().toLowerCase();
+    const hits = people.filter((p) => p.displayName.toLowerCase().includes(q)).slice(0, 8);
+    return {
+      people: hits.map((p, i) => ({
+        userId: p.id,
+        name: p.displayName,
+        matched: i === 1 ? `${p.displayName} (old)` : p.displayName,
+        times: 3 + ((i * 5) % 17),
+        seconds: 2400 + i * 5310,
+        first: ago(60 * 24 * (40 + i * 9)),
+        last: ago(60 * (3 + i * 21)),
+        lastWorldId: "wrld_demo_pier",
+        lastWorld: demoVisits[i % demoVisits.length].worldName,
+        lastLocation: demoVisits[i % demoVisits.length].location,
+      })),
+      worlds: demoVisits
+        .filter((v) => v.worldName.toLowerCase().includes(q))
+        .map((v, i) => ({ worldId: v.worldId, name: v.worldName, times: 2 + i * 3, seconds: 5400 + i * 2700, last: v.joinedAt, lastLocation: v.location })),
+    };
+  },
+  async logStays(kind) {
+    await wait(160);
+    return [0, 1, 2, 3, 4, 5, 6].map((i) => {
+      const v = demoVisits[i % demoVisits.length];
+      return { visitId: v.id, worldId: v.worldId, worldName: v.worldName, location: v.location, from: ago(60 * (4 + i * 19)), to: ago(60 * (3 + i * 19)), seconds: 1500 + i * 1130, people: kind === "person" ? (i * 3) % 7 : (i * 4) % 9 };
+    }).map((s, i) => ({ ...s, visitId: s.visitId * 100 + i }));
+  },
+  async habits(userId) {
+    await wait(160);
+    const at = people.findIndex((p) => p.id === userId);
+    if (at < 0) return { worlds: [], company: [], together: [], ownWorlds: [], seenAt: [] };
+    const hours = [20, 21, 21, 22, 22, 22, 23, 23, 19, 14, 21, 22, 0, 1, 22, 21];
+    const stamp = (i: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() - ((i * 3) % 60));
+      d.setHours(hours[(i + at) % hours.length], (i * 13) % 60, 0, 0);
+      return d.toISOString();
+    };
+    return {
+      worlds: demoVisits.map((v, i) => ({ worldId: v.worldId, name: v.worldName, times: 11 - i * 3, seconds: 21600 - i * 4800 })),
+      company: people.filter((p) => p.id !== userId).slice(at % 5, (at % 5) + 4).map((p, i) => ({ userId: p.id, name: p.displayName, times: 9 - i * 2 })),
+      together: Array.from({ length: 28 }, (_, i) => [stamp(i), 1800 + ((i * 977) % 5400)] as [string, number]),
+      ownWorlds: worlds.slice(0, 4).map((w, i) => ({ worldId: w.id, name: w.name, times: 14 - i * 3, seconds: 0 })),
+      seenAt: Array.from({ length: 40 }, (_, i) => stamp(i + 5)),
+    };
+  },
   async pairs(ids) {
     // Every third pair of the people asked about, so the demo shows a few lines.
     const out = [];

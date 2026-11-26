@@ -421,6 +421,24 @@ fn get_pairs(hub: State<'_, Arc<Hub>>, ids: Vec<String>) -> AppResult<serde_json
     hub.pairs(&ids)
 }
 
+/// People and worlds in my own history whose name has the words in it.
+#[tauri::command]
+fn log_find(hub: State<'_, Arc<Hub>>, query: String) -> AppResult<serde_json::Value> {
+    hub.log_find(&query)
+}
+
+/// Every stay of mine with one person or in one world, newest first.
+#[tauri::command]
+fn log_stays(hub: State<'_, Arc<Hub>>, kind: String, id: String, name: String) -> AppResult<serde_json::Value> {
+    hub.log_stays(&kind, &id, &name)
+}
+
+/// Where and when I meet one person. From this PC's history only.
+#[tauri::command]
+fn get_habits(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<serde_json::Value> {
+    hub.habits(&user_id)
+}
+
 /// How my own worlds stood day by day: visits, favourites and the most people seen.
 #[tauri::command]
 fn get_world_stats(hub: State<'_, Arc<Hub>>, days: i64) -> AppResult<serde_json::Value> {
@@ -1435,6 +1453,9 @@ pub fn run() {
             get_cosmetics,
             get_world_stats,
             get_pairs,
+            log_find,
+            log_stays,
+            get_habits,
             get_waiting,
             wait_for_room,
             stop_waiting,

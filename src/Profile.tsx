@@ -1,3 +1,4 @@
+import { Habits } from "./Habits";
 import { type CSSProperties, useEffect, useState, type ReactNode } from "react";
 import { backend, errorText, type Cosmetic, type Friend, type Profile, type World } from "./backend";
 import { Avatar, accessName, clock, dateText, dayLabel, deviceLine, statusTone, statusWords, tidy } from "./bits";
@@ -914,10 +915,12 @@ export function ProfilePanel({
               </section>
             )}
 
+            {tab === "activity" && profile && !isMe && <Habits userId={userId} name={name} friends={friends} />}
+
             {tab === "activity" &&
               profile &&
               (profile.feed.length === 0 ? (
-                <Empty>Nothing recorded for <span className="hide-me">{name}</span> yet. This fills in from now on.</Empty>
+                <Empty>No friend activity recorded for <span className="hide-me">{name}</span> yet. This list fills in from now on.</Empty>
               ) : (
                 <section>
                   <h3>Recent activity</h3>
