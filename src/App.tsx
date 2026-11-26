@@ -1,3 +1,4 @@
+import { drawNotice, drawWrist } from "./vrpanels";
 import { discordPresence } from "./presence";
 import type { HereNow } from "./backend";
 import { PersonMenu } from "./PersonMenu";
@@ -120,7 +121,7 @@ export function App() {
   const [favorites, setFavorites] = useState<Favorites>({ groups: [], friends: {} });
   const [notices, setNotices] = useState<Notice[]>([]);
   const [instances, setInstances] = useState<Map<string, Instance>>(new Map());
-  const [, setMinute] = useState(0);
+  const [minute, setMinute] = useState(0);
   const [inWorld, setInWorld] = useState(false);
   const [myWorld, setMyWorld] = useState("");
   const [hereNow, setHereNow] = useState<HereNow | null>(null);
@@ -220,6 +221,15 @@ export function App() {
     };
   }, [me, settings.autoBackup]);
 
+  // History that came over from VRCX sits between the entries already shown and gives them
+  // new numbers, so the feed is read again.
+  useEffect(() => {
+    if (!me) return;
+    const again = () => void backend.feed(200).then(setFeed).catch(() => {});
+    window.addEventListener("history:imported", again);
+    return () => window.removeEventListener("history:imported", again);
+  }, [me]);
+
   // What VRCX has written since the last look is taken over without asking, when I want that.
   useEffect(() => {
     if (!me || !settings.vrcxAuto) return;
@@ -228,10 +238,18 @@ export function App() {
       try {
         const stamp = await backend.vrcxStamp();
         if (!stamp || localStorage.getItem(key) === stamp) return;
-        const { broughtOver: got } = await backend.importVrcx(JSON.stringify(settingsNow.current), true);
+        // The first look reads everything; later ones only what VRCX wrote since two days
+        // before the last look, which is short however long the history is.
+        const mark = `vrcx-mark:${me.id}`;
+        const started = Date.now();
+        const { broughtOver: got } = await backend.importVrcx(JSON.stringify(settingsNow.current), true, localStorage.getItem(mark) ?? undefined);
         localStorage.setItem(key, stamp);
+        localStorage.setItem(mark, new Date(started - 2 * 86_400_000).toISOString());
         const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites;
-        if (total > 0) setToast(`Brought over ${total.toLocaleString()} new ${total === 1 ? "entry" : "entries"} from VRCX.`);
+        if (total > 0) {
+          setToast(`Brought over ${total.toLocaleString()} new ${total === 1 ? "entry" : "entries"} from VRCX.`);
+          window.dispatchEvent(new Event("history:imported"));
+        }
       } catch {
         // VRCX may be in the middle of writing; the next look tries again.
       }
@@ -247,9 +265,56 @@ export function App() {
   // Which overlay programs get my notifications while I am in the headset.
   useEffect(() => {
     void backend
-      .setVrNotices({ xs: settings.vrXs, ovrHud: settings.vrOvrHud, ovrWrist: settings.vrOvrWrist, seconds: settings.vrSeconds, opacity: settings.vrOpacity })
+      .setVrNotices({ own: settings.vrOwn, xs: settings.vrXs, ovrHud: settings.vrOvrHud, ovrWrist: settings.vrOvrWrist, seconds: settings.vrSeconds, opacity: settings.vrOpacity })
       .catch(() => {});
-  }, [settings.vrXs, settings.vrOvrHud, settings.vrOvrWrist, settings.vrSeconds, settings.vrOpacity]);
+  }, [settings.vrOwn, settings.vrXs, settings.vrOvrHud, settings.vrOvrWrist, settings.vrSeconds, settings.vrOpacity]);
+
+  // The app's own panels in SteamVR. It only goes into SteamVR while one of them is wanted.
+  const panelsOn = settings.vrOwn || settings.vrWrist !== "off";
+  useEffect(() => {
+    void backend.setVrOverlay(panelsOn).catch(() => {});
+  }, [panelsOn]);
+  // A notice for the headset arrives as words; the picture is drawn here and handed back.
+  useEffect(() => {
+    if (!settings.vrOwn) return;
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void backend
+      .on("vr:draw", (n) => {
+        const s = settingsNow.current;
+        void drawNotice(n.title, n.body)
+          .then((png) => backend.vrOverlayNotice(png, s.vrSeconds, s.vrOpacity))
+          .catch(() => {});
+      })
+      .then((off) => (gone ? off() : (stop = off)));
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, [settings.vrOwn]);
+  // The wrist feed is drawn again when the feed moves, and once a minute for its clock.
+  const wristFeed = settings.vrWrist === "off" ? null : feed;
+  const wristMinute = settings.vrWrist === "off" ? 0 : minute;
+  const wristOnline = settings.vrWrist === "off" ? 0 : [...friends.values()].filter((f) => f.state === "online").length;
+  useEffect(() => {
+    if (settings.vrWrist === "off" || !me) {
+      void backend.vrOverlayWrist(null, "left", 0.16, 1).catch(() => {});
+      return;
+    }
+    const hand = settings.vrWrist;
+    // A moment's wait, so a burst of feed entries makes one picture.
+    let gone = false;
+    const later = window.setTimeout(() => {
+      void drawWrist(wristFeed ?? [], wristOnline)
+        // A picture finished after the feed was switched off or changed is dropped.
+        .then((png) => (gone ? undefined : backend.vrOverlayWrist(png, hand, settings.vrWristSize, settings.vrOpacity)))
+        .catch(() => {});
+    }, 1500);
+    return () => {
+      gone = true;
+      window.clearTimeout(later);
+    };
+  }, [me, settings.vrWrist, settings.vrWristSize, settings.vrOpacity, settings.timeFormat, settings.accent, settings.background, settings.headingFont, settings.textFont, wristFeed, wristOnline, wristMinute]);
 
   // The title names the tab that is open on screens that have tabs.
   const [tabTitle, setTabTitle] = useState("");

@@ -27,6 +27,7 @@ rusqlite = { version = "0.43", features = ["bundled"] }
 keyring = { version = "3", features = ["windows-native"] }
 thiserror = "2"
 base64 = "0.22"
+libloading = "0.8"
 sha2 = "0.10"
 percent-encoding = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

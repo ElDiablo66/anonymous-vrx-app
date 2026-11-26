@@ -3,6 +3,7 @@ import { backend, errorText, type CalendarEvent } from "./backend";
 import { clock, dayLabel, tidy } from "./bits";
 import { openThing } from "./Detail";
 import { usePic } from "./Pic";
+import { live } from "./settings";
 
 type Which = "discover" | "mine" | "following" | "featured";
 
@@ -46,6 +47,68 @@ function untilWords(iso: string): string {
   return `in ${Math.round(minutes / 1440)} days`;
 }
 
+/** The day a week starts on, as JavaScript counts days: 0 is Sunday. */
+function firstWeekday(): number {
+  const pick = live().weekStart;
+  if (pick === "mon") return 1;
+  if (pick === "sun") return 0;
+  if (pick === "sat") return 6;
+  try {
+    const locale = new Intl.Locale(navigator.language) as Intl.Locale & { getWeekInfo?: () => { firstDay: number }; weekInfo?: { firstDay: number } };
+    const first = (locale.getWeekInfo?.() ?? locale.weekInfo)?.firstDay;
+    // Windows counts Monday as 1 and Sunday as 7.
+    if (typeof first === "number") return first % 7;
+  } catch {
+    // An unknown language setting falls back to Monday.
+  }
+  return 1;
+}
+
+/** "2026-11-25" for a date, in the PC's own time. */
+function dayKey(d: Date): string {
+  return `${monthOf(d)}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** One month as a grid of days. A day with events carries their number; pressing it shows only that day. */
+function MonthGrid({ month, counts, picked, pick }: { month: string; counts: Map<string, number>; picked: string; pick: (day: string) => void }) {
+  const [y, m] = month.split("-").map(Number);
+  const first = firstWeekday();
+  const lead = (new Date(y, m - 1, 1).getDay() - first + 7) % 7;
+  const days = new Date(y, m, 0).getDate();
+  const today = dayKey(new Date());
+  const names = Array.from({ length: 7 }, (_, n) => new Date(2024, 0, 7 + first + n).toLocaleDateString([], { weekday: "short" }));
+  return (
+    <div className="month-grid" role="grid" aria-label="Days of the month">
+      {names.map((n) => (
+        <span key={n} className="month-grid-head" role="columnheader">
+          {n}
+        </span>
+      ))}
+      {Array.from({ length: lead }, (_, n) => (
+        <span key={`gap-${n}`} />
+      ))}
+      {Array.from({ length: days }, (_, n) => {
+        const key = `${month}-${String(n + 1).padStart(2, "0")}`;
+        const count = counts.get(key) ?? 0;
+        return (
+          <button
+            key={key}
+            role="gridcell"
+            className={`${key === today ? "today" : ""}${key === picked ? " on" : ""}${count ? " has" : ""}`}
+            disabled={!count}
+            aria-pressed={key === picked}
+            title={count ? `${count} ${count === 1 ? "event" : "events"}` : undefined}
+            onClick={() => pick(key === picked ? "" : key)}
+          >
+            {n + 1}
+            {count > 0 && <i>{count}</i>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function EventPicture({ url }: { url: string }) {
   const shown = usePic(url);
   return <span className="thumb event-thumb" style={url ? { backgroundImage: `url("${shown}")` } : undefined} />;
@@ -62,6 +125,9 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
   const [problem, setProblem] = useState("");
   const [past, setPast] = useState(false);
   const [busy, setBusy] = useState("");
+  /** A day picked in the month grid ("2026-11-25"), or empty for the whole month. */
+  const [onlyDay, setOnlyDay] = useState("");
+  useEffect(() => setOnlyDay(""), [which, month]);
   /** Counts the questions, so a slow answer for another month is not shown over this one. */
   const asked = useRef(0);
 
@@ -110,9 +176,18 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
     return (events ?? [])
       // VRChat also sends the days around a month; an event belongs to the month it starts in.
       .filter((e) => !byMonth || monthOf(new Date(e.startsAt)) === month)
-      .filter((e) => !byMonth || past || Date.parse(e.endsAt || e.startsAt) >= now)
+      .filter((e) => !byMonth || past || !!onlyDay || Date.parse(e.endsAt || e.startsAt) >= now)
+      .filter((e) => !byMonth || !onlyDay || dayKey(new Date(e.startsAt)) === onlyDay)
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-  }, [events, past, month, byMonth]);
+  }, [events, past, month, byMonth, onlyDay]);
+  const perDay = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of events ?? []) {
+      const d = new Date(e.startsAt);
+      if (monthOf(d) === month) counts.set(dayKey(d), (counts.get(dayKey(d)) ?? 0) + 1);
+    }
+    return counts;
+  }, [events, month]);
   const hidden = byMonth ? (events ?? []).filter((e) => monthOf(new Date(e.startsAt)) === month).length - shown.length : 0;
 
   let lastDay = "";
@@ -153,6 +228,8 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
           Refresh
         </button>
       </div>
+
+      {byMonth && events !== null && perDay.size > 0 && <MonthGrid month={month} counts={perDay} picked={onlyDay} pick={setOnlyDay} />}
 
       {problem && (
         <p className="banner" role="alert">

@@ -18,6 +18,13 @@ export function FeedBrowser({ friends, worlds }: { friends: Map<string, Friend>;
   // The end of the chosen day on this PC's clock, as the UTC time the feed is stored in.
   const until = day ? new Date(`${day}T23:59:59.999`).toISOString() : undefined;
   const plain = !query.trim() && filter === "all" && !day;
+  // Counts the times older history came over from VRCX; the list is read again each time.
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    const again = () => setRound((n) => n + 1);
+    window.addEventListener("history:imported", again);
+    return () => window.removeEventListener("history:imported", again);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -36,7 +43,7 @@ export function FeedBrowser({ friends, worlds }: { friends: Map<string, Friend>;
       clearTimeout(wait);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, filter, day]);
+  }, [query, filter, day, round]);
 
   // New entries slide in at the top while nothing narrows the list.
   useEffect(() => {

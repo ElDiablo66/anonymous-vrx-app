@@ -1020,7 +1020,18 @@ impl Store {
     /// already has the same kind of entry for the same person within five seconds, and a
     /// visit when it already has one in the same instance within ten. Afterwards the feed
     /// and the visits are put back in order of time, because both are read newest-id first.
-    pub fn import_vrcx(&self, other: &Path, my_id: &str) -> AppResult<BroughtOver> {
+    ///
+    /// `history_only` leaves notes and favourites alone. The run the app makes by itself uses
+    /// it, so a note I cleared or a favourite I removed here does not come back from VRCX.
+    ///
+    /// `since` (a time as VRCX writes it, "2026-11-25T03:12:45.123Z") reads only what VRCX
+    /// recorded from then on, which keeps the hourly look short however long the history is.
+    pub fn import_vrcx(&self, other: &Path, my_id: &str, history_only: bool, since: Option<&str>) -> AppResult<BroughtOver> {
+        // Only a plain time may go into the questions below.
+        let from = match since.filter(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || "-:.TZ ".contains(c))) {
+            Some(t) => format!("WHERE created_at >= '{t}'"),
+            None => String::new(),
+        };
         let old = Connection::open_with_flags(other, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let has = |name: &str| -> bool {
             old.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1", params![name], |r| r.get::<_, i64>(0))
@@ -1059,7 +1070,7 @@ impl Store {
 
         let table = format!("{prefix}_feed_gps");
         if has(&table) {
-            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, location, previous_location FROM \"{table}\" ORDER BY created_at"))?;
+            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, location, previous_location FROM \"{table}\" {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
                 if add(&text(r, 0), &text(r, 1), &text(r, 2), "location", "", &text(r, 4), &text(r, 3))? {
@@ -1069,7 +1080,7 @@ impl Store {
         }
         let table = format!("{prefix}_feed_online_offline");
         if has(&table) {
-            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, type, location FROM \"{table}\" ORDER BY created_at"))?;
+            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, type, location FROM \"{table}\" {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
                 let kind = if text(r, 3).eq_ignore_ascii_case("online") { "online" } else { "offline" };
@@ -1081,7 +1092,7 @@ impl Store {
         let table = format!("{prefix}_feed_status");
         if has(&table) {
             let mut rows = old.prepare(&format!(
-                "SELECT created_at, user_id, display_name, status, status_description, previous_status, previous_status_description FROM \"{table}\" ORDER BY created_at"
+                "SELECT created_at, user_id, display_name, status, status_description, previous_status, previous_status_description FROM \"{table}\" {from} ORDER BY created_at"
             ))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
@@ -1097,7 +1108,7 @@ impl Store {
         }
         let table = format!("{prefix}_feed_avatar");
         if has(&table) {
-            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name FROM \"{table}\" ORDER BY created_at"))?;
+            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name FROM \"{table}\" {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
                 if add(&text(r, 0), &text(r, 1), &text(r, 2), "avatar", "", "", "")? {
@@ -1107,7 +1118,7 @@ impl Store {
         }
         let table = format!("{prefix}_friend_log_history");
         if has(&table) {
-            let mut rows = old.prepare(&format!("SELECT created_at, type, user_id, display_name, previous_display_name FROM \"{table}\" ORDER BY created_at"))?;
+            let mut rows = old.prepare(&format!("SELECT created_at, type, user_id, display_name, previous_display_name FROM \"{table}\" {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
                 let (at, kind, user, name, was) = (text(r, 0), text(r, 1), text(r, 2), text(r, 3), text(r, 4));
@@ -1125,7 +1136,7 @@ impl Store {
 
         // Visits, each with the people the game log saw there.
         if has("gamelog_location") {
-            let mut rows = old.prepare("SELECT created_at, location, world_id, world_name, time FROM gamelog_location ORDER BY created_at")?;
+            let mut rows = old.prepare(&format!("SELECT created_at, location, world_id, world_name, time FROM gamelog_location {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
                 let (joined, location, world_id, world_name) = (text(r, 0), text(r, 1), text(r, 2), text(r, 3));
@@ -1187,7 +1198,7 @@ impl Store {
 
         // Notes on people, worlds and avatars. One I already wrote here is kept.
         for (table, key) in [("memos", "user_id"), ("world_memos", "world_id"), ("avatar_memos", "avatar_id")] {
-            if !has(table) {
+            if history_only || !has(table) {
                 continue;
             }
             let mut rows = old.prepare(&format!("SELECT {key}, memo, edited_at FROM {table}"))?;
@@ -1204,7 +1215,7 @@ impl Store {
 
         // The favourites VRCX kept only on this PC, with the name and picture it had for each.
         for (table, key, cache, kind) in [("favorite_world", "world_id", "cache_world", "world"), ("favorite_avatar", "avatar_id", "cache_avatar", "avatar")] {
-            if !has(table) {
+            if history_only || !has(table) {
                 continue;
             }
             let named = has(cache);
@@ -1623,7 +1634,7 @@ mod tests {
         s.add_feed(&FeedDraft { user_id: "usr_a".into(), display_name: "Anna".into(), kind: "online", detail: String::new(), previous: String::new(), location: String::new() }).unwrap();
         s.set_note("usr_b", "my own note stays").unwrap();
 
-        let got = s.import_vrcx(&other, "usr_me-0000").unwrap();
+        let got = s.import_vrcx(&other, "usr_me-0000", false, None).unwrap();
         assert_eq!(got, BroughtOver { feed: 3, friend_log: 2, visits: 1, people: 2, notes: 1, favourites: 1 });
         // The status text did not change, so only the status itself came over; another account's table was not read.
         let feed = s.feed(50, None).unwrap();
@@ -1646,7 +1657,7 @@ mod tests {
         assert_eq!(s.note("usr_b").unwrap(), "my own note stays");
 
         // A second run finds nothing new.
-        assert_eq!(s.import_vrcx(&other, "usr_me-0000").unwrap(), BroughtOver::default());
+        assert_eq!(s.import_vrcx(&other, "usr_me-0000", false, None).unwrap(), BroughtOver::default());
         assert_eq!(s.feed(50, None).unwrap().len(), 6);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1663,11 +1674,11 @@ mod tests {
             table.trim_end_matches("_feed_gps").to_string()
         };
         let s = Store::in_memory().unwrap();
-        let got = s.import_vrcx(&other, &account).unwrap();
+        let got = s.import_vrcx(&other, &account, false, None).unwrap();
         println!("{got:?}");
         let feed = s.feed(1000, None).unwrap();
         assert_eq!(feed.len(), got.feed + got.friend_log);
         assert!(feed.windows(2).all(|w| w[0].at >= w[1].at), "newest first");
-        assert_eq!(s.import_vrcx(&other, &account).unwrap(), BroughtOver::default(), "a second run adds nothing");
+        assert_eq!(s.import_vrcx(&other, &account, false, None).unwrap(), BroughtOver::default(), "a second run adds nothing");
     }
 }

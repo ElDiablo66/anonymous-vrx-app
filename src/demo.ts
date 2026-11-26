@@ -308,7 +308,7 @@ export const demoBackend: Backend = {
     return "";
   },
   async getNoGpu() {
-    return false;
+    return { wanted: false, now: false };
   },
   async setNoGpu() {},
   async restartApp() {},
@@ -322,6 +322,12 @@ export const demoBackend: Backend = {
     return Math.max(30, gb);
   },
   async setVrNotices() {},
+  async setVrOverlay() {},
+  async vrOverlayNotice() {},
+  async vrOverlayWrist() {},
+  async vrOverlayStatus() {
+    return "Waiting for SteamVR to start.";
+  },
   async testVrNotice(rules) {
     return [
       ...(rules.xs ? [{ target: "XSOverlay", ok: true, problem: "" }] : []),

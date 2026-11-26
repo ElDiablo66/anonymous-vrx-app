@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import "@fontsource/yellowtail";
 import "@fontsource/barlow-condensed/600-italic.css";
 import "@fontsource/barlow-condensed/700-italic.css";
+// The upright faces, for whoever switches the slant off.
+import "@fontsource/barlow-condensed/600.css";
+import "@fontsource/barlow-condensed/700.css";
 import "@fontsource-variable/instrument-sans";
 // Fonts offered in Settings. A browser only loads the files of a font that is in use.
 import "@fontsource/rajdhani/latin-500.css";

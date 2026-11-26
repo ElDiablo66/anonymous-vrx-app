@@ -64,7 +64,15 @@ export interface Settings {
   vrXs: boolean;
   vrOvrHud: boolean;
   vrOvrWrist: boolean;
-  /** How many seconds a notice stays up in XSOverlay. */
+  /** The app's own notice panel in SteamVR, in front of the eyes. */
+  vrOwn: boolean;
+  /** The app's own feed on a wrist in SteamVR. */
+  vrWrist: "off" | "left" | "right";
+  /** How wide that feed is, in metres. */
+  vrWristSize: number;
+  /** `pc` follows Windows; otherwise the day a week starts on in the events calendar. */
+  weekStart: "pc" | "mon" | "sun" | "sat";
+  /** How many seconds a notice stays up in XSOverlay and in the app's own panel. */
   vrSeconds: number;
   /** How see-through a notice is in XSOverlay, 0.2 to 1. */
   vrOpacity: number;
@@ -237,6 +245,10 @@ function load(): Settings {
     vrOvrWrist: false,
     vrSeconds: 4,
     vrOpacity: 1,
+    vrOwn: false,
+    vrWrist: "off",
+    vrWristSize: 0.16,
+    weekStart: "pc",
   };
   try {
     const stored = JSON.parse(read("settings") ?? "{}") as Partial<Settings>;
@@ -261,6 +273,9 @@ function load(): Settings {
     if (!(merged.profileBackdropStrength >= 0.1 && merged.profileBackdropStrength <= 0.9)) merged.profileBackdropStrength = defaults.profileBackdropStrength;
     if (!(merged.vrSeconds >= 1 && merged.vrSeconds <= 30)) merged.vrSeconds = defaults.vrSeconds;
     if (!(merged.vrOpacity >= 0.2 && merged.vrOpacity <= 1)) merged.vrOpacity = defaults.vrOpacity;
+    if (!["off", "left", "right"].includes(merged.vrWrist)) merged.vrWrist = defaults.vrWrist;
+    if (!(merged.vrWristSize >= 0.08 && merged.vrWristSize <= 0.4)) merged.vrWristSize = defaults.vrWristSize;
+    if (!["pc", "mon", "sun", "sat"].includes(merged.weekStart)) merged.weekStart = defaults.weekStart;
     return merged;
   } catch {
     return defaults;

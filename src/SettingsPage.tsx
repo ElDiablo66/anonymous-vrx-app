@@ -118,6 +118,7 @@ export function SettingsPage({
     try {
       const { broughtOver: got, backup } = await backend.importVrcx(JSON.stringify(settings));
       const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites;
+      if (total > 0) window.dispatchEvent(new Event("history:imported"));
       setBrought(
         total === 0
           ? "Nothing new: everything VRCX has for this account is already here."

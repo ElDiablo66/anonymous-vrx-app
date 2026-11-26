@@ -172,6 +172,8 @@ export interface GameCache {
 }
 
 export interface VrRules {
+  /** The app's own notice panel in SteamVR. */
+  own: boolean;
   xs: boolean;
   ovrHud: boolean;
   ovrWrist: boolean;
@@ -339,6 +341,8 @@ export type LiveEvents = {
   "avatars:changed": null;
   "notice:new": Notice;
   "here:changed": null;
+  /** A notice for the app's own panel in the headset: the window draws it and hands it back. */
+  "vr:draw": { title: string; body: string };
   "world:resolved": World;
   "instance:info": Instance;
   "pipeline:status": string;
@@ -496,7 +500,7 @@ export interface Backend {
   /** Changes whenever VRCX has written to its history. Empty when VRCX is not on this PC. */
   vrcxStamp(): Promise<string>;
   /** Draw without the graphics card, from the next start on. */
-  getNoGpu(): Promise<boolean>;
+  getNoGpu(): Promise<{ wanted: boolean; now: boolean }>;
   setNoGpu(on: boolean): Promise<void>;
   /** Closes the app and opens it again. */
   restartApp(): Promise<void>;
@@ -508,10 +512,18 @@ export interface Backend {
   setGameCacheLimit(gb: number): Promise<number>;
   /** Which overlay programs get my notifications in the headset. */
   setVrNotices(rules: VrRules): Promise<void>;
+  /** Whether the app should be in SteamVR at all: a notice panel or a wrist feed is switched on. */
+  setVrOverlay(on: boolean): Promise<void>;
+  /** Shows a picture (a PNG data address) in front of the eyes for some seconds. */
+  vrOverlayNotice(png: string, seconds: number, alpha: number): Promise<void>;
+  /** Puts a picture on a wrist, or takes the feed off with `null`. `width` is in metres. */
+  vrOverlayWrist(png: string | null, hand: "left" | "right", width: number, alpha: number): Promise<void>;
+  /** Where the app's own panels stand, in words. */
+  vrOverlayStatus(): Promise<string>;
   /** Sends a sample notice now and says how each program took it. */
   testVrNotice(rules: VrRules): Promise<Array<{ target: string; ok: boolean; problem: string }>>;
   /** `byItself` is the quiet run the app makes when VRCX's file has changed. */
-  importVrcx(settings: string, byItself?: boolean): Promise<{ broughtOver: { feed: number; friendLog: number; visits: number; people: number; notes: number; favourites: number }; backup: string }>;
+  importVrcx(settings: string, byItself?: boolean, since?: string): Promise<{ broughtOver: { feed: number; friendLog: number; visits: number; people: number; notes: number; favourites: number }; backup: string }>;
   /** Makes the daily automatic backup if one is due and keeps the newest `keep`. Null when none was due. */
   autoBackup(settings: string, keep: number): Promise<BackupInfo | null>;
   backups(): Promise<BackupInfo[]>;
@@ -665,7 +677,7 @@ const desktop: Backend = {
   restoreBackup: (name, settings) => invoke("restore_backup", { name, settings }),
   autoBackup: (settings, keep) => invoke("auto_backup", { settings, keep }),
   vrcxFound: () => invoke("vrcx_found"),
-  importVrcx: (settings, byItself) => invoke("import_vrcx", { settings, byItself: byItself ?? false }),
+  importVrcx: (settings, byItself, since) => invoke("import_vrcx", { settings, byItself: byItself ?? false, since: since ?? null }),
   vrcxStamp: () => invoke("vrcx_stamp"),
   getNoGpu: () => invoke("get_no_gpu"),
   setNoGpu: (on) => invoke("set_no_gpu", { on }),
@@ -675,6 +687,10 @@ const desktop: Backend = {
   setGameCacheLimit: (gb) => invoke("set_game_cache_limit", { gb }),
   setVrNotices: (rules) => invoke("set_vr_notices", { rules }),
   testVrNotice: (rules) => invoke("test_vr_notice", { rules }),
+  setVrOverlay: (on) => invoke("set_vr_overlay", { on }),
+  vrOverlayNotice: (png, seconds, alpha) => invoke("vr_overlay_notice", { png, seconds, alpha }),
+  vrOverlayWrist: (png, hand, width, alpha) => invoke("vr_overlay_wrist", { png, hand, width, alpha }),
+  vrOverlayStatus: () => invoke("vr_overlay_status"),
   openBackupsFolder: () => invoke("open_backups_folder"),
   here: () => invoke("get_here"),
   visits: (limit, before) => invoke("get_visits", { limit, before: before ?? null }),

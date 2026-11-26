@@ -17,7 +17,10 @@ pub struct Rules {
     pub xs: bool,
     pub ovr_hud: bool,
     pub ovr_wrist: bool,
-    /// How long a notice stays up in XSOverlay.
+    /// The app's own notice panel in SteamVR.
+    #[serde(default)]
+    pub own: bool,
+    /// How long a notice stays up in XSOverlay and in the app's own panel.
     pub seconds: f32,
     /// 0.2 (faint) to 1 (solid), XSOverlay only.
     pub opacity: f32,
@@ -25,7 +28,7 @@ pub struct Rules {
 
 impl Rules {
     pub fn any(&self) -> bool {
-        self.xs || self.ovr_hud || self.ovr_wrist
+        self.xs || self.ovr_hud || self.ovr_wrist || self.own
     }
 }
 

@@ -455,7 +455,7 @@ impl Hub {
     ///
     /// `by_itself` is the run the app makes when VRCX's file has changed. It backs up at most
     /// once a day and keeps three of those, so a PC with both apps open does not fill up.
-    pub fn import_vrcx(&self, other: &std::path::Path, backups: &std::path::Path, settings_json: &str, by_itself: bool) -> AppResult<Value> {
+    pub fn import_vrcx(&self, other: &std::path::Path, backups: &std::path::Path, settings_json: &str, by_itself: bool, since: Option<&str>) -> AppResult<Value> {
         let me = self.me().ok_or(AppError::NotSignedIn)?;
         if !other.is_file() {
             return Err(AppError::CannotDo("VRCX's history file was not found on this PC.".into()));
@@ -470,7 +470,7 @@ impl Hub {
         } else {
             String::new()
         };
-        let got = self.with_store(|s| s.import_vrcx(other, &me.id))?;
+        let got = self.with_store(|s| s.import_vrcx(other, &me.id, by_itself, since.filter(|_| by_itself)))?;
         self.send("here:changed", Value::Null);
         Ok(json!({ "broughtOver": got, "backup": saved }))
     }
