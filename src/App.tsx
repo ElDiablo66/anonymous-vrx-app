@@ -35,6 +35,7 @@ import { Uploads } from "./Uploads";
 import { Events, monthOf } from "./Events";
 import { useSettings } from "./settings";
 import { QueueBar } from "./Queue";
+import { EditProfile, SendPanel } from "./Send";
 import { useStatusRules } from "./statusrules";
 import logo from "./assets/logo.svg";
 
@@ -128,6 +129,7 @@ export function App() {
   const [hereNow, setHereNow] = useState<HereNow | null>(null);
   const [link, setLink] = useState("off");
   const [statusOpen, setStatusOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [service, setService] = useState<ServiceStatus | null>(null);
 
   useEffect(() => {
@@ -908,6 +910,10 @@ export function App() {
         <MyStatus
           me={me}
           onClose={() => setStatusOpen(false)}
+          onEdit={() => {
+            setStatusOpen(false);
+            setEditOpen(true);
+          }}
           onSaved={(next, message) => {
             setMe(next);
             setStatusOpen(false);
@@ -915,6 +921,19 @@ export function App() {
           }}
         />
       )}
+
+      {editOpen && me && (
+        <EditProfile
+          meId={me.id}
+          onClose={() => setEditOpen(false)}
+          onBack={() => {
+            setEditOpen(false);
+            setStatusOpen(true);
+          }}
+          onDone={setToast}
+        />
+      )}
+      <SendPanel inWorld={inWorld} friends={friends} onDone={setToast} />
 
       <PersonMenu isFriend={(id) => friends.has(id)} inWorld={inWorld} openProfile={openProfile} onDone={setToast} />
       {toast && (

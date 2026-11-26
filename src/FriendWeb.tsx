@@ -347,8 +347,8 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
           </dl>
         ) : (
           <p className="town-intro">
-            This draws which of your friends are friends with each other. The app has to ask VRChat about each friend, one at a time with a pause in
-            between, so {friends.length} friends take about {Math.max(1, Math.round((friends.length * 0.8) / 60))} min. It only happens when you press the
+            This draws which of your friends are friends with each other. The app has to ask VRChat about each friend, one every two seconds,
+            so {friends.length} friends take about {Math.max(1, Math.round((friends.length * 2.3) / 60))} min. It only happens when you press the
             button, and the answer stays on this PC.
           </p>
         )}

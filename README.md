@@ -102,9 +102,16 @@ VRChat forgets most of what happened. The app keeps it in a file on your PC: eve
 | Friend list | Sortable, with trust colours, VRC+ and 18+ marks, language flags and status colours. A Last seen column, from the app's own records, and a sort that puts the longest-quiet friends first |
 | Old names | Hover a name to see what that friend used to be called |
 | Friend tools | Send and answer friend requests, boop back, unfriend, move people between favourite groups, rename the groups |
-| Block and mute | Block or mute someone from their profile, and see everyone you blocked or muted in one list, with a button to take each one back |
-| Your status | Click your own picture to change it |
+| Block and mute | Block or mute someone from More on their profile, and see everyone you blocked or muted in one list, with a button to take each one back |
+| Your status | Click your own picture: four status cards, your status text with the ones you used lately, and links to your profile |
 | Where a friend hangs out | On a profile's Activity tab: the worlds where you two meet most, who is usually there too, and at which hours and weekdays. Below that, the worlds the app saw them in over the last 90 days. All from this PC's history |
+| Events, where it is held | An event that is on right now shows the group's open instances on its card, each with Join and "Who is there". For your own groups the app looks by itself; on the other tabs a button asks. VRChat lists a group's instances to its members, and the card says so when it lists none. |
+| Wardrobe | In History, the Wardrobe tab shows every avatar you wore as a board: picture, when you last wore it, your own tags, and Wear with one press. Narrow it by tag or by a search, sort by latest, most worn or name, or switch to the list with the numbers. |
+| Boops with an emoji | Boop on a profile or in the menu on a person opens a small window: send it plain, or with one of VRChat's own emoji. The ones you used last sit on top. |
+| Invites with a saved line | "With a message" sends an invite to your world, or asks for one, with one of your twelve saved lines. A line can be changed there; VRChat allows that once an hour for each. |
+| Edit my profile | From the status window, "Edit my profile" changes your bio, pronouns, up to three links and up to three languages, and on a second tab your icon frame, profile effect, nameplate and background, with a preview. It saves the way VRChat's website does. |
+| More on a profile | At the end of a profile's buttons: how you see their avatar, mute their voice or chatbox, stop their avatar touching yours, block with a second check, invite them to one of your groups, copy their ID or profile link. |
+| Long lists on a profile | Groups, worlds, avatars and mutual friends on a profile get a search by name and an order once there are seven or more. |
 
 #### History
 
@@ -154,7 +161,7 @@ VRChat forgets most of what happened. The app keeps it in a file on your PC: eve
 |---|---|
 | Themes | Sunset, night, black and white, red and black, your own colours, or your own picture as the background |
 | Fonts, dates and name colours | Pick the heading and text font, a 12 or 24 hour clock, dates in words or as year-month-day, and the colour of each trust rank or one colour per person |
-| Profile dress | Shows a person's icon frame and profile effect, and tints their profile window with their banner colour or picture. Each can be switched off |
+| Profile dress | Shows a person's icon frame, profile effect and the background they picked in VRChat, or tints their profile window with their banner colour or picture. Each can be switched off |
 | Wide windows | Settings and the friend screens spread into columns when there is room |
 | Tray | Closing the window can leave the app in the tray, where it keeps recording. Starting it a second time brings the running one forward |
 | Starting up | It can start with Windows, in the tray, and open its window when VRChat starts |

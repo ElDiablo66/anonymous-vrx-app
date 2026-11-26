@@ -1,3 +1,4 @@
+import { openSend } from "./Send";
 import { useEffect, useState } from "react";
 import { backend, errorText } from "./backend";
 
@@ -101,8 +102,29 @@ export function PersonMenu({
         </button>
       </li>
       <li role="none">
-        <button role="menuitem" disabled={!friend} title={friend ? "Sends them a boop" : "Only friends can be booped"} onClick={() => run(() => backend.boop(id), `Booped ${name}.`)}>
+        <button
+          role="menuitem"
+          disabled={!friend}
+          title={friend ? "Sends them a boop, plain or with an emoji" : "Only friends can be booped"}
+          onClick={() => {
+            setTarget(null);
+            openSend({ kind: "boop", userId: id, name });
+          }}
+        >
           Boop
+        </button>
+      </li>
+      <li role="none">
+        <button
+          role="menuitem"
+          disabled={!friend}
+          title={friend ? "An invite, or asking for one, with one of your saved lines" : "Only friends can be sent these"}
+          onClick={() => {
+            setTarget(null);
+            openSend({ kind: "message", userId: id, name });
+          }}
+        >
+          With a message
         </button>
       </li>
     </ul>

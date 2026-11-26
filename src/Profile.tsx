@@ -1,6 +1,9 @@
+import { colourOf, profileBackground, useDress } from "./look";
+import { ProfileMenu } from "./ProfileMenu";
+import { openSend } from "./Send";
 import { Habits } from "./Habits";
 import { type CSSProperties, useEffect, useState, type ReactNode } from "react";
-import { backend, errorText, type Cosmetic, type Friend, type Profile, type World } from "./backend";
+import { backend, errorText, type Friend, type Profile, type World } from "./backend";
 import { Avatar, accessName, clock, dateText, dayLabel, deviceLine, statusTone, statusWords, tidy } from "./bits";
 import { WayBack } from "./History";
 import { openThing } from "./Detail";
@@ -15,33 +18,6 @@ export function openProfile(userId: string) {
 }
 
 type Json = Record<string, unknown>;
-/** Every frame and effect VRChat offers, asked for once while the app runs. */
-let dressKept: Promise<Record<string, Cosmetic>> | null = null;
-
-/** The frames and effects by id, or nothing while they load or when they are switched off. */
-function useDress(on: boolean): Record<string, Cosmetic> {
-  const [dress, setDress] = useState<Record<string, Cosmetic>>({});
-  useEffect(() => {
-    if (!on) return;
-    dressKept ??= backend.cosmetics().catch(() => {
-      // Asked again the next time a profile opens.
-      dressKept = null;
-      return {};
-    });
-    let alive = true;
-    void dressKept.then((all) => alive && setDress(all));
-    return () => {
-      alive = false;
-    };
-  }, [on]);
-  return on ? dress : {};
-}
-
-/** A banner colour as CSS can use it: "#aabbcc" from "#aabbcc" or "aabbcc"; empty for anything else. */
-function colourOf(value: unknown): string {
-  const text = typeof value === "string" ? value.trim().replace(/^#/, "") : "";
-  return /^[0-9a-f]{6}$/i.test(text) ? `#${text}` : "";
-}
 
 type Tab = "info" | "mutuals" | "groups" | "worlds" | "favoriteWorlds" | "avatars" | "activity" | "json";
 
@@ -104,12 +80,36 @@ const platformWords: Record<string, string> = {
   web: "Website",
 };
 
+/** Every language VRChat lets a person put on their profile (ISO 639-3), in plain words. */
 const languages: Record<string, string> = {
-  eng: "English", spa: "Spanish", fra: "French", deu: "German", jpn: "Japanese", kor: "Korean", zho: "Chinese",
-  rus: "Russian", por: "Portuguese", ita: "Italian", nld: "Dutch", pol: "Polish", swe: "Swedish", nor: "Norwegian",
-  dan: "Danish", fin: "Finnish", tur: "Turkish", ara: "Arabic", tha: "Thai", vie: "Vietnamese", ind: "Indonesian",
-  ukr: "Ukrainian", ces: "Czech", hun: "Hungarian", ron: "Romanian", heb: "Hebrew", ase: "American Sign Language",
+  afr: "Afrikaans", ara: "Arabic", ase: "American Sign Language", asf: "Australian Sign Language", ben: "Bengali",
+  bfi: "British Sign Language", bul: "Bulgarian", ces: "Czech", cmn: "Mandarin Chinese", cym: "Welsh", dan: "Danish",
+  deu: "German", dse: "Dutch Sign Language", ell: "Greek", eng: "English", epo: "Esperanto", est: "Estonian",
+  fil: "Filipino", fin: "Finnish", fra: "French", fsl: "French Sign Language", gla: "Scottish Gaelic", gle: "Irish",
+  gsg: "German Sign Language", heb: "Hebrew", hin: "Hindi", hmn: "Hmong", hrv: "Croatian", hun: "Hungarian",
+  hye: "Armenian", ind: "Indonesian", isl: "Icelandic", ita: "Italian", jpn: "Japanese", jsl: "Japanese Sign Language",
+  kor: "Korean", kvk: "Korean Sign Language", lav: "Latvian", lit: "Lithuanian", ltz: "Luxembourgish", mar: "Marathi",
+  mkd: "Macedonian", mlt: "Maltese", mri: "Maori", msa: "Malay", nld: "Dutch", nor: "Norwegian",
+  nzs: "New Zealand Sign Language", pol: "Polish", por: "Portuguese", ron: "Romanian", rus: "Russian", sco: "Scots",
+  slk: "Slovak", slv: "Slovenian", spa: "Spanish", swe: "Swedish", tel: "Telugu", tha: "Thai", tok: "Toki Pona",
+  tur: "Turkish", tws: "Teochew", ukr: "Ukrainian", vie: "Vietnamese", wuu: "Wu Chinese", yue: "Cantonese",
+  zho: "Chinese", zxx: "No language set",
+  // Not on VRChat's list today, but seen on older profiles.
+  srp: "Serbian", tgl: "Tagalog", cat: "Catalan",
 };
+
+/** A language that borrows another one's flag: a sign language its country's, a regional language its country's. */
+const flagOf: Record<string, string> = {
+  ase: "eng", dse: "nld", fsl: "fra", gsg: "deu", jsl: "jpn", kvk: "kor", cmn: "zho", wuu: "zho", mar: "hin", tel: "hin",
+  sco: "gla", mri: "nzs", tgl: "fil",
+};
+
+/** The flags the stylesheet draws. A language without one gets no empty box. */
+const flagged = new Set([
+  "afr", "ara", "asf", "ben", "bfi", "bul", "ces", "cym", "dan", "deu", "ell", "eng", "epo", "est", "fil", "fin", "fra", "gla",
+  "gle", "heb", "hin", "hrv", "hun", "hye", "ind", "isl", "ita", "jpn", "kor", "lav", "lit", "ltz", "mkd", "mlt", "msa", "nld",
+  "nor", "nzs", "pol", "por", "ron", "rus", "slk", "slv", "spa", "swe", "tha", "tur", "ukr", "vie", "yue", "zho",
+]);
 
 /** My own account settings that VRChat includes when I look at myself. */
 const ownSettings: Array<[string, string, boolean]> = [
@@ -232,6 +232,13 @@ export function ProfilePanel({
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<Tab>("info");
+  // Each long list keeps its own search and order, so two lists on one tab do not share them.
+  const [listQuery, setListQuery] = useState<Record<string, string>>({});
+  const [listOrder, setListOrder] = useState<Record<string, "given" | "name" | "big">>({});
+  useEffect(() => {
+    setListQuery({});
+    setListOrder({});
+  }, [tab, userId]);
   // Closing puts every window away, so no tab is remembered past that. Back keeps them.
   const onClose = () => {
     openTabs.clear();
@@ -358,7 +365,7 @@ export function ProfilePanel({
   ];
   const speaks: Array<[string, string]> = [...new Set(spoken)]
     .filter(Boolean)
-    .map((code) => [code, languages[code] ? `${languages[code]} (${code})` : code.toUpperCase()]);
+    .map((code) => [code, code === "zxx" ? languages.zxx : languages[code] ? `${languages[code]} (${code})` : code.toUpperCase()]);
   // Names VRChat remembers, plus changes this app saw itself.
   const pastNames: Array<[string, string]> = [];
   for (const p of list(raw.pastDisplayNames)) pastNames.push([str(p.displayName), str(p.updated_at)]);
@@ -382,8 +389,12 @@ export function ProfilePanel({
   const bannerColour = colourOf(raw.bannerColor);
   const plainBanner = str(raw.bannerType) === "color" && !!bannerColour;
   const tintOn = live().profileBackdrop;
-  const tintColour = tintOn ? bannerColour : "";
-  const tintPicture = usePic(tintOn && !tintColour ? banner : "");
+  // The background the person chose for their profile wins; without one the banner tints the window.
+  const chosen = profileBackground(raw, dress);
+  const chosenPicture = usePic(tintOn ? chosen.picture : "");
+  const backed = tintOn && !!(chosen.image || chosenPicture);
+  const tintColour = tintOn && !backed ? bannerColour : "";
+  const tintPicture = usePic(tintOn && !backed && !tintColour ? banner : "");
   const tinted = !!(tintColour || tintPicture);
   const vrcPlus = raw.hasVrcPlus === true || tags.includes("system_supporter");
   const representedRaw = raw.representedGroup ?? parts.represented;
@@ -425,7 +436,61 @@ export function ProfilePanel({
     if (!(part in parts)) return <Empty>Asking VRChat</Empty>;
     if (parts[part] === null) return <Empty>VRChat did not share this. It may be hidden or turned off on their side.</Empty>;
     const rows = list(parts[part]);
-    return rows.length === 0 ? <Empty>{empty}</Empty> : render(rows);
+    if (rows.length === 0) return <Empty>{empty}</Empty>;
+    // Long lists get a search and an order; short ones are shown as they are.
+    if (rows.length < 7) return render(rows);
+    const people = part === "mutualFriends";
+    const query = listQuery[part] ?? "";
+    const order = people && listOrder[part] === "big" ? "given" : (listOrder[part] ?? "given");
+    const q = query.trim().toLowerCase();
+    // People rows carry a display name; groups, worlds and avatars carry a name.
+    const nameOf = (r: Json) => tidy(str(r.name) || str(r.displayName));
+    const size = (r: Json) => num(r.memberCount) || num(r.favorites) || num(r.visits) || num(r.occupants);
+    // "Most popular" is offered only when VRChat sent a number to sort by.
+    const sized = !people && rows.some((r) => size(r) > 0);
+    const sorted = order === "big" && !sized ? "given" : order;
+    const shown = rows
+      .filter((r) => !q || nameOf(r).toLowerCase().includes(q))
+      .sort((a, b) => (sorted === "name" ? nameOf(a).localeCompare(nameOf(b)) : sorted === "big" ? size(b) - size(a) : 0));
+    // Two lists can sit on one tab, so each box says which list it searches.
+    const what = { mutualFriends: "mutual friends", mutualGroups: "groups you share", groups: "their groups", worlds: "worlds", favoriteWorlds: "favourite worlds", avatars: "avatars" }[part] ?? "this list";
+    return (
+      <>
+        <div className="list-bar">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setListQuery((m) => ({ ...m, [part]: e.target.value }))}
+            onKeyDown={(e) => {
+              // Escape empties the search box and leaves the profile open.
+              if (e.key !== "Escape") return;
+              e.stopPropagation();
+              if (query) setListQuery((m) => ({ ...m, [part]: "" }));
+              else e.currentTarget.blur();
+            }}
+            placeholder="Search by name"
+            aria-label={`Search ${what} by name`}
+          />
+          <div className="filters filters-flat" role="radiogroup" aria-label={`Order of ${what}`}>
+            {(
+              [
+                ["given", "As VRChat lists them"],
+                ["name", "By name"],
+                ["big", part === "groups" || part === "mutualGroups" ? "Most members" : "Most popular"],
+              ] as const
+            )
+              .filter(([value]) => value !== "big" || sized)
+              .map(([value, label]) => (
+              <button key={value} role="radio" aria-checked={sorted === value} className={sorted === value ? "on" : ""} onClick={() => setListOrder((m) => ({ ...m, [part]: value }))}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="list-count">{q ? `${shown.length} of ${rows.length}` : `${rows.length} in all`}</span>
+        </div>
+        {shown.length === 0 ? <Empty>Nothing here has "{query.trim()}" in its name.</Empty> : render(shown)}
+      </>
+    );
   }
 
   const avatarCards = (rows: Json[]) => (
@@ -498,8 +563,14 @@ export function ProfilePanel({
   return (
     <div className="veil" onClick={onClose}>
       <div
-        className={`profile person-window${tinted ? " tinted" : ""}`}
-        style={tinted ? ({ "--tint": tintColour || "transparent", "--tint-pic": tintPicture ? `url("${tintPicture}")` : "none", "--tint-strength": String(live().profileBackdropStrength) } as CSSProperties) : undefined}
+        className={`profile person-window${tinted ? " tinted" : ""}${backed ? " backed" : ""}`}
+        style={
+          backed
+            ? ({ "--bg": chosen.image || `url("${chosenPicture}")`, "--tint-strength": String(live().profileBackdropStrength) } as CSSProperties)
+            : tinted
+              ? ({ "--tint": tintColour || "transparent", "--tint-pic": tintPicture ? `url("${tintPicture}")` : "none", "--tint-strength": String(live().profileBackdropStrength) } as CSSProperties)
+              : undefined
+        }
         role="dialog"
         aria-modal="true"
         aria-label={`${name}, profile`}
@@ -549,7 +620,7 @@ export function ProfilePanel({
             {platform && <li className="chip-platform">Last on {platform}</li>}
             {speaks.map(([code, label]) => (
               <li key={code} className="chip-lang">
-                <i className={`flag flag-${code}`} aria-hidden="true" />
+                {flagged.has(flagOf[code] ?? code) && <i className={`flag flag-${flagOf[code] ?? code}`} aria-hidden="true" />}
                 {label}
               </li>
             ))}
@@ -680,13 +751,27 @@ export function ProfilePanel({
                                 : "Offline, or not on your friend list"}
                         </Empty>
                       )}
-                      {!isMe && blockState?.block && (
+                      {/* A friend's More sits in their action row below; anyone else's sits here, last in the
+                          row whether they are blocked or not, so an open panel stays open through Block. */}
+                      {friend && !isMe && blockState?.block && (
                         <div className="wayback blocked-line">
                           <span className="tile-note">You blocked {name}. You and they do not see or hear each other in VRChat.</span>
                           <BlockMute userId={userId} name={name} state={blockState} setState={setBlockState} only="unblock" onDone={onDone} />
                         </div>
                       )}
-                      {!friend && !isMe && !blockState?.block && <AddFriend userId={userId} name={name} onDone={onDone} />}
+                      {!friend && !isMe && (
+                        <div className={`wayback ${blockState?.block ? "blocked-line" : "wayback-more"}`}>
+                          {blockState?.block ? (
+                            <>
+                              <span className="tile-note">You blocked {name}. You and they do not see or hear each other in VRChat.</span>
+                              <BlockMute userId={userId} name={name} state={blockState} setState={setBlockState} only="unblock" onDone={onDone} />
+                            </>
+                          ) : (
+                            <AddFriend userId={userId} name={name} onDone={onDone} />
+                          )}
+                          <ProfileMenu userId={userId} name={name} friend={false} onDone={onDone} />
+                        </div>
+                      )}
                       {friend && !isMe && (
                         <div className="wayback">
                           <button
@@ -703,9 +788,17 @@ export function ProfilePanel({
                           >
                             Invite to my world
                           </button>
-                          <button disabled={busy} title="Sends them a boop" onClick={() => void act(() => backend.boop(userId), `Booped ${name}.`)}>
+                          <button disabled={busy} title="Sends them a boop, plain or with an emoji" onClick={() => openSend({ kind: "boop", userId, name })}>
                             Boop
                           </button>
+                          <button
+                            disabled={busy}
+                            title="An invite, or asking for one, with one of your saved lines"
+                            onClick={() => openSend({ kind: "message", userId, name })}
+                          >
+                            With a message
+                          </button>
+                          <ProfileMenu userId={userId} name={name} friend onDone={onDone} />
                         </div>
                       )}
                     </section>
@@ -829,12 +922,12 @@ export function ProfilePanel({
                       </dl>
                       <div className="quiet-actions">
                         <button onClick={() => copy(person.id, "User ID copied.")}>Copy user ID</button>
-                        <button onClick={() => copy(`https://vrchat.com/home/user/${person.id}`, "Profile link copied.")}>Copy link</button>
+                        <button onClick={() => copy(`https://vrchat.com/home/user/${person.id}`, "Profile link copied.")}>Copy profile link</button>
                       </div>
-                      {!isMe && (
+                      {!isMe && friend && (
                         <div className="quiet-actions quiet-actions-apart">
-                          {friend && <Unfriend userId={userId} name={name} onDone={onDone} />}
-                          <BlockMute userId={userId} name={name} state={blockState} setState={setBlockState} onDone={onDone} />
+                          <Unfriend userId={userId} name={name} onDone={onDone} />
+                          <span className="tile-note">Mute and block are under More, after With a message.</span>
                         </div>
                       )}
                     </section>

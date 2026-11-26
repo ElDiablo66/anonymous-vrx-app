@@ -69,6 +69,15 @@ struct Inner {
     tasks: Vec<JoinHandle<()>>,
 }
 
+/// The picture backgrounds VRChat offers for profiles, by the id a profile names them by. The
+/// pictures are on VRChat's own server; VRChat publishes no list of them, so it is kept here.
+pub const PROFILE_TEXTURES: &[&str] = &[
+    "grid", "filigree", "bit-mountain", "approach", "planet-fall", "jungle", "light-streams", "koi", "moonlight", "machine", "topology",
+    "circuit", "kawaii-cupcakes", "bokeh", "hologram", "flow", "jelly", "cheese", "alchemy", "sunset-mountain", "magic-rocks",
+    "city-stillness", "music", "wolf-running", "dragon-smoke", "night-rain", "butterfly-zero", "i-am-speed", "ronin", "abduction",
+    "cat-dream", "virtual-waves", "bolt-and-snail", "escape",
+];
+
 pub struct Hub {
     pub api: Arc<ApiClient>,
     emit: Emit,
@@ -96,6 +105,8 @@ pub struct Hub {
     waiting_watched: std::sync::atomic::AtomicBool,
     /// A look at who of my friends are friends with each other is under way, or was told to stop.
     mutuals_running: std::sync::atomic::AtomicBool,
+    /// VRChat's whole list of my choices about other people, kept a minute.
+    moderation_raw: Mutex<Option<(String, Instant, Value)>>,
     /// When the app last set my status itself, and to what.
     status_set: Mutex<Option<(Instant, String, String)>>,
     mutuals_stop: std::sync::atomic::AtomicBool,
@@ -189,6 +200,7 @@ impl Hub {
             waiting_watched: std::sync::atomic::AtomicBool::new(false),
             mutuals_running: std::sync::atomic::AtomicBool::new(false),
             status_set: Mutex::new(None),
+            moderation_raw: Mutex::new(None),
             mutuals_stop: std::sync::atomic::AtomicBool::new(false),
             own_feed: std::sync::atomic::AtomicBool::new(false),
         })
@@ -771,7 +783,7 @@ impl Hub {
         }
         let mut all = serde_json::Map::new();
         let mut answered = false;
-        for kind in ["iconFrame", "profileEffect", "nameplateEffect"] {
+        for kind in ["iconFrame", "profileEffect", "nameplateEffect", "profileBackground"] {
             let list = match self.api.read(&format!("/cosmetics/index/{kind}")).await {
                 Ok(list) => list,
                 Err(AppError::RateLimited) => return Err(AppError::RateLimited),
@@ -793,7 +805,8 @@ impl Hub {
                         .unwrap_or_default()
                         .to_string()
                 };
-                let still = asset("base");
+                let plain = |v: &Value| v.as_str().filter(|u| u.starts_with("https://")).unwrap_or_default().to_string();
+                let still = [asset("base"), plain(&meta["imageUrl"]), plain(&item["imageUrl"])].into_iter().find(|u| !u.is_empty()).unwrap_or_default();
                 let moving = asset("mainAnimation");
                 all.insert(
                     id.to_string(),
@@ -802,6 +815,8 @@ impl Hub {
                         "still": still,
                         "from": meta["gradientStart"].as_str().unwrap_or_default(),
                         "to": meta["gradientEnd"].as_str().unwrap_or_default(),
+                        "name": item["name"].as_str().unwrap_or_default(),
+                        "kind": kind,
                     }),
                 );
             }
@@ -1262,15 +1277,173 @@ impl Hub {
         self.fav_cache.lock().unwrap().get(kind).cloned()
     }
 
-    pub async fn boop(&self, user_id: &str) -> AppResult<()> {
+    pub async fn boop(&self, user_id: &str, emoji: Option<&str>) -> AppResult<()> {
         if !user_id.starts_with("usr_") {
             return Err(AppError::CannotDo("Only a person can be booped.".into()));
         }
-        self.api.boop(user_id).await
+        // One of VRChat's own emoji, or a file of mine there. Nothing else is passed on.
+        let plain = |id: &str| id.len() <= 64 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+        let emoji = emoji.map(str::trim).filter(|e| !e.is_empty());
+        if emoji.is_some_and(|e| !((e.starts_with("default_") || e.starts_with("file_")) && plain(e))) {
+            return Err(AppError::CannotDo("That is not an emoji VRChat knows.".into()));
+        }
+        self.api.boop(user_id, emoji).await
+    }
+
+    /// My saved messages for invites (`message`) or for asking to be invited (`request`), twelve of each.
+    pub async fn invite_messages(&self, kind: &str) -> AppResult<Value> {
+        if !matches!(kind, "message" | "request") {
+            return Err(AppError::CannotDo("That is not a kind of saved message.".into()));
+        }
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        self.api.invite_messages(&me.id, kind).await
+    }
+
+    /// Changes one saved message. VRChat allows that once an hour for each slot.
+    pub async fn set_invite_message(&self, kind: &str, slot: u8, text: &str) -> AppResult<Value> {
+        if !matches!(kind, "message" | "request") {
+            return Err(AppError::CannotDo("That is not a kind of saved message.".into()));
+        }
+        let text = text.trim();
+        if slot > 11 || text.is_empty() || text.chars().count() > 64 || text.chars().any(char::is_control) {
+            return Err(AppError::CannotDo("A saved message is one line of 1 to 64 characters, in one of twelve slots.".into()));
+        }
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        self.api.set_invite_message(&me.id, kind, slot, text).await
+    }
+
+    /// Changes what my profile says about me: bio, pronouns and up to three links.
+    pub async fn update_profile(&self, bio: &str, pronouns: &str, links: &[String]) -> AppResult<()> {
+        let links: Vec<&str> = links.iter().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+        let web = |l: &str| (l.starts_with("https://") || l.starts_with("http://")) && l.len() <= 200 && !l.chars().any(|c| c.is_control() || c.is_whitespace());
+        if bio.chars().count() > 512 {
+            return Err(AppError::CannotDo("A bio can be at most 512 characters.".into()));
+        }
+        if bio.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')) {
+            return Err(AppError::CannotDo("The bio has a character in it that cannot be shown. Type it again without pasting.".into()));
+        }
+        if pronouns.chars().count() > 32 || pronouns.chars().any(char::is_control) {
+            return Err(AppError::CannotDo("Pronouns can be at most 32 characters.".into()));
+        }
+        if links.len() > 3 || links.iter().any(|l| !web(l)) {
+            return Err(AppError::CannotDo("A profile holds up to three links, each a web address starting with https://.".into()));
+        }
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        self.api.update_me(&me.id, json!({ "bio": bio, "pronouns": pronouns.trim(), "bioLinks": links })).await
     }
 
     pub async fn picture(&self, url: &str) -> AppResult<(String, Vec<u8>)> {
         self.api.picture_as(url, true).await
+    }
+
+    /// The frames, effects and backgrounds I own, by kind, as the ids profiles name them by.
+    pub async fn my_cosmetics(&self) -> AppResult<Value> {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        let list = self.api.read(&format!("/user/{}/cosmetics", utf8(&me.id))).await?;
+        let mut out = serde_json::Map::new();
+        for item in list.as_array().map(|a| a.as_slice()).unwrap_or_default() {
+            let (Some(kind), Some(id)) = (item["itemType"].as_str(), item["templateId"].as_str()) else { continue };
+            let entry = out.entry(kind.to_string()).or_insert_with(|| Value::Array(Vec::new()));
+            if let Some(ids) = entry.as_array_mut() {
+                if !ids.iter().any(|x| x == id) {
+                    ids.push(json!(id));
+                }
+            }
+        }
+        Ok(Value::Object(out))
+    }
+
+    /// Changes how my profile looks: my languages, the frame round my picture, the effect over my
+    /// banner, the plate behind my name and the background. Only the keys given change, and each
+    /// is checked before it goes to VRChat.
+    pub async fn update_look(&self, changes: &Value) -> AppResult<()> {
+        let Some(changes) = changes.as_object() else {
+            return Err(AppError::CannotDo("Nothing to change.".into()));
+        };
+        let template = |v: &Value| match v.as_str() {
+            Some("") => true,
+            Some(id) => id.len() == 41 && id.starts_with("invt_") && id[5..].chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
+            None => false,
+        };
+        let colour = |v: &Value| v.as_str().is_some_and(|c| c.len() == 6 && c.chars().all(|x| x.is_ascii_hexdigit()));
+        let mut body = serde_json::Map::new();
+        for (key, value) in changes {
+            let fine = match key.as_str() {
+                "iconFrame" | "profileEffect" | "nameplateEffect" => template(value),
+                "backgroundType" => matches!(value.as_str(), Some("default" | "gradient" | "texture")),
+                "backgroundGradientTop" | "backgroundGradientBottom" => colour(value),
+                "backgroundTextureId" => value.as_str().is_some_and(|id| PROFILE_TEXTURES.contains(&id)),
+                _ => false,
+            };
+            if !fine {
+                return Err(AppError::CannotDo(format!("The {key} given is not one VRChat takes.")));
+            }
+            body.insert(key.clone(), value.clone());
+        }
+        if body.is_empty() {
+            return Ok(());
+        }
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        self.api.update_profile_record(&me.id, Value::Object(body)).await
+    }
+
+    /// Changes the languages on my profile. VRChat keeps them as tags on the account
+    /// (`language_eng`), the way its website changes them: the ones dropped come off, the new ones go on.
+    pub async fn update_languages(&self, add: &[String], remove: &[String]) -> AppResult<()> {
+        let code = |c: &String| c.len() == 3 && c.chars().all(|x| x.is_ascii_lowercase());
+        if add.len() > 3 || remove.len() > 10 || !add.iter().chain(remove).all(code) {
+            return Err(AppError::CannotDo("A profile names up to three languages.".into()));
+        }
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        let tags = |list: &[String]| list.iter().map(|c| format!("language_{c}")).collect::<Vec<_>>();
+        if !remove.is_empty() {
+            self.api.change_tags(&me.id, false, &tags(remove)).await?;
+        }
+        if !add.is_empty() {
+            self.api.change_tags(&me.id, true, &tags(add)).await?;
+        }
+        Ok(())
+    }
+
+    /// Everything I set about one other person: block, mute, chatbox mute, their avatar shown or
+    /// hidden, interaction off. Read from VRChat's list, kept a minute.
+    pub async fn moderations_for(&self, user_id: &str) -> AppResult<Value> {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        let kept = self.moderation_raw.lock().unwrap().as_ref().filter(|(owner, at, _)| *owner == me.id && at.elapsed() < Duration::from_secs(60)).map(|(_, _, v)| v.clone());
+        let all = match kept {
+            Some(v) => v,
+            None => {
+                let v = self.api.player_moderations().await?;
+                *self.moderation_raw.lock().unwrap() = Some((me.id.clone(), Instant::now(), v.clone()));
+                v
+            }
+        };
+        let kinds: Vec<Value> = all
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .filter(|m| m["targetUserId"].as_str() == Some(user_id))
+            .filter_map(|m| m["type"].as_str().map(|k| json!(k)))
+            .collect();
+        Ok(Value::Array(kinds))
+    }
+
+    /// My groups, to pick one to invite someone into. VRChat decides whether my role may invite.
+    pub async fn my_groups(&self) -> AppResult<Value> {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        self.api.read(&format!("/users/{}/groups", utf8(&me.id))).await
+    }
+
+    pub async fn invite_to_group(&self, group_id: &str, user_id: &str) -> AppResult<()> {
+        let plain = |id: &str, head: &str| id.starts_with(head) && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !plain(group_id, "grp_") || !plain(user_id, "usr_") {
+            return Err(AppError::CannotDo("That is not a group and a person VRChat knows.".into()));
+        }
+        if self.me().is_some_and(|me| me.id == user_id) {
+            return Err(AppError::CannotDo("You cannot invite yourself.".into()));
+        }
+        self.api.invite_to_group(group_id, user_id).await
     }
 
     /// Changes one of my own uploads: `public`, `private` or `delete`. `kind` is `avatar` or `world`.
@@ -1467,8 +1640,8 @@ impl Hub {
         if !user_id.starts_with("usr_") || self.me().is_some_and(|me| me.id == user_id) {
             return Err(AppError::CannotDo("That only works on another person.".into()));
         }
-        if !matches!(kind, "block" | "mute") {
-            return Err(AppError::CannotDo("Only a block or a mute can be set from here.".into()));
+        if !matches!(kind, "block" | "mute" | "muteChat" | "hideAvatar" | "showAvatar" | "interactOff") {
+            return Err(AppError::CannotDo("That is not a choice VRChat has.".into()));
         }
         if self.me().is_none() {
             return Err(AppError::NotSignedIn);
@@ -1479,6 +1652,7 @@ impl Hub {
             self.api.unmoderate(user_id, kind).await?;
         }
         *self.blocked.lock().unwrap() = None;
+        *self.moderation_raw.lock().unwrap() = None;
         Ok(())
     }
 
@@ -1573,7 +1747,10 @@ impl Hub {
     }
 
     /// Invites a friend to the instance I am in.
-    pub async fn invite_here(&self, user_id: &str) -> AppResult<()> {
+    pub async fn invite_here(&self, user_id: &str, slot: Option<u8>) -> AppResult<()> {
+        if slot.is_some_and(|s| s > 11) {
+            return Err(AppError::CannotDo("There are twelve saved messages, 1 to 12.".into()));
+        }
         let is_friend = self.inner.lock().unwrap().friends.contains_key(user_id);
         if !is_friend {
             return Err(AppError::CannotDo("Only friends can be invited.".into()));
@@ -1584,7 +1761,7 @@ impl Hub {
                 "You are not in a world right now, so there is nowhere to invite them to.".into(),
             ));
         };
-        self.api.invite_user(user_id, &location).await
+        self.api.invite_user(user_id, &location, slot).await
     }
 
     /// What the user did with earlier notifications, newest first.
@@ -1643,7 +1820,7 @@ impl Hub {
                 self.api.respond_notification_v2(id, reply_kind, reply_data).await?;
             }
             ("boopBack", _) if notice.kind == "boop" => {
-                self.api.boop(&notice.sender_id).await?;
+                self.api.boop(&notice.sender_id, None).await?;
                 let _ = if notice.version == 2 {
                     self.api.delete_notification_v2(id).await
                 } else {
@@ -1657,7 +1834,7 @@ impl Hub {
                         "You are not in a world right now, so there is nowhere to invite them to.".into(),
                     ));
                 };
-                self.api.invite_user(&notice.sender_id, &location).await?;
+                self.api.invite_user(&notice.sender_id, &location, None).await?;
                 self.api.hide_notification(id).await?;
             }
             _ => return Err(AppError::CannotDo("That does not work on this notification.".into())),
@@ -2247,12 +2424,15 @@ impl Hub {
     }
 
     /// Asks a friend to invite me to where they are.
-    pub async fn request_invite(&self, user_id: &str) -> AppResult<()> {
+    pub async fn request_invite(&self, user_id: &str, slot: Option<u8>) -> AppResult<()> {
+        if slot.is_some_and(|s| s > 11) {
+            return Err(AppError::CannotDo("There are twelve saved messages, 1 to 12.".into()));
+        }
         let is_friend = self.inner.lock().unwrap().friends.contains_key(user_id);
         if !is_friend {
             return Err(AppError::CannotDo("Only friends can be asked for an invite.".into()));
         }
-        self.api.request_invite(user_id).await
+        self.api.request_invite(user_id, slot).await
     }
 
     fn keep_world(&self, world: World) {

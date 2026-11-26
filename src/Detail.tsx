@@ -723,8 +723,15 @@ export function DetailPanel({
                 <h3>Open group instances</h3>
                 {!("groupInstances" in extra) ? (
                   <p className="profile-fine">Asking VRChat</p>
-                ) : !extra.groupInstances || extra.groupInstances.length === 0 ? (
-                  <p className="profile-fine">No instances open right now that you can see.</p>
+                ) : !extra.groupInstances ? (
+                  <p className="profile-fine">
+                    VRChat did not list this group's instances. It shows them to members, so join the group to see where an event of theirs is held.
+                  </p>
+                ) : extra.groupInstances.length === 0 ? (
+                  <p className="profile-fine">
+                    No instances open right now that you can see. An event marked "On now" says nothing about where it is: the group opens an instance for it, and VRChat
+                    lists that instance to the group's members. If you are not one, join the group, or follow the event and wait for the group's invite.
+                  </p>
                 ) : (
                   <ul className="card-grid">
                     {extra.groupInstances.map((i) => {

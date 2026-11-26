@@ -207,6 +207,11 @@ const demoBackups: Array<{ name: string; path: string; bytes: number }> = [];
 
 const demoWaiting: Array<{ location: string; worldName: string; since: number }> = [];
 
+const demoLines: Record<"message" | "request", string[]> = {
+  message: ["Come hang out with me!", "It is a blast here, come over", "Join me before I have to go", "Meet me here?", "I am going somewhere really neat, come along", "We need one more for a game", "The stream is starting", "Dance floor is open", "Quiet corner, come talk", "Bring the others", "Last call for tonight", "New world, you have to see this"],
+  request: ["Can I join you?", "May I come over?", "Room for one more?", "I am bored, can I join?", "Can I come say hi?", "Invite me when you can", "I have something to show you", "Is this a good time?", "Let me in, I brought snacks", "Can I watch too?", "Got a minute?", "Coming to you if that is fine"],
+};
+
 type Handler = (payload: never) => void;
 const handlers = new Map<string, Set<Handler>>();
 function emit<K extends keyof LiveEvents>(name: K, payload: LiveEvents[K]) {
@@ -322,6 +327,38 @@ export const demoBackend: Backend = {
     return { done: people.length, total: people.length, ended: "done", problem: "" };
   },
   async stopMutuals() {},
+  async inviteMessages(kind) {
+    return demoLines[kind].map((message, slot) => ({ slot, message, canBeUpdated: slot !== 2, remainingCooldownMinutes: slot === 2 ? 41 : 0 }));
+  },
+  async setInviteMessage(kind, slot, text) {
+    await wait(250);
+    demoLines[kind][slot] = text;
+    return demoLines[kind].map((message, at) => ({ slot: at, message, canBeUpdated: at !== slot && at !== 2, remainingCooldownMinutes: at === slot ? 60 : at === 2 ? 41 : 0 }));
+  },
+  async updateProfile() {
+    await wait(300);
+  },
+  async myCosmetics() {
+    return {};
+  },
+  async updateLook() {
+    await wait(300);
+  },
+  async updateLanguages() {
+    await wait(200);
+  },
+  async moderationsFor() {
+    return ["muteChat"];
+  },
+  async myGroups() {
+    return [
+      { groupId: "grp_demo", name: "Night Owls", iconUrl: "" },
+      { groupId: "grp_demo_2", name: "Arcade High Scores", iconUrl: "" },
+    ];
+  },
+  async inviteToGroup() {
+    await wait(250);
+  },
   async waiting() {
     return demoWaiting.map((w) => ({ location: w.location, worldName: w.worldName, minutes: Math.floor((Date.now() - w.since) / 60000) }));
   },
@@ -491,6 +528,10 @@ export const demoBackend: Backend = {
         currentAvatarName: "Sunset Fox",
         currentAvatarAuthorName: "Rook",
         bio: `${f.displayName} likes quiet worlds, long sunsets and bad puns.`,
+        backgroundType: "texture",
+        backgroundTextureId: "filigree",
+        bioLinks: ["https://example.test/" + f.displayName.toLowerCase().replace(/\W+/g, "")],
+        pronouns: "they/them",
         badges: [{ badgeId: "bdg_1", badgeName: "Early supporter", badgeDescription: "Was here early", badgeImageUrl: "" }],
         languages: ["eng", "spa"],
         hasVrcPlus: true,
@@ -636,7 +677,7 @@ export const demoBackend: Backend = {
     if (which !== "discover" && month !== `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`) return { events: [], more: false };
     const at = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
     const all = [
-      { id: "cal_demo_1", groupId: "grp_demo", groupName: "Night Owls", title: "Pier sunset hangout", description: "Bring a blanket. We sit on the pier until the sun is gone, then move to the arcade.", category: "hangout", access: "public", startsAt: at(0.4), endsAt: at(2.4), image: "", interested: 41, friends: 3, featured: false },
+      { id: "cal_demo_1", groupId: "grp_demo", groupName: "Night Owls", title: "Pier sunset hangout", description: "Bring a blanket. We sit on the pier until the sun is gone, then move to the arcade.", category: "hangout", access: "public", startsAt: at(-0.4), endsAt: at(1.6), image: "", interested: 41, friends: 3, featured: false },
       { id: "cal_demo_2", groupId: "grp_demo", groupName: "Night Owls", title: "Friday dance night", description: "Three DJs, two rooms.", category: "music", access: "group", startsAt: at(26), endsAt: at(30), image: "", interested: 128, friends: 5, featured: true },
       { id: "cal_demo_3", groupId: "grp_demo_2", groupName: "Arcade High Scores", title: "High score tournament, round 2", description: "", category: "gaming", access: "public", startsAt: at(74), endsAt: at(77), image: "", interested: 9, friends: 0, featured: false },
       { id: "cal_demo_4", groupId: "grp_demo_2", groupName: "Arcade High Scores", title: "Last week's finals", description: "", category: "gaming", access: "public", startsAt: at(-50), endsAt: at(-47), image: "", interested: 30, friends: 1, featured: false },
@@ -663,7 +704,7 @@ export const demoBackend: Backend = {
     await wait(250);
     const at = demoBlocked.findIndex((m) => m.userId === userId && m.kind === kind);
     if (at >= 0) demoBlocked.splice(at, 1);
-    if (on) demoBlocked.unshift({ kind, userId, name: "Someone", at: new Date().toISOString() });
+    if (on && (kind === "block" || kind === "mute")) demoBlocked.unshift({ kind, userId, name: "Someone", at: new Date().toISOString() });
   },
   async friendStatus() {
     return { isFriend: false, outgoingRequest: false, incomingRequest: false };
@@ -772,7 +813,7 @@ export const demoBackend: Backend = {
     const mine = userId === "usr_demo_me";
     if (part === "mutualFriends") return people.slice(3, 6).map((p) => ({ id: p.id, displayName: p.displayName }));
     if (part === "mutualGroups") return [{ groupId: "grp_demo_1", name: "Night Owls", memberCount: 412 }];
-    if (part === "groups") return ["Night Owls", "Pier Regulars", "Arcade High Scores"].map((n, i) => ({ groupId: `grp_demo_${i + 1}`, name: n, memberCount: 412 * (i + 1) }));
+    if (part === "groups") return ["Night Owls", "Pier Regulars", "Arcade High Scores", "Rainy Attic Crew", "Mirror Dwellers", "Sunset Chasers", "Basement Builders", "Quiet Corner", "Dance Floor Union"].map((n, i) => ({ groupId: `grp_demo_${i + 1}`, name: n, memberCount: [412, 1380, 87, 2210, 640, 59, 1745, 318, 903][i] }));
     if (part === "represented") return { groupId: "grp_demo_1", name: "Night Owls", memberCount: 412 };
     if (part === "worlds" || part === "favoriteWorlds") return worlds.slice(0, part === "worlds" ? (mine ? 2 : 1) : 3).map((w, i) => ({ id: w.id, name: w.name, authorName: "Rook", visits: 12840, occupants: 4, favorites: 310, releaseStatus: i ? "private" : "public", updated_at: ago(60 * 24 * (i + 2)) }));
     if (part === "avatars") return ["Robot", "Fox"].map((n, i) => ({ id: `avtr_demo_${n}`, name: mine ? `My ${n}` : n, releaseStatus: mine && i ? "private" : "public", performance: { pc_rating: "Good", android_rating: "Medium" } }));

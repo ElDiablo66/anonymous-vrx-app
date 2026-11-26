@@ -397,10 +397,10 @@ async fn instance_count_and_invites_use_the_right_addresses() {
     hub.invite_myself(location).await.unwrap();
     assert!(matches!(hub.invite_myself("private").await, Err(AppError::CannotDo(_))));
     // Only people on the friend list can be asked.
-    assert!(matches!(hub.request_invite("usr_0").await, Err(AppError::CannotDo(_))));
+    assert!(matches!(hub.request_invite("usr_0", None).await, Err(AppError::CannotDo(_))));
     let me = json!({ "id": "usr_me", "onlineFriends": ["usr_0"], "activeFriends": [], "offlineFriends": [] });
     hub.sync_friends(Some(me)).await.unwrap();
-    hub.request_invite("usr_0").await.unwrap();
+    hub.request_invite("usr_0", None).await.unwrap();
 }
 
 #[tokio::test]
@@ -640,7 +640,7 @@ async fn blocks_and_mutes_are_listed_set_and_taken_back() {
 
     assert!(matches!(hub.set_moderation("usr_me", "block", true).await, Err(AppError::CannotDo(_))));
     assert!(matches!(hub.set_moderation("avtr_1", "block", true).await, Err(AppError::CannotDo(_))));
-    assert!(matches!(hub.set_moderation("usr_5", "hideAvatar", true).await, Err(AppError::CannotDo(_))));
+    assert!(matches!(hub.set_moderation("usr_5", "report", true).await, Err(AppError::CannotDo(_))));
     hub.set_moderation("usr_5", "block", true).await.unwrap();
     hub.set_moderation("usr_2", "mute", false).await.unwrap();
     // A change empties the memory, so the list is asked for again.
@@ -748,13 +748,13 @@ async fn boop_and_picture() {
     let api = Arc::new(client(&server));
     api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
     let hub = Hub::new(api, std::env::temp_dir(), Arc::new(|_, _| {}), false, None);
-    hub.boop("usr_1").await.unwrap();
+    hub.boop("usr_1", None).await.unwrap();
     // Friend requests and group names are checked before anything is sent.
     assert!(matches!(hub.friend_action("avtr_1", "add").await, Err(AppError::CannotDo(_))));
     assert!(matches!(hub.friend_action("usr_1", "poke").await, Err(AppError::CannotDo(_))));
     assert!(matches!(hub.rename_favorite_group("avatar", "avatars1", "  ").await, Err(AppError::CannotDo(_))));
     assert!(matches!(hub.rename_favorite_group("avatar", "avatars1", "Mine").await, Err(AppError::NotSignedIn)));
-    assert!(matches!(hub.boop("avtr_1").await, Err(AppError::CannotDo(_))));
+    assert!(matches!(hub.boop("avtr_1", None).await, Err(AppError::CannotDo(_))));
     let (kind, bytes) = hub.picture(&format!("{}/pic.png", elsewhere.uri())).await.unwrap();
     assert_eq!((kind.as_str(), bytes.len()), ("image/png", 3));
     let (kind, bytes) = hub.picture(&format!("{}/file/photo", server.uri())).await.unwrap();
@@ -804,7 +804,7 @@ async fn search_asks_the_right_addresses() {
     let worlds = hub.search_worlds("pier").await.unwrap();
     assert_eq!(worlds[0].author, "Rook");
     // Strangers cannot be invited from here.
-    assert!(matches!(hub.invite_here("usr_1").await, Err(AppError::CannotDo(_))));
+    assert!(matches!(hub.invite_here("usr_1", None).await, Err(AppError::CannotDo(_))));
 }
 
 #[tokio::test]
@@ -1000,4 +1000,92 @@ async fn a_full_instance_is_watched_until_it_has_room() {
     let room = all.iter().find(|(n, _)| n == "queue:room").expect("room is announced");
     assert_eq!((room.1["worldName"].as_str(), room.1["free"].as_i64()), (Some("Pier"), Some(1)));
     assert!(all.iter().any(|(n, p)| n == "popup" && p["title"] == "Room in Pier"));
+}
+
+#[tokio::test]
+async fn boops_carry_an_emoji_and_invites_a_saved_message() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/users/usr_a/boop")).and(body_json(json!({ "emojiId": "default_heart" }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    Mock::given(method("POST")).and(path("/users/usr_a/boop")).and(body_json(json!({}))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    Mock::given(method("POST")).and(path("/requestInvite/usr_a")).and(body_json(json!({ "requestSlot": 3 }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    Mock::given(method("POST")).and(path("/invite/usr_a")).and(body_json(json!({ "instanceId": "wrld_a:1", "messageSlot": 0 }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/message/usr_me_msg/request")).respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "slot": 0, "message": "Can I join?", "canBeUpdated": true, "remainingCooldownMinutes": 0 }]))).expect(1).mount(&server).await;
+    Mock::given(method("PUT")).and(path("/message/usr_me_msg/message/2")).and(body_json(json!({ "message": "Come over" }))).respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "slot": 2, "message": "Come over" }]))).expect(1).mount(&server).await;
+    Mock::given(method("PUT")).and(path("/users/usr_me_msg")).and(body_json(json!({ "bio": "Hello", "pronouns": "they/them", "bioLinks": ["https://example.org/me"] }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+
+    let api = Arc::new(client(&server));
+    api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
+    api.request_invite("usr_a", Some(3)).await.unwrap();
+    api.invite_user("usr_a", "wrld_a:1", Some(0)).await.unwrap();
+
+    let hub = Hub::new(api, std::env::temp_dir(), Arc::new(|_, _| {}), false, None);
+    hub.begin(json!({ "id": "usr_me_msg", "displayName": "Tester" })).unwrap();
+    hub.boop("usr_a", Some("default_heart")).await.unwrap();
+    hub.boop("usr_a", None).await.unwrap();
+    // Anything that is not one of VRChat's emoji names or a file id never leaves the app.
+    assert!(hub.boop("usr_a", Some("../admin")).await.is_err());
+    assert!(hub.boop("usr_a", Some("default_heart\"}")).await.is_err());
+
+    assert_eq!(hub.invite_messages("request").await.unwrap()[0]["message"], "Can I join?");
+    assert!(hub.invite_messages("response/../x").await.is_err());
+    assert_eq!(hub.set_invite_message("message", 2, " Come over ").await.unwrap()[0]["slot"], 2);
+    assert!(hub.set_invite_message("message", 12, "x").await.is_err());
+    assert!(hub.set_invite_message("message", 1, "").await.is_err());
+    assert!(hub.set_invite_message("message", 1, &"x".repeat(65)).await.is_err());
+
+    hub.update_profile("Hello", " they/them ", &["https://example.org/me".into(), "  ".into()]).await.unwrap();
+    assert!(hub.update_profile("Hello", "", &["javascript:alert(1)".into()]).await.is_err());
+    assert!(hub.update_profile(&"x".repeat(513), "", &[]).await.is_err());
+    assert!(hub.update_profile("line one\nline\u{1b}two", "", &[]).await.is_err());
+    assert!(hub.update_profile("", "", &["https://a.org".into(), "https://b.org".into(), "https://c.org".into(), "https://d.org".into()]).await.is_err());
+}
+
+#[tokio::test]
+async fn profile_look_moderation_and_group_invites_are_checked_before_they_go_out() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT")).and(path("/profile/usr_me_look")).and(body_json(json!({ "backgroundType": "gradient", "backgroundGradientTop": "1a0f35", "backgroundGradientBottom": "FF4FA3", "iconFrame": "" }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    Mock::given(method("POST")).and(path("/users/usr_me_look/removeTags")).and(body_json(json!({ "tags": ["language_deu"] }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    Mock::given(method("POST")).and(path("/users/usr_me_look/addTags")).and(body_json(json!({ "tags": ["language_eng", "language_spa"] }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/user/usr_me_look/cosmetics")).respond_with(ResponseTemplate::new(200).set_body_json(json!([
+        { "itemType": "iconFrame", "templateId": "invt_00000000-0000-0000-0000-000000000001" },
+        { "itemType": "iconFrame", "templateId": "invt_00000000-0000-0000-0000-000000000001" },
+        { "itemType": "nameplateEffect", "templateId": "invt_00000000-0000-0000-0000-000000000002" }
+    ]))).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/auth/user/playermoderations")).respond_with(ResponseTemplate::new(200).set_body_json(json!([
+        { "type": "muteChat", "targetUserId": "usr_a" }, { "type": "hideAvatar", "targetUserId": "usr_a" }, { "type": "block", "targetUserId": "usr_b" }
+    ]))).expect(1).mount(&server).await;
+    Mock::given(method("POST")).and(path("/groups/grp_a/invites")).and(body_json(json!({ "userId": "usr_a", "confirmOverrideBlock": false }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+
+    let api = Arc::new(client(&server));
+    api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
+    let hub = Hub::new(api, std::env::temp_dir(), Arc::new(|_, _| {}), false, None);
+    hub.begin(json!({ "id": "usr_me_look", "displayName": "Tester" })).unwrap();
+
+    hub.update_look(&json!({ "backgroundType": "gradient", "backgroundGradientTop": "1a0f35", "backgroundGradientBottom": "FF4FA3", "iconFrame": "" })).await.unwrap();
+    hub.update_languages(&["eng".into(), "spa".into()], &["deu".into()]).await.unwrap();
+    assert!(hub.update_languages(&["eng".into(), "spa".into(), "deu".into(), "fra".into()], &[]).await.is_err());
+    assert!(hub.update_languages(&["EN".into()], &[]).await.is_err());
+    for bad in [
+        json!({ "languages": ["eng"] }),
+        json!({ "backgroundGradientTop": "#1a0f35" }),
+        json!({ "backgroundTextureId": "../../x" }),
+        json!({ "backgroundType": "inventory" }),
+        json!({ "iconFrame": "invt_x" }),
+        json!({ "bio": "sneaked in" }),
+    ] {
+        assert!(hub.update_look(&bad).await.is_err(), "{bad}");
+    }
+    let mine = hub.my_cosmetics().await.unwrap();
+    assert_eq!(mine["iconFrame"].as_array().unwrap().len(), 1);
+    assert_eq!(mine["nameplateEffect"][0], "invt_00000000-0000-0000-0000-000000000002");
+
+    let kinds = hub.moderations_for("usr_a").await.unwrap();
+    assert_eq!(kinds, json!(["muteChat", "hideAvatar"]));
+    // A second look within the minute asks VRChat nothing.
+    assert_eq!(hub.moderations_for("usr_b").await.unwrap(), json!(["block"]));
+    assert!(hub.set_moderation("usr_a", "report", true).await.is_err());
+
+    hub.invite_to_group("grp_a", "usr_a").await.unwrap();
+    assert!(hub.invite_to_group("grp_a/../x", "usr_a").await.is_err());
+    assert!(hub.invite_to_group("grp_a", "usr_me_look").await.is_err());
 }

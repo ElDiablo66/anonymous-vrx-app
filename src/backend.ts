@@ -211,6 +211,15 @@ export interface Habits {
   seenAt: string[];
 }
 
+/** One of my saved lines that an invite or a request for one can carry. */
+export interface InviteMessage {
+  slot: number;
+  message: string;
+  /** False while VRChat's hour between two changes of this line runs. */
+  canBeUpdated: boolean;
+  remainingCooldownMinutes: number;
+}
+
 /** A full instance I am waiting to get into. */
 export interface Waiting {
   location: string;
@@ -234,6 +243,8 @@ export interface Cosmetic {
   /** Two colours ("aabbcc") a nameplate effect blends between; empty for the others. */
   from: string;
   to: string;
+  name?: string;
+  kind?: string;
 }
 
 /** How one of my worlds stood on one day. */
@@ -502,7 +513,7 @@ export interface Backend {
   /** Picture, rank, marks and status of someone, for a list row. Asked once per person. */
   personBrief(userId: string): Promise<Friend>;
   /** Blocks or mutes someone, or takes it back with `on` false. */
-  setModeration(userId: string, kind: "block" | "mute", on: boolean): Promise<void>;
+  setModeration(userId: string, kind: "block" | "mute" | "muteChat" | "hideAvatar" | "showAvatar" | "interactOff", on: boolean): Promise<void>;
   renameFavoriteGroup(kind: string, group: string, name: string): Promise<void>;
   /** A picture as a data address, fetched with the sign-in when VRChat wants it. */
   loadPicture(url: string): Promise<string>;
@@ -557,7 +568,25 @@ export interface Backend {
   getAutostart(): Promise<boolean>;
   setAutostart(on: boolean): Promise<void>;
   /** Boops a friend. */
-  boop(userId: string): Promise<void>;
+  /** A boop, plain or with one of VRChat's emoji (its name there) or the file id of one of mine. */
+  boop(userId: string, emoji?: string): Promise<void>;
+  /** My twelve saved lines for invites (`message`) or for asking to be invited (`request`). */
+  inviteMessages(kind: "message" | "request"): Promise<InviteMessage[]>;
+  /** Changes one saved line; VRChat allows it once an hour for each. Gives back all twelve. */
+  setInviteMessage(kind: "message" | "request", slot: number, text: string): Promise<InviteMessage[]>;
+  /** Changes my bio, my pronouns and the links on my profile. */
+  updateProfile(bio: string, pronouns: string, links: string[]): Promise<void>;
+  /** The frames, effects and backgrounds I own, by kind. */
+  myCosmetics(): Promise<Record<string, string[]>>;
+  /** Changes my frame, effects or background. Only the keys given change. */
+  updateLook(changes: Record<string, unknown>): Promise<void>;
+  /** Changes the languages on my profile: the codes in `remove` come off, those in `add` go on. */
+  updateLanguages(add: string[], remove: string[]): Promise<void>;
+  /** Everything I set about one person: block, mutes, their avatar shown or hidden, interaction off. */
+  moderationsFor(userId: string): Promise<string[]>;
+  /** My groups, to invite someone into one. */
+  myGroups(): Promise<Array<Record<string, unknown>>>;
+  inviteToGroup(groupId: string, userId: string): Promise<void>;
   /** Saves a picture to Pictures\Anonymous VRX; resolves to the full path. */
   savePicture(url: string, name: string): Promise<string>;
   openPicturesFolder(): Promise<void>;
@@ -572,7 +601,7 @@ export interface Backend {
   /** Switches you to an avatar. */
   wearAvatar(avatarId: string): Promise<void>;
   /** Invites a friend to the world I am in. */
-  inviteHere(userId: string): Promise<void>;
+  inviteHere(userId: string, slot?: number): Promise<void>;
   /** Opens a web link in the browser. */
   openLink(url: string): Promise<void>;
   /** `accept`, `dismiss`, `reply` (with the reply's kind and data) or `inviteBack`. */
@@ -587,7 +616,7 @@ export interface Backend {
   /** Sends you an invite to an instance; it shows up inside VRChat. */
   inviteMyself(location: string): Promise<void>;
   /** Asks a friend to invite you to where they are. */
-  requestInvite(userId: string): Promise<void>;
+  requestInvite(userId: string, slot?: number): Promise<void>;
   /** Makes a new instance of a world and gives back its location. `access`: public, friendsPlus, friends, invitePlus or invite. */
   createInstance(worldId: string, access: string, region: string): Promise<string>;
   /** Starts VRChat in that instance, or moves the running game there. Resolves to what was done. */
@@ -743,7 +772,26 @@ const desktop: Backend = {
   addFavorite: (kind, id, group) => invoke("add_favorite", { kind, id, group }),
   removeFavorites: (entryIds) => invoke("remove_favorites", { entryIds }),
   checkFavorites: (kind) => invoke("check_favorites", { kind }),
-  boop: (userId) => invoke("boop", { userId }),
+  boop: (userId, emoji) => invoke("boop", { userId, emoji: emoji ?? null }),
+  inviteMessages: (kind) => invoke("get_invite_messages", { kind }),
+  setInviteMessage: (kind, slot, text) => invoke("set_invite_message", { kind, slot, text }),
+  myCosmetics: () => invoke("get_my_cosmetics"),
+  updateLook: async (changes) => {
+    await invoke("update_look", { changes });
+    forget("profile:");
+  },
+  updateLanguages: async (add, remove) => {
+    await invoke("update_languages", { add, remove });
+    forget("profile:");
+  },
+  moderationsFor: (userId) => invoke("get_moderations_for", { userId }),
+  myGroups: () => invoke("get_my_groups"),
+  inviteToGroup: (groupId, userId) => invoke("invite_to_group", { groupId, userId }),
+  updateProfile: async (bio, pronouns, links) => {
+    await invoke("update_profile", { bio, pronouns, links });
+    // My own profile is kept a minute; what was just saved must not be read back as it was before.
+    forget("profile:");
+  },
   setAlerts: (alerts) => invoke("set_alerts", { alerts }),
   setGameWatch: (watch) => invoke("set_game_watch", { watch }),
   getAutostart: () => invoke("get_autostart"),
@@ -778,7 +826,7 @@ const desktop: Backend = {
   searchWorlds: (query) => invoke("search_worlds", { query }),
   searchAvatars: (provider, query) => invoke("search_avatars", { provider, query }),
   wearAvatar: (avatarId) => invoke("wear_avatar", { avatarId }),
-  inviteHere: (userId) => invoke("invite_here", { userId }),
+  inviteHere: (userId, slot) => invoke("invite_here", { userId, slot: slot ?? null }),
   openLink: (url) => invoke("open_link", { url }),
   noticeAction: (id, action, replyKind, replyData) =>
     invoke("notice_action", { id, action, replyKind: replyKind ?? null, replyData: replyData ?? null }),
@@ -795,7 +843,7 @@ const desktop: Backend = {
   wantWorld: (worldId) => invoke("want_world", { worldId }),
   instances: () => invoke("get_instances"),
   inviteMyself: (location) => invoke("invite_myself", { location }),
-  requestInvite: (userId) => invoke("request_invite", { userId }),
+  requestInvite: (userId, slot) => invoke("request_invite", { userId, slot: slot ?? null }),
   createInstance: (worldId, access, region) => invoke("create_instance", { worldId, access, region }),
   openJoinPage: (location) => invoke("open_join_page", { location }),
   launchInstance: (location, mode) => invoke("launch_instance", { location, mode }),

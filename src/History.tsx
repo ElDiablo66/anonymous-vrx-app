@@ -225,12 +225,12 @@ const historyTabs: Array<[HistoryTab, string]> = [
   ["worlds", "Worlds"],
   ["find", "Find"],
   ["photos", "Photos"],
-  ["avatars", "Avatars"],
+  ["avatars", "Wardrobe"],
   ["feed", "Friend activity"],
 ];
 
 export function History(props: HistoryProps) {
-  const [tab, setTab] = useState<HistoryTab>(() => (backend.demo && new URLSearchParams(location.search).get("tab") === "find" ? "find" : "worlds"));
+  const [tab, setTab] = useState<HistoryTab>(() => (backend.demo && new URLSearchParams(location.search).get("tab") === "find" ? "find" : backend.demo && new URLSearchParams(location.search).get("tab") === "wardrobe" ? "avatars" : "worlds"));
   return (
     <div className="table-wrap">
       <div className="tabs" role="tablist" aria-label="History">

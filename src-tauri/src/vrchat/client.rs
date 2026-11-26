@@ -442,9 +442,30 @@ impl ApiClient {
     }
 
     /// Boops a friend, the small nudge VRChat shows as a notification.
-    pub async fn boop(&self, user_id: &str) -> AppResult<()> {
+    /// `emoji` is one of VRChat's own emoji names or the file id of one I uploaded there.
+    pub async fn boop(&self, user_id: &str, emoji: Option<&str>) -> AppResult<()> {
         let path = format!("/users/{}/boop", Self::part(user_id));
-        self.act(Method::POST, path, Some(serde_json::json!({}))).await
+        let body = match emoji {
+            Some(id) => serde_json::json!({ "emojiId": id }),
+            None => serde_json::json!({}),
+        };
+        self.act(Method::POST, path, Some(body)).await
+    }
+
+    /// My twelve saved messages of one kind: `message` goes with an invite, `request` with asking for one.
+    pub async fn invite_messages(&self, user_id: &str, kind: &str) -> AppResult<Value> {
+        self.read(&format!("/message/{}/{}", Self::part(user_id), Self::part(kind))).await
+    }
+
+    /// Changes the text of one saved message. VRChat lets a slot change once an hour and
+    /// answers with all twelve as they now stand.
+    pub async fn set_invite_message(&self, user_id: &str, kind: &str, slot: u8, text: &str) -> AppResult<Value> {
+        let path = format!("/message/{}/{}/{}", Self::part(user_id), Self::part(kind), slot);
+        let (status, body) = self.send(Method::PUT, &path, None, Some(&serde_json::json!({ "message": text }))).await?;
+        if !status.is_success() {
+            return Err(Self::api_error(status, &body));
+        }
+        Ok(body)
     }
 
 
@@ -491,6 +512,24 @@ impl ApiClient {
     /// Blocks or mutes someone. `kind` is VRChat's own word, `block` or `mute`.
     pub async fn moderate(&self, user_id: &str, kind: &str) -> AppResult<()> {
         self.act(Method::POST, "/auth/user/playermoderations".into(), Some(serde_json::json!({ "moderated": user_id, "type": kind }))).await
+    }
+
+    /// Writes part of my profile record: languages, the frame, effects and background. Only the
+    /// keys in `body` change.
+    pub async fn update_profile_record(&self, user_id: &str, body: Value) -> AppResult<()> {
+        self.act(Method::PUT, format!("/profile/{}", Self::part(user_id)), Some(body)).await
+    }
+
+    /// Adds tags to my account (`add`) or takes them off. Languages live here as `language_xxx`.
+    pub async fn change_tags(&self, user_id: &str, add: bool, tags: &[String]) -> AppResult<()> {
+        let path = format!("/users/{}/{}", Self::part(user_id), if add { "addTags" } else { "removeTags" });
+        self.act(Method::POST, path, Some(serde_json::json!({ "tags": tags }))).await
+    }
+
+    /// Invites someone into one of my groups.
+    pub async fn invite_to_group(&self, group_id: &str, user_id: &str) -> AppResult<()> {
+        let path = format!("/groups/{}/invites", Self::part(group_id));
+        self.act(Method::POST, path, Some(serde_json::json!({ "userId": user_id, "confirmOverrideBlock": false }))).await
     }
 
     /// Takes a block or a mute back.
@@ -547,9 +586,12 @@ impl ApiClient {
     }
 
     /// Invites a user to the given instance.
-    pub async fn invite_user(&self, user_id: &str, location: &str) -> AppResult<()> {
+    pub async fn invite_user(&self, user_id: &str, location: &str, slot: Option<u8>) -> AppResult<()> {
         let path = format!("/invite/{}", Self::part(user_id));
-        let body = serde_json::json!({ "instanceId": location });
+        let mut body = serde_json::json!({ "instanceId": location });
+        if let Some(slot) = slot {
+            body["messageSlot"] = serde_json::json!(slot);
+        }
         self.act(Method::POST, path, Some(body)).await
     }
 
@@ -721,9 +763,13 @@ impl ApiClient {
     }
 
     /// Asks a user to invite the signed-in user to where they are.
-    pub async fn request_invite(&self, user_id: &str) -> AppResult<()> {
+    pub async fn request_invite(&self, user_id: &str, slot: Option<u8>) -> AppResult<()> {
         let path = format!("/requestInvite/{}", Self::part(user_id));
-        self.act(Method::POST, path, Some(serde_json::json!({}))).await
+        let body = match slot {
+            Some(slot) => serde_json::json!({ "requestSlot": slot }),
+            None => serde_json::json!({}),
+        };
+        self.act(Method::POST, path, Some(body)).await
     }
 
     pub async fn world(&self, world_id: &str) -> AppResult<Value> {

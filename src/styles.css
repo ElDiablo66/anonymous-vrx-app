@@ -9755,3 +9755,1721 @@ body .town-face {
 .habits .habit-fine + h4 {
   margin-top: 14px;
 }
+
+/* Two flags that were missing. Arabic has no one country, so it wears the green of the Arab League's flag. */
+.flag-ara {
+  background: #007a3d;
+}
+
+.flag-heb {
+  background: linear-gradient(#fff 16%, #0038b8 16% 30%, #fff 30% 70%, #0038b8 70% 84%, #fff 84%);
+}
+
+/* ---------- the rest of VRChat's languages: small flags, drawn plainly ---------- */
+.flag-afr {
+  background: linear-gradient(#e03c31 0 33%, #fff 33% 39%, #007749 39% 61%, #fff 61% 67%, #001489 67%);
+}
+.flag-asf,
+.flag-nzs {
+  background:
+    linear-gradient(90deg, transparent 40%, #c8102e 40% 60%, transparent 60%) 0 0 / 46% 50% no-repeat,
+    linear-gradient(transparent 36%, #c8102e 36% 64%, transparent 64%) 0 0 / 46% 50% no-repeat,
+    linear-gradient(#fff, #fff) 0 0 / 46% 50% no-repeat,
+    #012169;
+}
+.flag-nzs {
+  background-color: #00247d;
+}
+.flag-ben {
+  background: radial-gradient(circle at 45% 50%, #f42a41 0 30%, transparent 32%), #006a4e;
+}
+.flag-bfi {
+  background:
+    linear-gradient(90deg, transparent 43%, #c8102e 43% 57%, transparent 57%),
+    linear-gradient(transparent 39%, #c8102e 39% 61%, transparent 61%),
+    linear-gradient(90deg, transparent 36%, #fff 36% 64%, transparent 64%),
+    linear-gradient(transparent 29%, #fff 29% 71%, transparent 71%),
+    #012169;
+}
+.flag-bul {
+  background: linear-gradient(#fff 33.3%, #00966e 33.3% 66.6%, #d62612 66.6%);
+}
+.flag-cym {
+  background: linear-gradient(#fff 50%, #00ab39 50%);
+}
+.flag-ell {
+  background:
+    linear-gradient(90deg, transparent 38%, #fff 38% 62%, transparent 62%) 0 0 / 40% 56% no-repeat,
+    linear-gradient(transparent 38%, #fff 38% 62%, transparent 62%) 0 0 / 40% 56% no-repeat,
+    linear-gradient(#0d5eaf, #0d5eaf) 0 0 / 40% 56% no-repeat,
+    repeating-linear-gradient(#0d5eaf 0 1.34px, #fff 1.34px 2.68px);
+}
+.flag-epo {
+  background: linear-gradient(#fff, #fff) 0 0 / 40% 55% no-repeat, #009900;
+}
+.flag-est {
+  background: linear-gradient(#0072ce 33.3%, #000 33.3% 66.6%, #fff 66.6%);
+}
+.flag-fil {
+  background: linear-gradient(118deg, #fff 0 30%, transparent 30%), linear-gradient(#0038a8 50%, #ce1126 50%);
+}
+.flag-gla {
+  background:
+    linear-gradient(to top right, transparent 43%, #fff 43% 57%, transparent 57%),
+    linear-gradient(to bottom right, transparent 43%, #fff 43% 57%, transparent 57%),
+    #005eb8;
+}
+.flag-gle {
+  background: linear-gradient(90deg, #169b62 33.3%, #fff 33.3% 66.6%, #ff883e 66.6%);
+}
+.flag-hin {
+  background: radial-gradient(circle, #000080 0 12%, transparent 14%), linear-gradient(#ff9933 33.3%, #fff 33.3% 66.6%, #138808 66.6%);
+}
+.flag-hrv {
+  background: linear-gradient(#ff0000 33.3%, #fff 33.3% 66.6%, #171796 66.6%);
+}
+.flag-hye {
+  background: linear-gradient(#d90012 33.3%, #0033a0 33.3% 66.6%, #f2a800 66.6%);
+}
+.flag-isl {
+  background:
+    linear-gradient(90deg, transparent 30%, #dc1e35 30% 40%, transparent 40%),
+    linear-gradient(transparent 42%, #dc1e35 42% 58%, transparent 58%),
+    linear-gradient(90deg, transparent 25%, #fff 25% 45%, transparent 45%),
+    linear-gradient(transparent 34%, #fff 34% 66%, transparent 66%),
+    #02529c;
+}
+.flag-lav {
+  background: linear-gradient(#9e3039 40%, #fff 40% 60%, #9e3039 60%);
+}
+.flag-lit {
+  background: linear-gradient(#fdb913 33.3%, #006a44 33.3% 66.6%, #c1272d 66.6%);
+}
+.flag-ltz {
+  background: linear-gradient(#ed2939 33.3%, #fff 33.3% 66.6%, #00a1de 66.6%);
+}
+.flag-mkd {
+  background: radial-gradient(circle, #f8e92e 0 24%, transparent 26%), #d20000;
+}
+.flag-mlt {
+  background: linear-gradient(90deg, #fff 50%, #cf142b 50%);
+}
+.flag-msa {
+  background: linear-gradient(#010066, #010066) 0 0 / 46% 54% no-repeat, repeating-linear-gradient(#cc0001 0 1.7px, #fff 1.7px 3.4px);
+}
+.flag-slk,
+.flag-slv {
+  background: linear-gradient(#fff 33.3%, #0b4ea2 33.3% 66.6%, #ee1c25 66.6%);
+}
+.flag-yue {
+  background: radial-gradient(circle, #fff 0 22%, transparent 24%), #de2910;
+}
+
+/* ---------- events: where one that is on right now is held ---------- */
+.event-place,
+.event-places {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.event-place-note {
+  max-width: 62ch;
+  color: var(--text-soft);
+  font: 500 13px/1.45 var(--body);
+}
+
+.event-places li {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--online) 8%, rgb(0 0 0 / 0.22));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--online) 38%, transparent);
+}
+
+.event-place-text {
+  display: grid;
+  min-width: 0;
+  margin-right: 6px;
+}
+
+.event-place-text b {
+  max-width: 34ch;
+  overflow: hidden;
+  font: 600 14px/1.3 var(--body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.event-place-text small {
+  color: var(--text-soft);
+  font: 500 12.5px/1.3 var(--body);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-places {
+  display: grid;
+  gap: 8px;
+}
+
+.event-places li {
+  display: flex;
+  max-width: 560px;
+}
+
+.event-place-text {
+  flex: 1;
+}
+
+.event-place-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- wardrobe: my worn avatars as a board ---------- */
+.wardrobe-tools {
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+.wardrobe-tools input[type="search"] {
+  flex: 1 1 240px;
+  max-width: 340px;
+  height: var(--btn-h);
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: var(--btn-radius);
+  background: rgb(0 0 0 / 0.25);
+  color: var(--text);
+  font: 500 13.5px/1 var(--body);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.wardrobe-tools input[type="search"]:focus-visible {
+  border-color: var(--teal);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 26%, transparent);
+}
+
+.wardrobe-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0;
+}
+
+.wardrobe-tags button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 9px;
+  background: none;
+  color: var(--text-soft);
+  font: 500 12.5px/1 var(--body);
+  cursor: pointer;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.wardrobe-tags button:hover {
+  border-color: var(--text-soft);
+  color: var(--text);
+}
+
+.wardrobe-tags button.on {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 14%, transparent);
+  color: var(--text);
+}
+
+.wardrobe-tags small {
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.wardrobe-tags .wardrobe-clear {
+  border-color: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.wardrobe {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  gap: 14px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wardrobe > li {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 10px;
+  padding: 10px 10px 12px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel) 62%, transparent);
+  box-shadow: var(--card-line);
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.wardrobe > li:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 50%, transparent);
+  transform: translateY(-2px);
+}
+
+.wardrobe > li.wardrobe-on {
+  box-shadow: inset 0 0 0 1px var(--lamp), 0 0 22px color-mix(in srgb, var(--lamp) 24%, transparent);
+}
+
+.wardrobe-pic {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  border: 0;
+  border-radius: 11px;
+  background: rgb(0 0 0 / 0.3) center / cover no-repeat;
+  cursor: pointer;
+}
+
+.wardrobe-pic .mark {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+}
+
+.wardrobe-text {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.wardrobe-text b {
+  overflow: hidden;
+  font: 600 14.5px/1.3 var(--body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wardrobe-text small {
+  color: var(--text-soft);
+  font: 500 12.5px/1.35 var(--body);
+}
+
+.wardrobe-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.wardrobe > li > .tag-editor {
+  grid-column: 1 / -1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wardrobe > li:hover {
+    transform: none;
+  }
+}
+
+/* Hide names and pictures: the wardrobe holds my own avatars, covered like My uploads. */
+:root[data-hide="on"] body :is(.wardrobe-pic, .avatar-history .thumb) {
+  background-image: none !important;
+  background-color: color-mix(in srgb, var(--text) 16%, transparent) !important;
+}
+
+:root[data-hide="on"] body .avatar-history :is(.tile-name, .tile-note) {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  background: linear-gradient(color-mix(in srgb, var(--text) 20%, transparent), color-mix(in srgb, var(--text) 20%, transparent)) no-repeat left center / 100% 72% !important;
+  border-radius: 6px;
+}
+
+:root[data-hide="on"] body .avatar-history :is(.tile-name, .tile-note) * {
+  visibility: hidden !important;
+}
+
+/* A wardrobe tile keeps its width when its tag editor opens. */
+.wardrobe > li {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.wardrobe > li > * {
+  min-width: 0;
+}
+
+.wardrobe .tag-add input {
+  flex: 1 1 90px;
+  width: 0;
+}
+
+/* Arabic: the green flag with its white line of script and sword, as on Saudi Arabia's. */
+.flag-ara {
+  background:
+    linear-gradient(#fff, #fff) 50% 72% / 58% 10% no-repeat,
+    linear-gradient(#fff, #fff) 50% 36% / 46% 22% no-repeat,
+    #006c35;
+}
+
+/* ---------- boop with an emoji, invites with a saved line, my own profile ---------- */
+.dialog.send {
+  width: min(600px, 100%);
+  max-height: min(86vh, 820px);
+  overflow: auto;
+}
+
+.send-sub {
+  margin: 14px 0 8px;
+  color: var(--text-soft);
+  font: 600 12.5px/1.2 var(--body);
+  letter-spacing: 0.01em;
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
+  gap: 6px;
+}
+
+.emoji-grid button {
+  display: grid;
+  height: 44px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.22);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 46%, transparent);
+  font: 22px/1 "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+  cursor: pointer;
+  transition: background-color 0.14s ease, box-shadow 0.14s ease, transform 0.12s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.emoji-grid button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--lamp) 14%, rgb(0 0 0 / 0.22));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lamp) 60%, transparent);
+  transform: scale(1.12);
+}
+
+.emoji-grid button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.emoji-grid button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.emoji-recent {
+  grid-template-columns: repeat(6, 44px);
+}
+
+.dialog .send-fine {
+  margin: 12px 0 0;
+  color: var(--text-soft);
+  font: 500 12.5px/1.45 var(--body);
+}
+
+.send-kinds {
+  margin: 4px 0 12px;
+}
+
+.send-lines {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.send-lines li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.2);
+}
+
+.send-lines li:hover {
+  background: rgb(255 255 255 / 0.05);
+}
+
+.send-line {
+  grid-column: 1 / 3;
+  overflow: hidden;
+  font: 500 14px/1.35 var(--body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.send-lines input {
+  min-width: 0;
+  height: var(--btn-h);
+  padding: 0 10px;
+  border: 1px solid var(--teal);
+  border-radius: var(--btn-radius);
+  background: rgb(0 0 0 / 0.3);
+  color: var(--text);
+  font: 500 14px/1 var(--body);
+}
+
+.send-lines small {
+  color: var(--text-soft);
+  font: 500 12px/1 var(--body);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.send-lines .plain {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.profile-edit .status-text {
+  margin-top: 12px;
+}
+
+.profile-edit textarea,
+.profile-edit input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 10px;
+  background: rgb(0 0 0 / 0.25);
+  color: var(--text);
+  font: 500 14px/1.45 var(--body);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.profile-edit textarea {
+  resize: vertical;
+}
+
+.profile-edit :is(textarea, input):focus-visible {
+  border-color: var(--teal);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 26%, transparent);
+}
+
+.edit-links {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.edit-links legend {
+  padding: 0;
+  margin-bottom: 6px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.dialog .send-kinds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.dialog.send .dialog-actions {
+  margin-top: 16px;
+}
+
+/* Hide names and pictures: my own words in the profile editor are covered like my bio elsewhere. */
+:root[data-hide="on"] body .profile-edit :is(textarea, input) {
+  -webkit-text-security: disc;
+}
+
+/* ---------- a profile's own background ---------- */
+.person-window.backed::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: var(--bg) top center / cover no-repeat;
+  opacity: calc(0.35 + var(--tint-strength) * 0.6);
+  pointer-events: none;
+}
+
+.person-window.backed::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgb(19 10 41 / 0.35), rgb(19 10 41 / 0.72) 60%, rgb(19 10 41 / 0.85));
+  pointer-events: none;
+}
+
+.person-window.backed > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Cards on a background keep their text readable without hiding it. */
+.person-window.backed :is(.profile-body section, .profile-side) {
+  background-color: color-mix(in srgb, var(--dusk-deep) 72%, transparent);
+  backdrop-filter: blur(10px) saturate(1.1);
+}
+
+
+/* ---------- the actions button beside a person's name ---------- */
+.profile-quick {
+  display: flex;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 10px 0 2px;
+}
+
+.pmenu-wrap {
+  position: relative;
+}
+
+.pmenu-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 10px;
+  background: rgb(0 0 0 / 0.28);
+  color: var(--text);
+  font: 700 13px/1 var(--body);
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pmenu-button::after {
+  content: "Actions";
+  letter-spacing: 0;
+  font-weight: 600;
+}
+
+.pmenu-button:hover,
+.pmenu-button[aria-expanded="true"] {
+  border-color: var(--lamp);
+  background: color-mix(in srgb, var(--lamp) 14%, rgb(0 0 0 / 0.28));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--lamp) 28%, transparent);
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.pmenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  display: grid;
+  gap: 4px;
+  width: 300px;
+  max-height: min(70vh, 620px);
+  padding: 10px;
+  overflow: auto;
+  border-radius: 16px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-high) 96%, transparent), var(--dusk-deep));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lamp) 36%, transparent), 0 24px 50px rgb(8 3 20 / 0.6);
+  animation: pmenu-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes pmenu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pmenu {
+    animation: none;
+  }
+}
+
+.pmenu section {
+  display: grid;
+  gap: 2px;
+  padding: 6px 0;
+}
+
+.pmenu section + section {
+  border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.pmenu h4 {
+  margin: 2px 8px 6px;
+  color: var(--lamp-pale);
+  font: italic 700 13px/1 var(--display);
+  letter-spacing: 0.02em;
+}
+
+.pmenu button[role="menuitem"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text);
+  font: 500 13.5px/1.2 var(--body);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.pmenu button[role="menuitem"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--lamp) 16%, transparent);
+}
+
+.pmenu button[role="menuitem"]:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pmenu .pmenu-danger {
+  color: var(--busy);
+}
+
+.pmenu .pmenu-sure {
+  background: color-mix(in srgb, var(--busy) 18%, transparent);
+  font-weight: 700;
+}
+
+.pmenu-seg {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 6px 10px;
+  color: var(--text);
+  font: 500 13.5px/1.2 var(--body);
+}
+
+.pmenu-seg button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 8px;
+  background: none;
+  color: var(--text-soft);
+  font: 600 12px/1 var(--body);
+  cursor: pointer;
+}
+
+.pmenu-seg button.on {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 16%, transparent);
+  color: var(--text);
+}
+
+.pmenu-check {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 34px;
+  padding: 0 8px 0 10px;
+  border-radius: 9px;
+  color: var(--text);
+  font: 500 13.5px/1.2 var(--body);
+  cursor: pointer;
+}
+
+.pmenu-check:hover {
+  background: rgb(255 255 255 / 0.05);
+}
+
+.pmenu-check input[role="switch"] {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 38px;
+  height: 21px;
+  border-radius: 11px;
+  background: var(--line);
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+
+.pmenu-check input[role="switch"]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.18s ease;
+}
+
+.pmenu-check input[role="switch"]:checked {
+  background: var(--lamp);
+}
+
+.pmenu-check input[role="switch"]:checked::after {
+  transform: translateX(17px);
+}
+
+.pmenu-note {
+  margin: 2px 10px 6px;
+  color: var(--text-soft);
+  font: 500 12px/1.4 var(--body);
+}
+
+.pmenu-problem {
+  margin: 4px 6px 2px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--busy) 14%, transparent);
+  color: var(--text);
+  font: 500 12.5px/1.4 var(--body);
+}
+
+.pmenu-groups ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pmenu-groups button[role="menuitem"] {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.pmenu-pic {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.08) center / cover;
+}
+
+.pmenu-group {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pmenu-back {
+  justify-self: start;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-soft);
+  font: 600 12.5px/1 var(--body);
+  cursor: pointer;
+}
+
+.pmenu-back:hover {
+  color: var(--text);
+}
+
+/* ---------- search and order on a profile's long lists ---------- */
+.list-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 14px;
+}
+
+.list-bar input[type="search"] {
+  flex: 1 1 200px;
+  max-width: 280px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 9px;
+  background: rgb(0 0 0 / 0.25);
+  color: var(--text);
+  font: 500 13px/1 var(--body);
+}
+
+.list-bar input[type="search"]:focus-visible {
+  border-color: var(--teal);
+  outline: none;
+}
+
+.list-count {
+  margin-left: auto;
+  color: var(--text-soft);
+  font: 500 12.5px/1 var(--body);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- my profile editor: two parts, a live preview ---------- */
+.dialog.profile-edit {
+  width: min(720px, 100%);
+}
+
+.edit-parts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 4px 0 6px;
+}
+
+.edit-langs {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.edit-langs legend {
+  padding: 0;
+  margin-bottom: 6px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.edit-lang-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.edit-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 12px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--online) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--online) 45%, transparent);
+  font: 600 13px/1.2 var(--body);
+}
+
+.edit-lang button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-soft);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.edit-lang button:hover {
+  background: rgb(255 255 255 / 0.1);
+  color: var(--text);
+}
+
+.edit-langs select {
+  max-width: 280px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 10px;
+  background: rgb(0 0 0 / 0.25);
+  color: var(--text);
+}
+
+.look-preview {
+  position: relative;
+  height: 178px;
+  margin: 8px 0 16px;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--dusk-deep);
+  box-shadow: var(--card-line);
+}
+
+.look-banner {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 96px;
+  background: color-mix(in srgb, var(--panel-high) 80%, transparent) center / cover;
+}
+
+.look-effect {
+  position: absolute;
+  inset: 0;
+  background: center / cover no-repeat;
+}
+
+.look-icon {
+  position: absolute;
+  top: 52px;
+  left: 22px;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: var(--panel) center / cover;
+  box-shadow: 0 0 0 4px var(--dusk-deep);
+}
+
+.look-frame {
+  position: absolute;
+  inset: -16%;
+  background: center / contain no-repeat;
+}
+
+.look-name {
+  position: absolute;
+  left: 122px;
+  right: 18px;
+  bottom: 18px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.35) center / cover;
+  font: italic 700 22px/1.1 var(--display);
+}
+
+.look-row {
+  margin-top: 14px;
+}
+
+.look-row h3 {
+  margin: 0 0 8px;
+  font: italic 700 16px/1.1 var(--display);
+  color: var(--teal);
+}
+
+.look-row h3 small {
+  margin-left: 6px;
+  color: var(--text-soft);
+  font: 500 12px/1 var(--body);
+  font-style: normal;
+}
+
+.look-items,
+.look-textures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.look-textures {
+  max-height: 280px;
+  margin-top: 10px;
+  padding-right: 4px;
+  overflow: auto;
+}
+
+.look-items button,
+.look-textures button {
+  display: grid;
+  gap: 6px;
+  padding: 6px;
+  border: 0;
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.22);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 46%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  transition: box-shadow 0.14s ease, background-color 0.14s ease;
+}
+
+.look-items button:hover,
+.look-textures button:hover {
+  background: rgb(255 255 255 / 0.05);
+}
+
+.look-items button.on,
+.look-textures button.on {
+  background: color-mix(in srgb, var(--lamp) 12%, rgb(0 0 0 / 0.22));
+  box-shadow: inset 0 0 0 2px var(--lamp);
+}
+
+.look-thumb {
+  display: block;
+  aspect-ratio: 1.3;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.06) center / cover no-repeat;
+}
+
+.look-items small,
+.look-textures small {
+  overflow: hidden;
+  color: var(--text-soft);
+  font: 500 11.5px/1.2 var(--body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.look-none {
+  display: grid;
+  aspect-ratio: 1.3;
+  place-items: center;
+  border-radius: 8px;
+  background: repeating-linear-gradient(135deg, rgb(255 255 255 / 0.04) 0 6px, transparent 6px 12px);
+  color: var(--text-soft);
+  font: 600 12px/1 var(--body);
+}
+
+.look-bg-kind {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.look-colours {
+  display: flex;
+  gap: 18px;
+  margin-top: 10px;
+}
+
+.look-colours label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-soft);
+  font: 500 13px/1 var(--body);
+}
+
+.look-colours input[type="color"] {
+  width: 46px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+}
+
+:root[data-hide="on"] body :is(.look-icon, .look-banner) {
+  background-image: none !important;
+}
+
+/* The menu is solid: nothing of the profile behind it shows through its words. */
+.pmenu {
+  background: linear-gradient(180deg, #2c1856, #170b30);
+  backdrop-filter: none;
+}
+
+
+/* =====================================================================
+   Fixes from the audit of the profile pieces
+   ===================================================================== */
+
+/* The actions panel sits on top of the whole window, placed from its button. */
+.pmenu {
+  position: fixed;
+  top: auto;
+  left: auto;
+  z-index: 300;
+  box-sizing: border-box;
+  max-height: none;
+}
+
+.pmenu .pmenu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text);
+  font: 500 13.5px/1.2 var(--body);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.pmenu .pmenu-item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--lamp) 16%, transparent);
+}
+
+.pmenu .pmenu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pmenu .pmenu-item.pmenu-danger {
+  color: var(--busy);
+}
+
+.pmenu .pmenu-item.pmenu-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--busy) 16%, transparent);
+}
+
+.pmenu-confirm {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin: 4px 2px 2px;
+  padding: 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--busy) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--busy) 45%, transparent);
+}
+
+.pmenu-confirm span {
+  grid-column: 1 / -1;
+  color: var(--text);
+  font: 500 12.5px/1.4 var(--body);
+}
+
+.pmenu-confirm button {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font: 600 12.5px/1 var(--body);
+  cursor: pointer;
+}
+
+.pmenu-confirm .pmenu-yes {
+  justify-self: start;
+  border: 0;
+  background: var(--busy);
+  color: #2a0710;
+}
+
+.pmenu-confirm .pmenu-keep {
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  background: none;
+  color: var(--text);
+}
+
+.pmenu-failed {
+  display: grid;
+  gap: 4px;
+}
+
+/* The flat themes draw the panel and the background's shade in their own colours. */
+:root:is([data-bg="mono"], [data-bg="red"]) .pmenu {
+  background: linear-gradient(180deg, var(--panel-high), var(--dusk-deep));
+}
+
+:root:is([data-bg="mono"], [data-bg="red"]) :is(.person-window, .look-preview).backed::after {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--dusk-deep) 35%, transparent),
+    color-mix(in srgb, var(--dusk-deep) 72%, transparent) 60%,
+    color-mix(in srgb, var(--dusk-deep) 85%, transparent)
+  );
+}
+
+/* An on switch keeps a knob you can see when the accent is white. */
+.pmenu-check input[role="switch"]:checked::after {
+  background: var(--go-text, var(--text));
+}
+
+/* Long-list bar: the order buttons line up with the search box. */
+.list-bar .filters {
+  padding: 0;
+}
+
+.list-bar .filters button {
+  min-height: 32px;
+}
+
+:root[data-hide="on"] body .list-bar input[type="search"] {
+  -webkit-text-security: disc;
+}
+
+/* The editor's look part: a fieldset that looks like the plain block it replaced. */
+.edit-look {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.edit-look:disabled :is(button, input) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.edit-langs select {
+  height: 40px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 14px;
+}
+
+/* The preview shows the background at the strength a profile window uses. */
+.look-preview.backed::before,
+.look-preview.backed::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.look-preview.backed::before {
+  background: var(--bg) top center / cover no-repeat;
+  opacity: calc(0.35 + var(--tint-strength) * 0.6);
+}
+
+.look-preview.backed::after {
+  background: linear-gradient(180deg, rgb(19 10 41 / 0.35), rgb(19 10 41 / 0.72) 60%, rgb(19 10 41 / 0.85));
+}
+
+.look-preview.backed > * {
+  z-index: 1;
+}
+
+img.look-thumb {
+  width: 100%;
+  object-fit: cover;
+}
+
+.tab-warn {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  margin-left: 8px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ask);
+  color: #1a0f35;
+  font: 800 12px/1 var(--body);
+}
+
+.linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.edit-leave {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.edit-leave span {
+  flex: 1 1 260px;
+  color: var(--text);
+  font: 500 13.5px/1.4 var(--body);
+}
+
+/* The little arrow on More turns over while the panel is open. */
+.pmenu-chev {
+  font-size: 11px;
+  opacity: 0.8;
+  transition: transform 0.18s ease;
+}
+
+.pmenu-button[aria-expanded="true"] .pmenu-chev {
+  transform: rotate(180deg);
+}
+
+/* A group in the invite list: its picture, then its name, both from the left. */
+.pmenu .pmenu-item.pmenu-groupitem {
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 42px;
+}
+
+.pmenu-groupitem .pmenu-pic {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.pmenu-groupitem .pmenu-group {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-weight: 600;
+}
+
+.pmenu-groups h4 {
+  margin-top: 6px;
+}
+
+/* ---------- My status ---------- */
+.dialog.my-status {
+  width: min(560px, 100%);
+  padding: 24px 26px 20px;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent),
+    0 0 60px color-mix(in srgb, var(--c) 16%, transparent),
+    0 24px 60px rgb(8 3 20 / 0.55);
+  transition: box-shadow 0.25s ease;
+}
+
+.my-status-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.my-status-head .avatar {
+  box-shadow: 0 0 0 3px var(--c);
+  border-radius: 50%;
+  transition: box-shadow 0.25s ease;
+}
+
+.dialog.my-status h2 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.my-status-now {
+  margin: 6px 0 0;
+  color: var(--text-soft);
+  font: 500 13.5px/1.35 var(--body);
+}
+
+.my-status-now b {
+  font-weight: 700;
+}
+
+.my-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.my-status-grid button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 62px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 14px;
+  background: rgb(0 0 0 / 0.22);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 55%, transparent);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.16s ease, box-shadow 0.16s ease, transform 0.1s ease;
+}
+
+.my-status-grid button:hover {
+  background: color-mix(in srgb, var(--c) 8%, rgb(0 0 0 / 0.22));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent);
+}
+
+.my-status-grid button:active {
+  transform: translateY(1px);
+}
+
+.my-status-grid button.on {
+  background: color-mix(in srgb, var(--c) 16%, rgb(0 0 0 / 0.22));
+  box-shadow: inset 0 0 0 2px var(--c), 0 0 22px color-mix(in srgb, var(--c) 22%, transparent);
+}
+
+.my-status-grid b {
+  display: block;
+  font: 700 15px/1.2 var(--body);
+}
+
+.my-status-grid small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-soft);
+  font: 500 12.5px/1.3 var(--body);
+}
+
+.my-status-dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--c) 70%, transparent);
+}
+
+.my-status-text {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+  color: var(--text-soft);
+  font: 500 13px/1 var(--body);
+}
+
+.my-status-field {
+  position: relative;
+  display: block;
+}
+
+.my-status-field input {
+  width: 100%;
+  height: 44px;
+  padding: 0 72px 0 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.25);
+  color: var(--text);
+  font: 500 15px/1 var(--body);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.my-status-field input:focus-visible {
+  border-color: var(--c);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 25%, transparent);
+}
+
+.my-status-field small {
+  position: absolute;
+  top: 50%;
+  right: 44px;
+  transform: translateY(-50%);
+  color: var(--text-soft);
+  font: 600 12px/1 var(--body);
+  font-variant-numeric: tabular-nums;
+}
+
+.my-status-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-soft);
+  font-size: 18px;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.my-status-clear:hover {
+  background: rgb(255 255 255 / 0.08);
+  color: var(--text);
+}
+
+.my-status-recent {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.my-status-recent > span {
+  margin-right: 4px;
+  color: var(--text-soft);
+  font: 500 12px/1 var(--body);
+}
+
+.my-status-recent button {
+  max-width: 100%;
+  min-height: 28px;
+  padding: 0 11px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 9px;
+  background: none;
+  color: var(--text);
+  font: 500 12.5px/1 var(--body);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.my-status-recent button:hover {
+  border-color: var(--c);
+}
+
+.my-status-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
+}
+
+.my-status-links {
+  display: inline-flex;
+  gap: 16px;
+}
+
+.my-status-links .linkish {
+  color: var(--text-soft);
+  font: 500 13.5px/1 var(--body);
+}
+
+.my-status-links .linkish:hover {
+  color: var(--text);
+}
+
+.my-status-buttons {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.my-status-buttons button {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 11px;
+  background: none;
+  color: var(--text);
+  font: 600 14px/1 var(--body);
+  cursor: pointer;
+}
+
+.my-status-buttons button.go {
+  border: 0;
+  background: var(--go);
+  color: var(--go-text);
+}
+
+.my-status-buttons button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+@media (max-width: 520px) {
+  .my-status-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The profile's tabs, Back and Close share one line at the usual window size. */
+body .person-window .profile-top .tabs {
+  gap: 6px;
+}
+
+body .person-window .profile-top .tabs button {
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+body .person-window .window-nav {
+  flex: none;
+  align-self: start;
+}
+
+/* ---------- "More" sits at the end of a profile's action row, dressed like the row ---------- */
+.wayback .pmenu-wrap {
+  display: inline-flex;
+}
+
+.wayback .pmenu-button {
+  min-height: 0;
+  height: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: none;
+  box-shadow: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  letter-spacing: 0;
+}
+
+.wayback .pmenu-button::after {
+  content: none;
+}
+
+.wayback .pmenu-button:hover,
+.wayback .pmenu-button[aria-expanded="true"] {
+  border-color: var(--lamp);
+  background: color-mix(in srgb, var(--lamp) 12%, transparent);
+  box-shadow: none;
+}
+
+.wayback-more {
+  align-items: center;
+  margin-top: 10px;
+}
+
+.wayback-more > :first-child {
+  margin: 0;
+}
+
+/* Back from the profile editor to My status. */
+.edit-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: -6px 0 10px -4px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-soft);
+  font: 600 13px/1 var(--body);
+  cursor: pointer;
+  transition: color 0.14s ease, background-color 0.14s ease;
+}
+
+.edit-back:hover {
+  background: rgb(255 255 255 / 0.06);
+  color: var(--text);
+}
+
+/* The More panel sits outside the profile window, so hide mode covers its group pictures here. */
+:root[data-hide="on"] body .pmenu [style*="background-image"] {
+  background-image: none !important;
+  background-color: color-mix(in srgb, var(--text) 16%, transparent) !important;
+}
+
+/* The clear button keeps its place while pressed, so a click on its middle lands on it. */
+.my-status-clear:not(:disabled):active {
+  transform: translateY(calc(-50% + 1px));
+}
+
+/* Hide mode: my status text in the box shows as dots, and its length is not told. */
+:root[data-hide="on"] body .my-status-field input {
+  -webkit-text-security: disc;
+}
+
+:root[data-hide="on"] body .my-status-field small {
+  visibility: hidden;
+}
+
+/* A smaller window: tabs get tighter, and wrap to a second line before any is cut off. */
+@media (max-width: 1100px) {
+  body .person-window .profile-top .tabs {
+    flex-wrap: wrap;
+    overflow: visible;
+    gap: 4px;
+  }
+
+  body .person-window .profile-top .tabs button {
+    padding: 0 8px;
+  }
+}

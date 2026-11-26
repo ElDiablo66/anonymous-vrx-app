@@ -146,8 +146,60 @@ async fn check_favorites(hub: State<'_, Arc<Hub>>, kind: String) -> AppResult<se
 }
 
 #[tauri::command]
-async fn boop(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<()> {
-    hub.boop(&user_id).await
+async fn boop(hub: State<'_, Arc<Hub>>, user_id: String, emoji: Option<String>) -> AppResult<()> {
+    hub.boop(&user_id, emoji.as_deref()).await
+}
+
+/// My twelve saved messages for invites, or for asking to be invited.
+#[tauri::command]
+async fn get_invite_messages(hub: State<'_, Arc<Hub>>, kind: String) -> AppResult<serde_json::Value> {
+    hub.invite_messages(&kind).await
+}
+
+/// Changes one saved message. VRChat allows it once an hour for each slot.
+#[tauri::command]
+async fn set_invite_message(hub: State<'_, Arc<Hub>>, kind: String, slot: u8, text: String) -> AppResult<serde_json::Value> {
+    hub.set_invite_message(&kind, slot, &text).await
+}
+
+/// The frames, effects and backgrounds I own.
+#[tauri::command]
+async fn get_my_cosmetics(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
+    hub.my_cosmetics().await
+}
+
+/// Changes my languages, frame, effects and background. Only the keys given change.
+#[tauri::command]
+async fn update_look(hub: State<'_, Arc<Hub>>, changes: serde_json::Value) -> AppResult<()> {
+    hub.update_look(&changes).await
+}
+
+/// Changes my languages: the ones in `remove` come off, the ones in `add` go on.
+#[tauri::command]
+async fn update_languages(hub: State<'_, Arc<Hub>>, add: Vec<String>, remove: Vec<String>) -> AppResult<()> {
+    hub.update_languages(&add, &remove).await
+}
+
+/// Everything I set about one person: block, mutes, their avatar shown or hidden.
+#[tauri::command]
+async fn get_moderations_for(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<serde_json::Value> {
+    hub.moderations_for(&user_id).await
+}
+
+#[tauri::command]
+async fn get_my_groups(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
+    hub.my_groups().await
+}
+
+#[tauri::command]
+async fn invite_to_group(hub: State<'_, Arc<Hub>>, group_id: String, user_id: String) -> AppResult<()> {
+    hub.invite_to_group(&group_id, &user_id).await
+}
+
+/// Changes my bio, my pronouns and the links on my profile.
+#[tauri::command]
+async fn update_profile(hub: State<'_, Arc<Hub>>, bio: String, pronouns: String, links: Vec<String>) -> AppResult<()> {
+    hub.update_profile(&bio, &pronouns, &links).await
 }
 
 fn pictures_root(app: &AppHandle) -> AppResult<std::path::PathBuf> {
@@ -406,8 +458,9 @@ fn get_mutuals(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
 /// Asks VRChat about every friend in turn, slowly. Runs until done, stopped or told to slow down.
 #[tauri::command]
 async fn fetch_mutuals(hub: State<'_, Arc<Hub>>, everyone: bool) -> AppResult<serde_json::Value> {
-    // Two questions a second at most. VRChat answers "slow down" when that is too many, and the run stops there.
-    hub.fetch_mutuals(std::time::Duration::from_millis(500), everyone).await
+    // One friend every two seconds, so a long friend list never turns into a burst of requests.
+    // VRChat answers "slow down" if it is still too many, and the run stops there.
+    hub.fetch_mutuals(std::time::Duration::from_millis(2000), everyone).await
 }
 
 #[tauri::command]
@@ -519,8 +572,8 @@ async fn wear_avatar(hub: State<'_, Arc<Hub>>, avatar_id: String) -> AppResult<(
 }
 
 #[tauri::command]
-async fn invite_here(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<()> {
-    hub.invite_here(&user_id).await
+async fn invite_here(hub: State<'_, Arc<Hub>>, user_id: String, slot: Option<u8>) -> AppResult<()> {
+    hub.invite_here(&user_id, slot).await
 }
 
 /// Opens a web address from someone's profile in the default browser. Web links only.
@@ -577,8 +630,8 @@ async fn create_instance(hub: State<'_, Arc<Hub>>, world_id: String, access: Str
 }
 
 #[tauri::command]
-async fn request_invite(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<()> {
-    hub.request_invite(&user_id).await
+async fn request_invite(hub: State<'_, Arc<Hub>>, user_id: String, slot: Option<u8>) -> AppResult<()> {
+    hub.request_invite(&user_id, slot).await
 }
 
 #[tauri::command]
@@ -1421,6 +1474,15 @@ pub fn run() {
             check_favorites,
             get_favorite_groups,
             boop,
+            get_invite_messages,
+            set_invite_message,
+            update_profile,
+            get_my_cosmetics,
+            update_look,
+            update_languages,
+            get_moderations_for,
+            get_my_groups,
+            invite_to_group,
             save_picture,
             open_pictures_folder,
             get_favorites_of,

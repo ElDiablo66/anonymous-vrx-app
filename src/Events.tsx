@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorText, type CalendarEvent } from "./backend";
 import { clock, dayLabel, tidy } from "./bits";
 import { openThing } from "./Detail";
+import { launched } from "./History";
+import { accessName, ageGated, regionName } from "./bits";
+import { parsePlace } from "./place";
+import { savedLaunchMode } from "./settings";
 import { usePic } from "./Pic";
 import { live } from "./settings";
 
@@ -130,6 +134,173 @@ function EventPicture({ url }: { url: string }) {
 }
 
 /** Group events by month: the ones of my groups, the ones I follow, and VRChat's featured ones. */
+type Json = Record<string, unknown>;
+const text = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/** What a group's open instances were at the last look, kept two minutes so a redraw asks nothing. `null` means VRChat would not list them. */
+const placesSeen = new Map<string, { at: number; list: Json[] | null }>();
+const FRESH = 120_000;
+
+/** Looks are sent one after another with a short pause, however many events are on at once. */
+let line: Promise<unknown> = Promise.resolve();
+function inLine<T>(job: () => Promise<T>): Promise<T> {
+  const run = line.then(job, job);
+  line = run.then(
+    () => new Promise((r) => setTimeout(r, 350)),
+    () => new Promise((r) => setTimeout(r, 350)),
+  );
+  return run;
+}
+
+/**
+ * Where an event that is on right now is held. VRChat's calendar does not say, so this is
+ * the list of the group's open instances. For my own groups it is looked up by itself;
+ * elsewhere a button asks, so opening a long list of events sends no flood of requests.
+ */
+function EventPlace({ groupId, auto, onDone }: { groupId: string; auto: boolean; onDone: (message: string) => void }) {
+  const kept = placesSeen.get(groupId);
+  const [found, setFound] = useState<{ at: number; list: Json[] | null } | undefined>(kept && Date.now() - kept.at < FRESH ? kept : undefined);
+  const [asking, setAsking] = useState(false);
+  const [problem, setProblem] = useState("");
+  const [busy, setBusy] = useState("");
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  const look = () => {
+    // Another card of the same group may have looked a moment ago.
+    const seen = placesSeen.get(groupId);
+    if (seen && Date.now() - seen.at < FRESH) return setFound(seen);
+    setAsking(true);
+    setProblem("");
+    void inLine(() => backend.thing("groupInstances", groupId))
+      .then((d) => {
+        const list = Array.isArray(d) ? (d.filter((x) => x && typeof x === "object") as Json[]) : [];
+        const next = { at: Date.now(), list };
+        placesSeen.set(groupId, next);
+        if (alive.current) setFound(next);
+      })
+      .catch((err) => {
+        const kind = err && typeof err === "object" && "kind" in err ? String((err as { kind: unknown }).kind) : "";
+        if (kind === "network" || kind === "rateLimited") {
+          // Not an answer about the group, so nothing is kept and the look can be tried again.
+          if (alive.current) setProblem(errorText(err));
+          return;
+        }
+        const next = { at: Date.now(), list: null };
+        placesSeen.set(groupId, next);
+        if (alive.current) setFound(next);
+      })
+      .finally(() => alive.current && setAsking(false));
+  };
+  const again = () => {
+    placesSeen.delete(groupId);
+    look();
+  };
+  // My own groups are looked up by themselves, and again every two minutes while the card is open.
+  useEffect(() => {
+    if (!auto) return;
+    if (!found || Date.now() - found.at >= FRESH) look();
+    const id = window.setInterval(() => {
+      placesSeen.delete(groupId);
+      look();
+    }, FRESH);
+    return () => window.clearInterval(id);
+  }, [groupId, auto]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (problem) {
+    return (
+      <p className="event-place">
+        <span className="event-place-note">VRChat could not be asked where this is held: {problem}</span>
+        <button className="plain" disabled={asking} onClick={again}>
+          Try again
+        </button>
+      </p>
+    );
+  }
+  if (!found) {
+    return (
+      <p className="event-place">
+        {asking ? (
+          <span className="event-place-note">Asking VRChat where it is held.</span>
+        ) : (
+          <button className="plain" onClick={look} title="Asks VRChat for this group's open instances">
+            Look for its instance
+          </button>
+        )}
+      </p>
+    );
+  }
+  // Instances for verified adults only stay out when I chose not to list those.
+  const list = (found.list ?? []).filter((i) => !(ageGated(text(i.location)) && !live().showAgeGated));
+  if (list.length === 0) {
+    return (
+      <p className="event-place">
+        <span className="event-place-note">
+          {found.list === null
+            ? "VRChat did not list this group's instances. It shows them to members, so join the group to see where this is held."
+            : "The group has no open instance you can see right now. It may open one later, or only its members see it."}
+        </span>
+        <button className="plain" onClick={() => openThing("group", groupId)}>
+          Open the group
+        </button>
+        <button className="plain" disabled={asking} onClick={again}>
+          Look again
+        </button>
+      </p>
+    );
+  }
+  const count = (i: Json) => [i.memberCount, i.n_users, i.userCount].find((n): n is number => typeof n === "number") ?? 0;
+  return (
+    <ul className="event-places" aria-label="Where it is held">
+      {list.slice(0, 4).map((i) => {
+        const location = text(i.location);
+        const world = (i.world ?? {}) as Json;
+        const place = parsePlace(location);
+        const people = count(i);
+        const capacity = typeof world.capacity === "number" ? world.capacity : 0;
+        const full = i.full === true || (capacity > 0 && people >= capacity);
+        return (
+          <li key={location}>
+            <span className="event-place-text">
+              <b>{tidy(text(world.name)) || "A world"}</b>
+              <small>
+                {[accessName(place), regionName(place), people > 0 ? `${people} ${people === 1 ? "person" : "people"}` : ""].filter(Boolean).join(", ")}
+              </small>
+            </span>
+            <button
+              className={full ? "plain" : "plain go"}
+              disabled={full || busy === location}
+              title={full ? "This instance is full" : "Starts VRChat in this instance, or moves you there"}
+              onClick={() => {
+                setBusy(location);
+                void backend
+                  .launchInstance(location, savedLaunchMode())
+                  .then((how) => onDone(launched[how]))
+                  .catch((err) => {
+                    onDone(`That did not work: ${errorText(err)}`);
+                    // The instance may have closed since the list was read.
+                    again();
+                  })
+                  .finally(() => alive.current && setBusy(""));
+              }}
+            >
+              {full ? "Full" : "Join"}
+            </button>
+            <button className="plain" onClick={() => openThing("instance", location)}>
+              Who is there
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export function Events({ onDone }: { onDone: (message: string) => void }) {
   const [which, setWhich] = useState<Which>("mine");
   // What is on across VRChat has no months: it is the ones on now, then the ones coming up.
@@ -345,6 +516,7 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
                       )}
                     </p>
                     {e.description && <p className="event-about">{e.description}</p>}
+                    {live && <EventPlace groupId={e.groupId} auto={which === "mine"} onDone={onDone} />}
                   </div>
                   <div className="event-actions">
                     <button
