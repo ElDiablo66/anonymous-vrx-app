@@ -317,7 +317,7 @@ export const demoBackend: Backend = {
   },
   async fetchMutuals() {
     await wait(1200);
-    return { done: people.length, total: people.length, ended: "done" };
+    return { done: people.length, total: people.length, ended: "done", problem: "" };
   },
   async stopMutuals() {},
   async pairs(ids) {

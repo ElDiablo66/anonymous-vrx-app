@@ -76,7 +76,8 @@ export function DetailPanel({
   const [group, setGroup] = useState("");
   const [busy, setBusy] = useState(false);
   /** The favourite group this world or avatar is in, when it is in one. */
-  const [fav, setFav] = useState<{ entryId: string; label: string } | null>(null);
+  const [fav, setFav] = useState<{ entryId: string; label: string; tag: string } | null>(null);
+  const [moveTo, setMoveTo] = useState("");
   // Whether it is a favourite already is read from the last answer as soon as the window
   // opens, so the section says so without a press.
   useEffect(() => {
@@ -90,7 +91,9 @@ export function DetailPanel({
         const mine = list(all.entries).find((e) => str(e.favoriteId) === id);
         if (!alive || !mine) return;
         const group = list(all.groups).find((g) => str(g.name) === str((mine.tags as unknown[])?.[0]));
-        setFav({ entryId: str(mine.id), label: prettyGroup(str(group?.displayName) || str((mine.tags as unknown[])?.[0])) });
+        setFav({ entryId: str(mine.id), tag: str((mine.tags as unknown[])?.[0]), label: prettyGroup(str(group?.displayName) || str((mine.tags as unknown[])?.[0])) });
+        // The other groups are read too, so it can be moved without another press.
+        void showFavouriteGroups();
       })
       .catch(() => {});
     return () => {
@@ -179,7 +182,7 @@ export function DetailPanel({
       const all = ((fresh ? null : await backend.favoritesCached(kind)) ?? (await backend.favoritesOf(kind))) as Json;
       const mine = list(all.entries).find((e) => str(e.favoriteId) === id);
       const group = mine ? list(all.groups).find((g) => str(g.name) === str((mine.tags as unknown[])?.[0])) : undefined;
-      setFav(mine ? { entryId: str(mine.id), label: prettyGroup(str(group?.displayName) || str((mine.tags as unknown[])?.[0])) } : null);
+      setFav(mine ? { entryId: str(mine.id), tag: str((mine.tags as unknown[])?.[0]), label: prettyGroup(str(group?.displayName) || str((mine.tags as unknown[])?.[0])) } : null);
       const capacity = num(all.capacity);
       const used = new Map<string, number>();
       for (const e of list(all.entries)) {
@@ -199,6 +202,24 @@ export function DetailPanel({
     if (!found.length) found = (fallbackGroups[kind] ?? []).map((n) => ({ name: n, label: prettyGroup(n), full: false }));
     setGroups(found);
     setGroup((found.find((g) => !g.full) ?? found[0])?.name ?? "");
+  }
+
+  /**
+   * Moves a favourite to another group. VRChat has no move, so it is taken out and put in
+   * again; when the new group does not take it, it goes back where it was.
+   */
+  async function moveFavourite(to: string) {
+    if (!fav?.entryId || !to) return;
+    const from = fav.tag;
+    await backend.removeFavorites([fav.entryId]);
+    try {
+      await backend.addFavorite(kind, id, to);
+    } catch (err) {
+      await backend.addFavorite(kind, id, from).catch(() => {});
+      await favouritesChanged();
+      throw err;
+    }
+    await favouritesChanged();
   }
 
   function open(next: string) {
@@ -421,7 +442,36 @@ export function DetailPanel({
                     Remove
                   </button>
                 </div>
-              ) : groups.length === 0 ? (
+              ) : null}
+              {fav && groups.filter((g) => g.name !== fav.tag).length > 0 && (
+                <>
+                  <p className="tile-note fav-move-label">Move to another group</p>
+                  <div className="fav-pick">
+                    <select value={moveTo} onChange={(e) => setMoveTo(e.target.value)} aria-label="Group to move it to">
+                      <option value="">Pick a group</option>
+                      {groups
+                        .filter((g) => g.name !== fav.tag)
+                        .map((g) => (
+                          <option key={g.name} value={g.name} disabled={g.full}>
+                            {g.label}
+                            {g.full ? ", full" : ""}
+                          </option>
+                        ))}
+                    </select>
+                    <button
+                      className="plain go"
+                      disabled={busy || !moveTo || !fav.entryId}
+                      onClick={() => {
+                        const label = groups.find((g) => g.name === moveTo)?.label.replace(/ \(\d+\/\d+\)$/, "") ?? "the other group";
+                        void act(() => moveFavourite(moveTo), `Moved ${name} to ${label}.`).then(() => setMoveTo(""));
+                      }}
+                    >
+                      Move
+                    </button>
+                  </div>
+                </>
+              )}
+              {fav ? null : groups.length === 0 ? (
                 <div className="wayback">
                   <button disabled={!data} onClick={() => void showFavouriteGroups()}>
                     Add to favourites
@@ -441,7 +491,7 @@ export function DetailPanel({
                       void act(async () => {
                         await backend.addFavorite(kind, id, group);
                         // Shown as a favourite at once; the fresh list from VRChat then confirms the group and the counts.
-                        setFav({ entryId: "", label: groups.find((g) => g.name === group)?.label.replace(/ \(\d+\/\d+\)$/, "") ?? "your favourites" });
+                        setFav({ entryId: "", tag: group, label: groups.find((g) => g.name === group)?.label.replace(/ \(\d+\/\d+\)$/, "") ?? "your favourites" });
                         await favouritesChanged();
                       }, `Added ${name} to your favourites.`)
                     }

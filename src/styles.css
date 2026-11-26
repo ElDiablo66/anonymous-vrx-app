@@ -8386,3 +8386,44 @@ body .map-rooms .plain {
   max-height: none;
   overflow: visible;
 }
+
+/* ---------- the map can be dragged and zoomed ---------- */
+.map-wrap .map-stage {
+  position: relative;
+  height: min(70vh, 780px);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.map-wrap .map-stage:active {
+  cursor: grabbing;
+}
+
+.map-world {
+  position: relative;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .map-world {
+    transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .map-stage:active .map-world {
+    transition: none;
+  }
+}
+
+.fav-move-label {
+  margin: 12px 0 6px;
+}
+
+body .town-card .map-switch {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}

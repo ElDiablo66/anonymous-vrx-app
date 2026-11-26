@@ -156,6 +156,7 @@ const endWords: Record<string, string> = {
   slow: "VRChat asked to slow down, so it stopped. What was found so far is kept; try again later.",
   signedOut: "You are signed out, so it stopped.",
   network: "VRChat could not be reached, so it stopped. What was found so far is kept.",
+  refused: "VRChat turned the question down, so it stopped.",
 };
 
 /**
@@ -199,7 +200,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
     setProgress({ done: 0, total: friends.length });
     try {
       const ran = await backend.fetchMutuals();
-      onDone(`${endWords[ran.ended] ?? "Done."} Asked about ${ran.done} of ${ran.total} friends.`);
+      onDone(`${endWords[ran.ended] ?? "Done."} Asked about ${ran.done} of ${ran.total} friends.${ran.problem ? ` ${ran.problem}` : ""}`);
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
     } finally {
@@ -313,7 +314,13 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
         </div>
       )}
 
-      {asked && districts.length === 0 && !busy && <p className="empty">None of your friends are friends with each other, as far as VRChat lets the app see.</p>}
+      {asked && districts.length === 0 && !busy && (
+        <p className="empty">
+          {known && known.hidden.length >= known.asked
+            ? "VRChat gave no answer about any of your friends. Press Ask again; if it stays like this, the note at the bottom of the window says what VRChat answered."
+            : "None of your friends are friends with each other, as far as VRChat lets the app see."}
+        </p>
+      )}
 
       {districts.length > 0 && (
         <div className="town-layout">

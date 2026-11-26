@@ -291,13 +291,16 @@ impl Hub {
         let total = ids.len();
         let mut done = 0;
         let mut ended = "done";
+        let mut problem = String::new();
         for id in &ids {
             if self.mutuals_stop.load(Ordering::Relaxed) || self.me().is_none_or(|now| now.id != me.id) {
                 ended = "stopped";
                 break;
             }
             let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            match self.api.read_all(&format!("/users/{}/mutuals/friends?n=100", utf8(id))).await {
+            // The page size and offset are added by `read_all`; naming one here as well made
+            // VRChat turn the question down for every friend.
+            match self.api.read_all(&format!("/users/{}/mutuals/friends", utf8(id))).await {
                 Ok(list) => {
                     let others: Vec<String> = list.iter().filter_map(|u| u["id"].as_str().map(str::to_string)).collect();
                     let _ = self.with_store(|s| s.set_mutuals(id, &others, &now, false));
@@ -311,10 +314,18 @@ impl Hub {
                     break;
                 }
                 // Someone who keeps their friends to themselves, or an account that is gone.
-                Err(AppError::Api { .. }) => {
+                Err(AppError::Api { status: 403 | 404, .. }) => {
                     let _ = self.with_store(|s| s.set_mutuals(id, &[], &now, true));
                 }
-                Err(_) => {
+                // Anything else VRChat says no to is a fault in the question, not in the friend:
+                // stop, keep what is known, and say what came back.
+                Err(AppError::Api { status, message }) => {
+                    problem = format!("VRChat answered {status}: {message}");
+                    ended = "refused";
+                    break;
+                }
+                Err(other) => {
+                    problem = other.to_string();
                     ended = "network";
                     break;
                 }
@@ -324,7 +335,7 @@ impl Hub {
             tokio::time::sleep(gap).await;
         }
         self.mutuals_running.store(false, Ordering::Relaxed);
-        Ok(json!({ "done": done, "total": total, "ended": ended }))
+        Ok(json!({ "done": done, "total": total, "ended": ended, "problem": problem }))
     }
 
     /// Which of these people I often saw in the same instance: at least three stays together.

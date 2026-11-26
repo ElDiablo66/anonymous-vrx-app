@@ -187,7 +187,28 @@ export function FriendMap({
     };
   }, [ids, linesOn]);
   const [focus, setFocus] = useState("");
+  // The map can be dragged and zoomed like the friend web.
+  const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  const stage = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const wheel = (e: React.WheelEvent) => {
+    const el = stage.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const k = Math.min(2.2, Math.max(0.4, view.k * (e.deltaY > 0 ? 1 / 1.15 : 1.15)));
+    const [px, py] = [e.clientX - r.left, e.clientY - r.top];
+    setView({ k, x: px - ((px - view.x) / view.k) * k, y: py - ((py - view.y) / view.k) * k });
+  };
   const wrap = useRef<HTMLDivElement>(null);
+  // Everything in view: a map taller than its stage is drawn smaller, never bigger than life.
+  const fitMap = () => {
+    const [frame, world] = [stage.current, wrap.current];
+    if (!frame || !world) return;
+    const k = Math.min(1, Math.max(0.4, (frame.clientHeight - 56) / Math.max(1, world.offsetHeight)));
+    setView({ k, x: (frame.clientWidth - 44 - world.offsetWidth * k) / 2, y: 0 });
+  };
+  const shape = `${rooms.map((r) => r.people.length).join(",")}|${hidden.length}|${moving.length}|${showAway ? away.length : 0}`;
+  useLayoutEffect(fitMap, [shape]); // eslint-disable-line react-hooks/exhaustive-deps
   const [lines, setLines] = useState<Array<Pair & { x1: number; y1: number; x2: number; y2: number }>>([]);
   useLayoutEffect(() => {
     const box = wrap.current;
@@ -284,7 +305,31 @@ export function FriendMap({
       </dl>
 
       <div className="town-layout">
-      <div className="map-stage" ref={wrap}>
+      <div
+        className="map-stage"
+        ref={stage}
+        onWheel={wheel}
+        onPointerDown={(e) => {
+          drag.current = { x: e.clientX, y: e.clientY, moved: false };
+        }}
+        onPointerMove={(e) => {
+          const d = drag.current;
+          if (!d || e.buttons !== 1) return;
+          const [mx, my] = [e.clientX - d.x, e.clientY - d.y];
+          if (!d.moved && Math.abs(mx) + Math.abs(my) < 4) return;
+          drag.current = { x: e.clientX, y: e.clientY, moved: true };
+          setView((v) => ({ ...v, x: v.x + mx, y: v.y + my }));
+        }}
+        onPointerUp={() => window.setTimeout(() => (drag.current = null), 0)}
+        onClickCapture={(e) => {
+          // Letting go after a drag is not a press on whatever was under the pointer.
+          if (drag.current?.moved) {
+            e.stopPropagation();
+            e.preventDefault();
+          }
+        }}
+      >
+      <div className="map-world" ref={wrap} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
       {lines.length > 0 && (
         <svg className={`map-lines${focus ? " map-focused" : ""}`} aria-hidden="true">
           {lines.map((l) => (
@@ -362,6 +407,18 @@ export function FriendMap({
           </Bubble>
         )}
       </ul>
+      </div>
+      <div className="town-zoom">
+        <button className="plain" onClick={() => setView((v) => ({ ...v, k: Math.min(2.2, v.k * 1.2) }))} aria-label="Closer" title="Closer">
+          +
+        </button>
+        <button className="plain" onClick={() => setView((v) => ({ ...v, k: Math.max(0.4, v.k / 1.2) }))} aria-label="Further away" title="Further away">
+          −
+        </button>
+        <button className="plain" onClick={fitMap}>
+          Whole map
+        </button>
+      </div>
       </div>
 
       <aside className="town-rail" aria-label="Instances and key">
