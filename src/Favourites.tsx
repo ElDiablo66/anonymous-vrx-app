@@ -5,6 +5,7 @@ import { Avatar, statusTone, tidy } from "./bits";
 import { openThing } from "./Detail";
 import { openProfile } from "./Profile";
 import { openPicture } from "./Viewer";
+import { MarkBadges, useWorldMarks } from "./Mine";
 
 type Kind = "friend" | "world" | "avatar";
 type Json = Record<string, unknown>;
@@ -101,6 +102,15 @@ export function Favourites({
 }) {
   const [kind, setKind] = useState<Kind>("avatar");
   const [naming, setNaming] = useState(false);
+  const marks = useWorldMarks();
+  const [mine, setMine] = useState<"all" | "top" | "unrated" | "been" | "new">("all");
+  const passes = (id: string) =>
+    kind !== "world" ||
+    mine === "all" ||
+    (mine === "top" && (marks.ratings[id] ?? 0) >= 4) ||
+    (mine === "unrated" && !marks.ratings[id]) ||
+    (mine === "been" && !!marks.visits[id]) ||
+    (mine === "new" && !marks.visits[id]);
   const [data, setData] = useState<Loaded | null>(null);
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
@@ -357,20 +367,37 @@ export function Favourites({
         </p>
       )}
 
+      {kind === "world" && data && data.entries.length > 0 && (
+        <div className="list-tools">
+          <label className="tool">
+            Show
+            <select value={mine} onChange={(e) => setMine(e.target.value as typeof mine)}>
+              <option value="all">Every favourite world</option>
+              <option value="top">Rated 4 or 5 by me</option>
+              <option value="unrated">Not rated yet</option>
+              <option value="been">Been there</option>
+              <option value="new">Not been there</option>
+            </select>
+          </label>
+        </div>
+      )}
+
       {kind !== "friend" &&
         data &&
         groupKeys.map((key) => {
-          const entries = data.entries.filter((e) => str((e.tags as unknown[])?.[0]) === key);
+          const inGroup = data.entries.filter((e) => str((e.tags as unknown[])?.[0]) === key);
+          const entries = inGroup.filter((e) => passes(str(e.favoriteId)));
           return (
             <section className="fav-group" key={key}>
               <GroupTitle kind={kind} group={key} label={groupName(key)} onDone={onDone} onRenamed={() => setTick((n) => n + 1)}>
-                <span className={`fav-count${data.capacity && entries.length >= data.capacity ? " fav-full" : ""}`}>
-                  {entries.length}
+                <span className={`fav-count${data.capacity && inGroup.length >= data.capacity ? " fav-full" : ""}`}>
+                  {inGroup.length}
                   {data.capacity ? `/${data.capacity}` : ""}
-                  {data.capacity && entries.length >= data.capacity ? ", full" : ""}
+                  {data.capacity && inGroup.length >= data.capacity ? ", full" : ""}
                 </span>
               </GroupTitle>
-              {entries.length === 0 && <p className="tile-note">Empty. Room for {data.capacity || "more"}.</p>}
+              {inGroup.length === 0 && <p className="tile-note">Empty. Room for {data.capacity || "more"}.</p>}
+              {inGroup.length > 0 && entries.length === 0 && <p className="tile-note">None in this group match what is shown.</p>}
               <ul className="fav-list">
                 {entries.map((e) => {
                   const item = byId.get(str(e.favoriteId));
@@ -384,6 +411,7 @@ export function Favourites({
                       <button className="row-link" onClick={() => openThing(kind, str(e.favoriteId))} title="Open">
                         <span>
                           <span className="tile-name">{item ? tidy(str(item.name)) : gone ? "Gone" : "Not listed by VRChat"}</span>
+                          {kind === "world" && <MarkBadges id={str(e.favoriteId)} marks={marks} />}
                           <span className="tile-note">
                             {item ? `${str(item.authorName)}${gone ? ", now private" : ""}` : gone ? "Deleted or made private" : "Open it to see if it still works"}
                           </span>

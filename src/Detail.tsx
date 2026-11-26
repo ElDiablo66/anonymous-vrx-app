@@ -4,6 +4,7 @@ import { backend, errorText } from "./backend";
 import { tidy } from "./bits";
 import { openProfile } from "./Profile";
 import { openPicture } from "./Viewer";
+import { Stars, beenWords, useWorldMarks } from "./Mine";
 import { prettyGroup } from "./Favourites";
 import { SafeImg, usePic } from "./Pic";
 import { accessName, regionName } from "./bits";
@@ -51,6 +52,7 @@ export function DetailPanel({
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
+  const marks = useWorldMarks();
   const [data, setData] = useState<Json | null>(null);
   const [problem, setProblem] = useState("");
   const [tab, setTab] = useState("info");
@@ -452,6 +454,16 @@ export function DetailPanel({
                         );
                       })}
                     </ul>
+                  </section>
+                )}
+                {kind === "world" && (
+                  <section>
+                    <h3>Mine</h3>
+                    <p className="my-rating">
+                      <Stars id={id} onDone={onDone} />
+                      <span className="tile-note">My own rating. It stays on this PC.</span>
+                    </p>
+                    <p className="tile-note">{beenWords(marks.visits[id])}</p>
                   </section>
                 )}
                 {kind === "world" && <NewInstance worldId={id} onDone={onDone} />}

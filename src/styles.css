@@ -4460,3 +4460,72 @@ button.pinned-away:hover {
 .crash-note span {
   flex: 1 1 260px;
 }
+
+/* My own stars and "been here" marks */
+.stars {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.stars button {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: color-mix(in srgb, var(--text) 28%, transparent);
+}
+
+.stars button.on {
+  color: var(--sunset);
+}
+
+.my-rating {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 6px;
+}
+
+.my-marks {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.mark-stars {
+  color: var(--sunset);
+  letter-spacing: 1px;
+}
+
+.results-tool {
+  grid-column: 1 / -1;
+  list-style: none;
+}
+
+/* A past instance: still open or not */
+.still-open {
+  margin: 8px 0 0;
+}
+
+.still-yes {
+  color: var(--teal);
+}
+
+/* Settings: the two quiet-hours times */
+.quiet-times {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.quiet-times input {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+}

@@ -164,6 +164,7 @@ const demoBlocked: Moderation[] = [
 
 const demoHandled: Handled[] = [];
 let demoAutostart = false;
+const demoRatings: Record<string, number> = {};
 const demoRemoved = new Set<string>();
 let demoMember = false;
 const demoNames = new Map<string, string>();
@@ -503,6 +504,27 @@ export const demoBackend: Backend = {
       )
       .slice(0, limit);
   },
+  async lastSeen() {
+    const out: Record<string, string> = {};
+    people.forEach((p, i) => {
+      out[p.id] = new Date(Date.now() - i * i * 5 * 86400000).toISOString();
+    });
+    return out;
+  },
+  async ratings() {
+    return { ...demoRatings };
+  },
+  async setRating(itemId, stars) {
+    if (stars > 0) demoRatings[itemId] = stars;
+    else delete demoRatings[itemId];
+  },
+  async worldVisits() {
+    const out: Record<string, [number, string]> = {};
+    for (const v of demoVisits) out[v.worldId] = [(out[v.worldId]?.[0] ?? 0) + 1, v.joinedAt];
+    return out;
+  },
+  async setOwnFeed() {},
+  async setQuiet() {},
   async togetherCounts() {
     return Object.fromEntries(people.slice(0, 8).map((p, i) => [p.id, 8 - i]));
   },

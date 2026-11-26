@@ -350,6 +350,34 @@ fn set_discord(presence: Option<discord::Presence>) {
 }
 
 #[tauri::command]
+fn set_own_feed(hub: State<'_, Arc<Hub>>, on: bool) {
+    hub.set_own_feed(on);
+}
+
+/// User id to when this PC last saw them do anything.
+#[tauri::command]
+fn get_last_seen(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, String>> {
+    hub.last_seen()
+}
+
+/// My stars, by world or avatar id.
+#[tauri::command]
+fn get_ratings(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, i64>> {
+    hub.ratings()
+}
+
+#[tauri::command]
+fn set_rating(hub: State<'_, Arc<Hub>>, item_id: String, stars: i64) -> AppResult<()> {
+    hub.set_rating(&item_id, stars)
+}
+
+/// World id to how often I visited it and when last.
+#[tauri::command]
+fn get_world_visits(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, (i64, String)>> {
+    hub.world_visits()
+}
+
+#[tauri::command]
 fn set_alerts(hub: State<'_, Arc<Hub>>, alerts: hub::Alerts) {
     hub.set_alerts(alerts);
 }
@@ -597,6 +625,54 @@ fn launch_instance(location: String, mode: String) -> AppResult<&'static str> {
     Ok("desktop")
 }
 
+/// When Windows notifications stay quiet. Times are minutes after midnight, local time.
+#[derive(Clone, Copy, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QuietRules {
+    hours: bool,
+    from: u16,
+    to: u16,
+    /// Stay quiet while VRChat is running.
+    in_game: bool,
+}
+
+static QUIET: Mutex<Option<QuietRules>> = Mutex::new(None);
+static GAME_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True when `minute` of the day falls in the quiet stretch, which may run past midnight.
+fn in_quiet_hours(from: u16, to: u16, minute: u16) -> bool {
+    if from == to {
+        return false;
+    }
+    if from < to {
+        (from..to).contains(&minute)
+    } else {
+        minute >= from || minute < to
+    }
+}
+
+/// Whether a notification may be shown right now.
+#[tauri::command]
+fn may_notify() -> bool {
+    let rules = QUIET.lock().unwrap().unwrap_or_default();
+    if rules.in_game && GAME_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    if rules.hours {
+        use chrono::Timelike;
+        let now = chrono::Local::now();
+        if in_quiet_hours(rules.from, rules.to, (now.hour() * 60 + now.minute()) as u16) {
+            return false;
+        }
+    }
+    true
+}
+
+#[tauri::command]
+fn set_quiet(rules: QuietRules) {
+    *QUIET.lock().unwrap() = Some(rules);
+}
+
 /// What the window asked for about VRChat starting and stopping.
 #[derive(Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -651,10 +727,12 @@ const REJOIN_GAP: std::time::Duration = std::time::Duration::from_secs(180);
 /// was in an instance counts as a crash; what happens then is the window's choice.
 fn watch_game(app: AppHandle) {
     let mut was = is_running("VRChat.exe");
+    GAME_RUNNING.store(was, std::sync::atomic::Ordering::Relaxed);
     let mut last_rejoin: Option<std::time::Instant> = None;
     loop {
         std::thread::sleep(GAME_LOOK);
         let running = is_running("VRChat.exe");
+        GAME_RUNNING.store(running, std::sync::atomic::Ordering::Relaxed);
         let watch = GAME_WATCH.lock().unwrap().clone().unwrap_or_default();
         if running && !was {
             let _ = app.emit("game:started", ());
@@ -843,6 +921,9 @@ pub fn run() {
             let api = Arc::new(ApiClient::new().map_err(|e: AppError| e.to_string())?);
             let emit: hub::Emit = Arc::new(move |name, payload| {
                 if name == "popup" {
+                    if !may_notify() {
+                        return;
+                    }
                     // Shown from here, so it works while the window is hidden in the tray.
                     use tauri_plugin_notification::NotificationExt;
                     let text = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -883,7 +964,14 @@ pub fn run() {
             get_profile_part,
             get_thing,
             set_alerts,
+            set_own_feed,
+            get_last_seen,
+            get_ratings,
+            set_rating,
+            get_world_visits,
             set_game_watch,
+            set_quiet,
+            may_notify,
             get_autostart,
             set_autostart,
             set_discord,
@@ -947,4 +1035,24 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("the app window could not start");
+}
+
+#[cfg(test)]
+mod quiet_tests {
+    use super::in_quiet_hours;
+
+    #[test]
+    fn quiet_hours_can_run_past_midnight() {
+        // 23:00 to 08:00
+        assert!(in_quiet_hours(1380, 480, 1400));
+        assert!(in_quiet_hours(1380, 480, 0));
+        assert!(in_quiet_hours(1380, 480, 479));
+        assert!(!in_quiet_hours(1380, 480, 480));
+        assert!(!in_quiet_hours(1380, 480, 720));
+        // 13:00 to 14:00
+        assert!(in_quiet_hours(780, 840, 800));
+        assert!(!in_quiet_hours(780, 840, 840));
+        // The same time twice means no quiet stretch at all.
+        assert!(!in_quiet_hours(600, 600, 600));
+    }
 }

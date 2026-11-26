@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorText, type Favorites, type FeedItem, type Friend, type Moderation, type World } from "./backend";
-import { Avatar, accessName, clock, dayLabel, deviceLine, statusTone, statusWords, tidy } from "./bits";
+import { Avatar, accessName, clock, dayLabel, daysAgo, deviceLine, statusTone, statusWords, tidy } from "./bits";
 import { openProfile } from "./Profile";
 
 const rank = { online: 0, active: 1, offline: 2 } as const;
@@ -253,7 +253,8 @@ export function Everyone({
   query: string;
 }) {
   const [tab, setTab] = useState<"list" | "log" | "blocked">("list");
-  const [sort, setSort] = useState<"status" | "name" | "place" | "together">("status");
+  const [sort, setSort] = useState<"status" | "name" | "place" | "together" | "quiet">("status");
+  const [lastSeen, setLastSeen] = useState<Record<string, string>>({});
   const [hidePrivate, setHidePrivate] = useState(false);
   const [together, setTogether] = useState<Record<string, number>>({});
   const q = query.trim().toLowerCase();
@@ -263,6 +264,10 @@ export function Everyone({
     void backend
       .togetherCounts()
       .then((counts) => alive && setTogether(counts))
+      .catch(() => {});
+    void backend
+      .lastSeen()
+      .then((seen) => alive && setLastSeen(seen))
       .catch(() => {});
     return () => {
       alive = false;
@@ -281,12 +286,18 @@ export function Everyone({
       name: (a, b) => a.displayName.localeCompare(b.displayName),
       place: (a, b) => placeKey(a).localeCompare(placeKey(b)) || byStatus(a, b),
       together: (a, b) => (together[b.id] ?? 0) - (together[a.id] ?? 0) || byStatus(a, b),
+      // Longest quiet first: people never seen lead, then the oldest sighting. Whoever is on now goes last.
+      quiet: (a, b) => quietKey(a).localeCompare(quietKey(b)) || a.displayName.localeCompare(b.displayName),
     };
+    function quietKey(f: Friend): string {
+      if (f.state !== "offline") return "9";
+      return lastSeen[f.id] ?? "0";
+    }
     return friends
       .filter((f) => !hidePrivate || !(f.state === "online" && f.place.kind === "private"))
       .filter((f) => !q || f.displayName.toLowerCase().includes(q) || whereText(f, worlds).toLowerCase().includes(q))
       .sort(order[sort]);
-  }, [friends, worlds, favorites, q, sort, hidePrivate, together]);
+  }, [friends, worlds, favorites, q, sort, hidePrivate, together, lastSeen]);
 
   return (
     <div className="table-wrap">
@@ -310,6 +321,7 @@ export function Everyone({
               <option value="place">World</option>
               <option value="name">Name</option>
               <option value="together">Times together</option>
+              <option value="quiet">Longest quiet first</option>
             </select>
           </label>
           <label className="tool">
@@ -333,6 +345,7 @@ export function Everyone({
                 <th>Status</th>
                 <th>Where</th>
                 <th title="Visits you shared, from VRChat's log files on this PC">Together</th>
+                <th title="When this app last saw them online or in a world with you. It only knows what happened while it was recording">Last seen</th>
               </tr>
             </thead>
             <tbody>
@@ -359,6 +372,7 @@ export function Everyone({
                   </td>
                   <td>{whereText(f, worlds)}</td>
                   <td className="num">{together[f.id] ? together[f.id] : ""}</td>
+                  <td>{f.state !== "offline" ? "now" : lastSeen[f.id] ? daysAgo(lastSeen[f.id]) : "not on record"}</td>
                 </tr>
               ))}
             </tbody>

@@ -143,7 +143,7 @@ export function SettingsPage({
   async function sendTest() {
     setTestResult("");
     try {
-      const allowed = await backend.notify("Anonymous VRX", "This is what a notification looks like.");
+      const allowed = await backend.notify("Anonymous VRX", "This is what a notification looks like.", true);
       setTestResult(
         allowed
           ? "Handed to Windows. If nothing appeared by the clock, Windows is holding it back: check Settings, System, Notifications, and turn off Do not disturb. Windows is also more reliable about this once the app is installed with its installer."
@@ -322,6 +322,12 @@ export function SettingsPage({
           hint="When a friend hops between worlds several times in a row, show one line with the rest tucked behind it."
           on={settings.feedFold}
           set={(on) => change({ feedFold: on })}
+        />
+        <Switch
+          label="Show my own changes too"
+          hint="Puts your own world changes, avatar changes and status changes into the feed, written as You. Recorded from the moment this is switched on."
+          on={settings.feedMine}
+          set={(on) => change({ feedMine: on })}
         />
         <div className="setting setting-top">
           <span>
@@ -618,6 +624,32 @@ export function SettingsPage({
             </div>
           </div>
         )}
+        {Object.keys(settings.alertPeople ?? {}).length > 0 && (
+          <div className="setting setting-top">
+            <span>
+              <span className="setting-name">People with a rule of their own</span>
+              <span className="setting-hint">Set on a friend's profile, under Notifications.</span>
+            </span>
+            <ul className="left-out">
+              {Object.entries(settings.alertPeople).map(([id, who]) => (
+                <li key={id}>
+                  <span className="who">{who.name}</span>
+                  <span className="setting-hint">{who.rule === "always" ? "always" : "never"}</span>
+                  <button
+                    className="plain"
+                    onClick={() => {
+                      const rest = { ...settings.alertPeople };
+                      delete rest[id];
+                      change({ alertPeople: rest });
+                    }}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         <Switch label="Invites and invite requests" on={settings.alertInvites} set={(on) => change({ alertInvites: on })} />
         <Switch label="Friend requests" on={settings.alertFriendRequests} set={(on) => change({ alertFriendRequests: on })} />
         <Switch label="Boops" on={settings.alertBoops} set={(on) => change({ alertBoops: on })} />
@@ -635,6 +667,30 @@ export function SettingsPage({
             {testResult}
           </p>
         )}
+      </section>
+
+      <section>
+        <h2>Quiet times</h2>
+        <p className="setting-hint">These hold back every Windows notification from this app. Nothing is lost: the Inbox and the feed still fill up.</p>
+        <Switch label="Quiet hours" on={settings.quietHours} set={(on) => change({ quietHours: on })} />
+        {settings.quietHours && (
+          <div className="setting">
+            <span>
+              <span className="setting-name">From and until</span>
+              <span className="setting-hint">Your PC's own time. It can run past midnight.</span>
+            </span>
+            <span className="quiet-times">
+              <input type="time" value={settings.quietFrom} aria-label="Quiet from" onChange={(e) => e.target.value && change({ quietFrom: e.target.value })} />
+              <input type="time" value={settings.quietTo} aria-label="Quiet until" onChange={(e) => e.target.value && change({ quietTo: e.target.value })} />
+            </span>
+          </div>
+        )}
+        <Switch
+          label="Quiet while VRChat is running"
+          hint="For when you would see it in the game anyway."
+          on={settings.quietInGame}
+          set={(on) => change({ quietInGame: on })}
+        />
       </section>
 
       <section>

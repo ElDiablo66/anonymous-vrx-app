@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS sightings (
     joined_at    TEXT NOT NULL,
     left_at      TEXT
 );
+CREATE TABLE IF NOT EXISTS ratings (
+    item_id    TEXT PRIMARY KEY,
+    stars      INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS notes (
     user_id    TEXT PRIMARY KEY,
     note       TEXT NOT NULL,
@@ -604,6 +609,50 @@ impl Store {
             "SELECT user_id, COUNT(DISTINCT visit_id) FROM sightings WHERE user_id != '' GROUP BY user_id",
         )?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// When this PC last saw each person do anything: a feed entry, or being in an instance
+    /// with me. Nothing is asked of VRChat.
+    pub fn last_seen(&self) -> AppResult<Vec<(String, String)>> {
+        let mut stmt = self.db.prepare(
+            "SELECT user_id, MAX(at) FROM (
+                SELECT user_id, at FROM feed WHERE kind IN ('online', 'offline', 'location', 'status', 'statusText', 'avatar')
+                UNION ALL
+                SELECT user_id, COALESCE(left_at, joined_at) AS at FROM sightings WHERE user_id != ''
+             ) GROUP BY user_id",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// My own stars for a world or an avatar, 1 to 5. Nothing leaves this PC.
+    pub fn ratings(&self) -> AppResult<Vec<(String, i64)>> {
+        let mut stmt = self.db.prepare("SELECT item_id, stars FROM ratings")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Sets my stars for something; 0 takes the rating away.
+    pub fn set_rating(&self, item_id: &str, stars: i64, at: &str) -> AppResult<()> {
+        if stars <= 0 {
+            self.db.execute("DELETE FROM ratings WHERE item_id = ?1", params![item_id])?;
+        } else {
+            self.db.execute(
+                "INSERT INTO ratings (item_id, stars, updated_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(item_id) DO UPDATE SET stars = excluded.stars, updated_at = excluded.updated_at",
+                params![item_id, stars.min(5), at],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Every world I visited, with how often and when last, from the game log's history.
+    pub fn world_visits(&self) -> AppResult<Vec<(String, i64, String)>> {
+        let mut stmt = self.db.prepare(
+            "SELECT world_id, COUNT(*), MAX(joined_at) FROM visits WHERE world_id != '' GROUP BY world_id",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
@@ -1204,5 +1253,24 @@ mod tests {
         })
         .unwrap();
         assert_eq!(s.world("wrld_a").unwrap().unwrap().name, "Quiet Pier");
+    }
+
+    #[test]
+    fn ratings_last_seen_and_world_visits() {
+        let s = Store::in_memory().unwrap();
+        assert!(s.ratings().unwrap().is_empty());
+        s.set_rating("wrld_a", 4, "2026-01-01T00:00:00Z").unwrap();
+        s.set_rating("wrld_a", 9, "2026-01-02T00:00:00Z").unwrap();
+        s.set_rating("wrld_b", 2, "2026-01-02T00:00:00Z").unwrap();
+        s.set_rating("wrld_b", 0, "2026-01-03T00:00:00Z").unwrap();
+        assert_eq!(s.ratings().unwrap(), vec![("wrld_a".to_string(), 5)]);
+
+        s.add_feed(&FeedDraft { user_id: "usr_a".into(), display_name: "Ana".into(), kind: "online", detail: String::new(), previous: String::new(), location: String::new() }).unwrap();
+        // A name change says nothing about when they were last around.
+        s.add_feed(&FeedDraft { user_id: "usr_b".into(), display_name: "Bo".into(), kind: "name", detail: "Bo".into(), previous: "B".into(), location: String::new() }).unwrap();
+        let seen = s.last_seen().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, "usr_a");
+        assert!(s.world_visits().unwrap().is_empty());
     }
 }

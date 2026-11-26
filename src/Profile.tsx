@@ -148,10 +148,15 @@ export function ProfilePanel({
   friends,
   worlds,
   inWorld,
+  alertRule,
+  setAlertRule,
   onBack,
   onClose,
   onDone,
 }: {
+  /** My notification rule for this person, when they have one of their own. */
+  alertRule?: "always" | "never";
+  setAlertRule: (rule: "always" | "never" | null, name: string) => void;
   onBack?: () => void;
   userId: string;
   meId: string;
@@ -671,6 +676,25 @@ export function ProfilePanel({
                       </div>
                     </section>
                     {friend && !isMe && <FriendFavourite userId={userId} name={name} onDone={onDone} />}
+                    {friend && !isMe && (
+                      <section>
+                        <h3>Notifications</h3>
+                        <div className="choices" role="radiogroup" aria-label={`Notifications about ${name}`}>
+                          {(
+                            [
+                              [null, "Like their favourite group"],
+                              ["always", "Always tell me"],
+                              ["never", "Never tell me"],
+                            ] as const
+                          ).map(([rule, label]) => (
+                            <button key={label} role="radio" aria-checked={(alertRule ?? null) === rule} className={(alertRule ?? null) === rule ? "on" : ""} onClick={() => setAlertRule(rule, name)}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="tile-note">For the two favourite notifications in Settings: comes online, and leaves a private world.</p>
+                      </section>
+                    )}
 
                     {!isMe && (
                       <section>

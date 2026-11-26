@@ -85,7 +85,7 @@ This is the screen the app opens on.
 |---|---|
 | Friends by room | Friends are grouped by the instance they share, with the world, access type, region, head count and how long each of them has been there |
 | Favourites on top | Favourite friends are pinned above everyone else, one block per favourite group |
-| Notifications | Windows tells you when a favourite comes online or leaves a private world for one you can join. You pick which favourite groups do that |
+| Notifications | Windows tells you when a favourite comes online or leaves a private world for one you can join. You pick which favourite groups do that, give single friends an always or never rule, and set quiet hours or quiet while VRChat runs |
 | Joining | Join, ask for an invite, invite yourself, or copy the link, each with one click |
 | Right-click a friend | Ask for an invite, invite them to your world, or boop, from anywhere they are listed |
 
@@ -93,7 +93,7 @@ This is the screen the app opens on.
 
 | | |
 |---|---|
-| Friend list | Sortable, with trust colours, VRC+ and 18+ marks, language flags and status colours |
+| Friend list | Sortable, with trust colours, VRC+ and 18+ marks, language flags and status colours. A Last seen column, from the app's own records, and a sort that puts the longest-quiet friends first |
 | Old names | Hover a name to see what that friend used to be called |
 | Friend tools | Send and answer friend requests, boop back, unfriend, move people between favourite groups, rename the groups |
 | Block and mute | Block or mute someone from their profile, and see everyone you blocked or muted in one list, with a button to take each one back |
@@ -105,12 +105,12 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 
 | | |
 |---|---|
-| Activity feed | Who came online, left, changed world or status. Searchable, saved per account |
+| Activity feed | Who came online, left, changed world or status. Searchable, saved per account. Your own changes can be included with a switch |
 | Friend log | Who was added, removed or renamed, including while the app was closed |
 | World history | Every instance you visited, for how long, and who was there, read from VRChat's own log files |
 | Photos | The photos VRChat's camera saved on your PC, each with the world it was taken in and who was in the instance, looked up in the world history. The files are not changed |
 | Here | The instance you are in now and everyone in it, with friends marked |
-| Going back | From any past instance you can send yourself an invite, copy a join link or open VRChat's join page |
+| Going back | From any past instance you can send yourself an invite, copy a join link or open VRChat's join page. Opening a past visit asks VRChat once whether that instance is still open and how many are in it |
 
 ### Inbox
 
@@ -130,6 +130,7 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | Favourites | Shows how full each favourite group is. The clean-up asks VRChat about each missing favourite before offering to remove it. Local favourites on your PC have no limit |
 | New instance | Make your own instance of any world (Invite, Invite+, Friends, Friends+ or Public, in the region you pick) and join it |
 | Notes | Private notes on people, avatars and worlds |
+| My stars | Your own 1 to 5 star rating on any world, and whether the game log has seen you there, both usable as filters on favourite worlds and in world search. They stay on your PC |
 | Search | People, worlds and avatars |
 
 ### Your own uploads

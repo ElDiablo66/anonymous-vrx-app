@@ -371,6 +371,18 @@ export interface Backend {
   searchFeed(query: string, kinds: string[], before: number | undefined, until: string | undefined, limit: number): Promise<FeedItem[]>;
   /** Shared visits per user id, from the game log. */
   togetherCounts(): Promise<Record<string, number>>;
+  /** User id to when this PC last saw them do anything. From my own records. */
+  lastSeen(): Promise<Record<string, string>>;
+  /** My own stars, by world or avatar id. They never leave this PC. */
+  ratings(): Promise<Record<string, number>>;
+  /** Sets my stars, 1 to 5; 0 takes them away. */
+  setRating(itemId: string, stars: number): Promise<void>;
+  /** World id to [how often I was there, when last]. */
+  worldVisits(): Promise<Record<string, [number, string]>>;
+  /** Switches recording my own changes in the feed. */
+  setOwnFeed(on: boolean): Promise<void>;
+  /** Quiet hours and quiet while playing. Minutes after midnight. */
+  setQuiet(rules: { hours: boolean; from: number; to: number; inGame: boolean }): Promise<void>;
   localFavorites(kind: string): Promise<LocalFavorite[]>;
   addLocalFavorite(favorite: LocalFavorite): Promise<void>;
   removeLocalFavorite(kind: string, itemId: string): Promise<void>;
@@ -407,7 +419,8 @@ export interface Backend {
   /** `accept`, `dismiss`, `reply` (with the reply's kind and data) or `inviteBack`. */
   noticeAction(id: string, action: string, replyKind?: string, replyData?: string): Promise<void>;
   /** Shows a Windows notification. Resolves to false when Windows refused permission. Does nothing in the browser demo. */
-  notify(title: string, body: string): Promise<boolean>;
+  /** Shows a Windows notification. `always` skips the quiet rules, for the test button. */
+  notify(title: string, body: string, always?: boolean): Promise<boolean>;
   worlds(): Promise<World[]>;
   instances(): Promise<Instance[]>;
   /** Sends you an invite to an instance; it shows up inside VRChat. */
@@ -520,6 +533,12 @@ const desktop: Backend = {
   searchFeed: (query, kinds, before, until, limit) =>
     invoke("search_feed", { query, kinds, before: before ?? null, until: until ?? null, limit }),
   togetherCounts: () => invoke("get_together_counts"),
+  lastSeen: () => invoke("get_last_seen"),
+  ratings: () => invoke("get_ratings"),
+  setRating: (itemId, stars) => invoke("set_rating", { itemId, stars }),
+  worldVisits: () => invoke("get_world_visits"),
+  setOwnFeed: (on) => invoke("set_own_feed", { on }),
+  setQuiet: (rules) => invoke("set_quiet", { rules }),
   localFavorites: (kind) => invoke("get_local_favorites", { kind }),
   addLocalFavorite: (favorite) => invoke("add_local_favorite", { favorite }),
   removeLocalFavorite: (kind, itemId) => invoke("remove_local_favorite", { kind, itemId }),
@@ -542,7 +561,8 @@ const desktop: Backend = {
   openLink: (url) => invoke("open_link", { url }),
   noticeAction: (id, action, replyKind, replyData) =>
     invoke("notice_action", { id, action, replyKind: replyKind ?? null, replyData: replyData ?? null }),
-  notify: async (title, body) => {
+  notify: async (title, body, always) => {
+    if (!always && !(await invoke<boolean>("may_notify"))) return false;
     let allowed = await isPermissionGranted();
     if (!allowed) allowed = (await requestPermission()) === "granted";
     if (allowed) sendNotification({ title, body });

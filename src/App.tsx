@@ -250,6 +250,18 @@ export function App() {
   useEffect(() => {
     void backend.setGameWatch({ openWithGame: settings.openWithGame, rejoin: settings.rejoin, launchMode: settings.launchMode }).catch(() => {});
   }, [settings.openWithGame, settings.rejoin, settings.launchMode]);
+  useEffect(() => {
+    void backend.setOwnFeed(settings.feedMine).catch(() => {});
+  }, [settings.feedMine, me]);
+  useEffect(() => {
+    const minutes = (text: string) => {
+      const [h, m] = text.split(":").map(Number);
+      return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+    };
+    void backend
+      .setQuiet({ hours: settings.quietHours, from: minutes(settings.quietFrom), to: minutes(settings.quietTo), inGame: settings.quietInGame })
+      .catch(() => {});
+  }, [settings.quietHours, settings.quietFrom, settings.quietTo, settings.quietInGame]);
   // VRChat closed without warning: where I was, until I go back or put the note away.
   const [crash, setCrash] = useState<{ location: string; worldName: string } | null>(null);
   const asked = useRef(false);
@@ -366,9 +378,14 @@ export function App() {
         setFeed((old) => [item, ...old].slice(0, 500));
         if (item.kind === "friendAdded" || item.kind === "friendRemoved" || item.kind === "name") setFeedTick((n) => n + 1);
         const { favorites, settings, worlds } = now.current;
-        if (!(item.userId in favorites.friends)) return;
-        // A favourite group can be told to stay quiet.
-        if ((settings.alertGroupsOff ?? []).includes(favorites.friends[item.userId])) return;
+        // A rule set on one person comes before their favourite group's.
+        const own = settings.alertPeople?.[item.userId]?.rule;
+        if (own === "never" || item.userId === me?.id) return;
+        if (own !== "always") {
+          if (!(item.userId in favorites.friends)) return;
+          // A favourite group can be told to stay quiet.
+          if ((settings.alertGroupsOff ?? []).includes(favorites.friends[item.userId])) return;
+        }
         const world = item.worldId ? (worlds.get(item.worldId)?.name ?? "a world") : "";
         if (item.kind === "online" && settings.alertFavouriteOnline) {
           void backend.notify(`${item.displayName} is online`, world ? `In ${world}` : "In a private world");
@@ -595,6 +612,13 @@ export function App() {
           friends={friends}
           worlds={worlds}
           inWorld={inWorld}
+          alertRule={settings.alertPeople?.[top.id]?.rule}
+          setAlertRule={(rule, name) => {
+            const next = { ...(settings.alertPeople ?? {}) };
+            if (rule) next[top.id] = { name, rule };
+            else delete next[top.id];
+            change({ alertPeople: next });
+          }}
           onBack={back}
           onClose={() => {
             setWindows([]);

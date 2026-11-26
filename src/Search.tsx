@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { backend, errorText, statusDot, type AvatarCard, type Person, type WorldCard } from "./backend";
+import { MarkBadges, useWorldMarks } from "./Mine";
 import { openThing } from "./Detail";
 import { savedAvatarProviders } from "./settings";
 import { Avatar, tidy } from "./bits";
@@ -21,6 +22,8 @@ export function Search({ onDone }: { onDone: (message: string) => void }) {
   const [problem, setProblem] = useState("");
   const [people, setPeople] = useState<Person[]>([]);
   const [worlds, setWorlds] = useState<WorldCard[]>([]);
+  const marks = useWorldMarks();
+  const [newOnly, setNewOnly] = useState(false);
   const [avatars, setAvatars] = useState<AvatarCard[]>([]);
   const [wearing, setWearing] = useState("");
 
@@ -168,7 +171,13 @@ export function Search({ onDone }: { onDone: (message: string) => void }) {
 
       {kind === "worlds" && answered && worlds.length > 0 && (
         <ul className="results results-worlds">
-          {worlds.map((w) => (
+          <li className="results-tool">
+            <label className="tool">
+              <input type="checkbox" checked={newOnly} onChange={(e) => setNewOnly(e.target.checked)} />
+              Only worlds I have not been to
+            </label>
+          </li>
+          {worlds.filter((w) => !newOnly || !marks.visits[w.id]).map((w) => (
             <li key={w.id} className="world-result">
               <button className="tile-open" onClick={() => openThing("world", w.id)} title="Open this world">
                 <div className="room-pic" style={w.image ? { backgroundImage: `url("${w.image}")` } : undefined} />
@@ -177,6 +186,7 @@ export function Search({ onDone }: { onDone: (message: string) => void }) {
                 <button className="name-link result-name" onClick={() => openThing("world", w.id)}>
                   {tidy(w.name)}
                 </button>
+                <MarkBadges id={w.id} marks={marks} />
                 <span className="result-note">
                   by {w.author || "unknown"}, up to {w.capacity} people, {w.visits.toLocaleString()} visits
                   {w.occupants > 0 ? `, ${w.occupants} in public instances now` : ""}

@@ -21,7 +21,7 @@ use crate::gamelog;
 use crate::store::{AvatarWorn, LocalFavorite, LostAvatar, Sighting, Store, Visit};
 use crate::vrchat::client::{user_agent, ApiClient, PIPELINE_URL};
 use crate::vrchat::events::{self, Effect};
-use crate::vrchat::model::{now_utc, parse_location, Favorites, FeedItem, Friend, Instance, Me, World};
+use crate::vrchat::model::{now_utc, parse_location, Favorites, FeedDraft, FeedItem, Friend, Instance, Me, World};
 use crate::vrchat::notices::{self, Handled, Notice};
 use crate::vrchat::people::{AvatarCard, Person, Together, WorldCard};
 
@@ -84,6 +84,8 @@ pub struct Hub {
     blocked: Mutex<Option<(String, Value)>>,
     /// Picture, rank and status of people looked up for a list, kept while the app runs.
     briefs: Mutex<HashMap<String, Value>>,
+    /// Put my own world, avatar and status changes into the feed too.
+    own_feed: std::sync::atomic::AtomicBool,
 }
 
 /// Which notifications get a Windows pop-up. The window sends its switches here,
@@ -165,6 +167,7 @@ impl Hub {
             fav_cache: Mutex::new(HashMap::new()),
             blocked: Mutex::new(None),
             briefs: Mutex::new(HashMap::new()),
+            own_feed: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -177,11 +180,82 @@ impl Hub {
     }
 
     /// Notes that I now wear this avatar and asks VRChat for its details.
+    /// Whether my own changes go into the feed. Off unless the window says otherwise.
+    pub fn set_own_feed(&self, on: bool) {
+        self.own_feed.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Writes one of my own changes into the feed, when that is switched on.
+    fn own_entry(&self, kind: &'static str, detail: &str, previous: &str, location: &str) {
+        if !self.own_feed.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let Some(me) = self.me() else { return };
+        let draft = FeedDraft {
+            user_id: me.id,
+            display_name: "You".into(),
+            kind,
+            detail: detail.to_string(),
+            previous: previous.to_string(),
+            location: location.to_string(),
+        };
+        if let Ok(item) = self.with_store(|s| s.add_feed(&draft)) {
+            self.send("feed:new", json!(item));
+        }
+    }
+
+    /// My status or status text changed, as VRChat reports it for my own account.
+    fn own_status_changed(&self, user: &Value) {
+        let (mut status, mut text) = (None, None);
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let Some(me) = inner.me.as_mut() else { return };
+            if let Some(now) = user.get("status").and_then(Value::as_str) {
+                if !now.is_empty() && now != me.status {
+                    status = Some((now.to_string(), std::mem::replace(&mut me.status, now.to_string())));
+                }
+            }
+            if let Some(now) = user.get("statusDescription").and_then(Value::as_str) {
+                if now != me.status_description {
+                    text = Some((now.to_string(), std::mem::replace(&mut me.status_description, now.to_string())));
+                }
+            }
+        }
+        if let Some((now, before)) = status {
+            self.own_entry("status", &now, &before, "");
+        }
+        if let Some((now, before)) = text {
+            self.own_entry("statusText", &now, &before, "");
+        }
+    }
+
+    pub fn last_seen(&self) -> AppResult<HashMap<String, String>> {
+        self.with_store(|s| Ok(s.last_seen()?.into_iter().collect()))
+    }
+
+    pub fn ratings(&self) -> AppResult<HashMap<String, i64>> {
+        self.with_store(|s| Ok(s.ratings()?.into_iter().collect()))
+    }
+
+    /// My stars for a world or an avatar, 0 to take them away.
+    pub fn set_rating(&self, item_id: &str, stars: i64) -> AppResult<()> {
+        if !(item_id.starts_with("wrld_") || item_id.starts_with("wld_") || item_id.starts_with("avtr_")) || !(0..=5).contains(&stars) {
+            return Err(AppError::CannotDo("Stars go from 1 to 5, on a world or an avatar.".into()));
+        }
+        self.with_store(|s| s.set_rating(item_id, stars, &now_utc()))
+    }
+
+    /// World id to how often I was there and when last.
+    pub fn world_visits(&self) -> AppResult<HashMap<String, (i64, String)>> {
+        self.with_store(|s| Ok(s.world_visits()?.into_iter().map(|(id, n, at)| (id, (n, at))).collect()))
+    }
+
     fn avatar_changed(&self, avatar_id: &str) {
         if !avatar_id.starts_with("avtr_") {
             return;
         }
         if let Ok(true) = self.with_store(|s| s.wear_avatar(avatar_id, &now_utc())) {
+            self.own_entry("avatar", "", "", "");
             if let Some(tx) = &self.inner.lock().unwrap().world_tx {
                 let _ = tx.send(Job::Avatar(avatar_id.to_string()));
             }
@@ -1117,6 +1191,8 @@ impl Hub {
 
     /// Reads new game-log lines every couple of seconds. Local files only.
     async fn log_worker(self: Arc<Self>, dir: PathBuf) {
+        // The stay I was in when the last pass ended; a different one means I moved.
+        let mut stay: Option<Option<i64>> = None;
         loop {
             let changed = {
                 let inner = self.inner.lock().unwrap();
@@ -1125,6 +1201,15 @@ impl Hub {
                     None => false,
                 }
             };
+            if let Ok(here) = self.here() {
+                let now = here.as_ref().map(|(visit, _)| visit.id);
+                if let (Some(before), Some((visit, _))) = (stay, here.as_ref()) {
+                    if before != now {
+                        self.own_entry("location", "", "", &visit.location);
+                    }
+                }
+                stay = Some(now);
+            }
             if changed {
                 if let Ok(Some((visit, _))) = self.here() {
                     if !visit.world_id.is_empty() {
@@ -1647,6 +1732,7 @@ impl Hub {
             if let Some(id) = user.get("currentAvatar").and_then(Value::as_str) {
                 self.avatar_changed(id);
             }
+            self.own_status_changed(user);
             return false;
         }
         if kind.contains("notification") {

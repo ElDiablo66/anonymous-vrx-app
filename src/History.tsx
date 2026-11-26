@@ -23,6 +23,36 @@ export const launched = {
   vr: "Starting VRChat in VR, straight into that instance.",
 };
 
+/** Asks VRChat once whether an instance from the past is still there, and how many are in it. */
+function StillOpen({ location }: { location: string }) {
+  const [state, setState] = useState<{ open: boolean; users: number; capacity: number } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setState(null);
+    void backend
+      .thing("instance", location)
+      .then((raw) => {
+        if (!alive) return;
+        const i = (raw ?? {}) as Record<string, unknown>;
+        const n = (v: unknown) => (typeof v === "number" ? v : 0);
+        const closed = typeof i.closedAt === "string" && i.closedAt !== "";
+        setState({ open: !closed && typeof i.id === "string", users: n(i.n_users) || n(i.userCount), capacity: n(i.capacity) });
+      })
+      .catch(() => alive && setState({ open: false, users: 0, capacity: 0 }));
+    return () => {
+      alive = false;
+    };
+  }, [location]);
+  if (!state) return <p className="tile-note still-open">Asking VRChat if this instance is still open</p>;
+  return (
+    <p className={`tile-note still-open ${state.open ? "still-yes" : "still-no"}`}>
+      {state.open
+        ? `Still open, ${state.users} ${state.users === 1 ? "person" : "people"} in it now${state.capacity ? ` of ${state.capacity}` : ""}.`
+        : "This instance has closed, or you can no longer see it."}
+    </p>
+  );
+}
+
 /**
  * Ways into an instance. "Join in VRChat" starts the game there (or moves the
  * running game). "Invite me" is for when the game is already open.
@@ -254,6 +284,7 @@ function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
               </button>
               {isOpen && (
                 <>
+                  {v.leftAt && v.place.kind === "world" && <StillOpen location={v.location} />}
                   <WayBack location={v.location} onDone={onDone} />
                   <PeopleList people={people} friends={friends} meId={meId} />
                 </>

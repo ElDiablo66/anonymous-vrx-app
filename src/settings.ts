@@ -57,6 +57,17 @@ export interface Settings {
   activityShown: boolean;
   /** Favourite groups whose friends raise no notification, by group key. */
   alertGroupsOff: string[];
+  /** Put my own world, avatar and status changes into the feed. */
+  feedMine: boolean;
+  /** No Windows notifications between two times of day. */
+  quietHours: boolean;
+  /** "23:00" style, local time. */
+  quietFrom: string;
+  quietTo: string;
+  /** No Windows notifications while VRChat is running. */
+  quietInGame: boolean;
+  /** Friends with a notification rule of their own: user id to their name and the rule. */
+  alertPeople: Record<string, { name: string; rule: "always" | "never" }>;
   /** Bring the window up when VRChat starts. */
   openWithGame: boolean;
   /** What to do when VRChat closes without a goodbye while I am in an instance. */
@@ -126,6 +137,12 @@ function load(): Settings {
     hidePeople: false,
     activityShown: true,
     alertGroupsOff: [],
+    feedMine: false,
+    quietHours: false,
+    quietFrom: "23:00",
+    quietTo: "08:00",
+    quietInGame: false,
+    alertPeople: {},
     openWithGame: false,
     rejoin: "ask",
     autoBackup: true,

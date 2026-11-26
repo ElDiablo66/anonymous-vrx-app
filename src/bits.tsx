@@ -100,6 +100,17 @@ export function sinceWords(iso: string): string {
   return rest ? `${hours} h ${rest} min` : `${hours} h`;
 }
 
+/** How long ago in whole days, for things that happened a while back: "today", "3 days ago", "5 months ago". */
+export function daysAgo(iso: string): string {
+  if (!iso) return "";
+  const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
+  if (days < 1) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 60) return `${days} days ago`;
+  if (days < 730) return `${Math.round(days / 30)} months ago`;
+  return `${Math.round(days / 365)} years ago`;
+}
+
 /**
  * World names often use full-width brackets and spaces, which the heading font
  * draws with big gaps. This swaps them for the ordinary characters.
