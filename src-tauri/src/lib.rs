@@ -1,11 +1,13 @@
 pub mod backup;
 pub mod discord;
 pub mod error;
+pub mod gamecache;
 pub mod gamelog;
 pub mod hub;
 pub mod photos;
 pub mod secrets;
 pub mod store;
+pub mod vr;
 pub mod vrchat;
 
 use std::sync::{Arc, Mutex};
@@ -577,9 +579,150 @@ fn vrcx_found() -> bool {
 
 /// Brings VRCX's history for the signed-in account into this app. Makes a backup first.
 #[tauri::command]
-fn import_vrcx(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String) -> AppResult<serde_json::Value> {
+fn import_vrcx(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String, by_itself: Option<bool>) -> AppResult<serde_json::Value> {
     let file = vrcx_file().ok_or_else(|| AppError::CannotDo("VRCX's history file was not found on this PC.".into()))?;
-    hub.import_vrcx(&file, &backups_root(&app)?, &settings)
+    hub.import_vrcx(&file, &backups_root(&app)?, &settings, by_itself.unwrap_or(false))
+}
+
+/// A short text that changes whenever VRCX has written to its history: the size and the time
+/// of its file and of the file it writes to first. Empty when VRCX is not on this PC.
+#[tauri::command]
+fn vrcx_stamp() -> String {
+    let Some(file) = vrcx_file().filter(|f| f.is_file()) else {
+        return String::new();
+    };
+    let mut wal = file.clone().into_os_string();
+    wal.push("-wal");
+    [file, std::path::PathBuf::from(wal)]
+        .iter()
+        .filter_map(|f| std::fs::metadata(f).ok())
+        .map(|m| {
+            let at = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+            format!("{}:{}", m.len(), at)
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+// ---------- drawing without the graphics card ----------
+
+/// The file whose presence means "draw without the graphics card". It has to be found before
+/// the window exists, so its place is worked out by hand: the same folder Tauri uses.
+fn no_gpu_flag() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("app.anonymousvrx.desktop").join("draw without graphics card"))
+}
+
+/// Tells the window's browser part to leave the graphics card alone, when I asked for that.
+/// Read once, before the window is made; a change counts from the next start.
+fn apply_gpu_choice() {
+    if !no_gpu_flag().is_some_and(|f| f.is_file()) {
+        return;
+    }
+    const NAME: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
+    let mut args = std::env::var(NAME).unwrap_or_default();
+    if !args.contains("--disable-gpu") {
+        if !args.is_empty() {
+            args.push(' ');
+        }
+        args.push_str("--disable-gpu");
+        std::env::set_var(NAME, args);
+    }
+}
+
+/// Whether the app is set to draw without the graphics card from the next start on.
+#[tauri::command]
+fn get_no_gpu() -> bool {
+    no_gpu_flag().is_some_and(|f| f.is_file())
+}
+
+#[tauri::command]
+fn set_no_gpu(on: bool) -> AppResult<()> {
+    let file = no_gpu_flag().ok_or_else(|| AppError::Storage("Windows did not say where the app's files are.".into()))?;
+    if on {
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| AppError::Storage(e.to_string()))?;
+        }
+        std::fs::write(&file, b"The app draws without the graphics card while this file is here.").map_err(|e| AppError::Storage(e.to_string()))
+    } else if file.is_file() {
+        std::fs::remove_file(&file).map_err(|e| AppError::Storage(e.to_string()))
+    } else {
+        Ok(())
+    }
+}
+
+/// Closes the app and opens it again, so a choice that counts from the start takes hold.
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    discord::show(None);
+    app.restart();
+}
+
+// ---------- VRChat's download cache ----------
+
+fn game_folder() -> AppResult<std::path::PathBuf> {
+    gamecache::game_folder().ok_or_else(|| AppError::CannotDo("Windows did not say where VRChat keeps its files.".into()))
+}
+
+/// How big VRChat's cache is. Counting tens of gigabytes takes a moment, so it runs aside.
+#[tauri::command]
+async fn game_cache() -> AppResult<gamecache::CacheInfo> {
+    let game = game_folder()?;
+    tauri::async_runtime::spawn_blocking(move || gamecache::measure(&game)).await.map_err(|e| AppError::Storage(e.to_string()))
+}
+
+/// Clears VRChat's cache: all of it, or only versions a newer download replaced. Refused while
+/// the game runs, because it would be reading those files.
+#[tauri::command]
+async fn clear_game_cache(old_only: bool) -> AppResult<gamecache::Cleared> {
+    let game = game_folder()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if is_running("VRChat.exe") {
+            return Err(AppError::CannotDo("Close VRChat first. It is using the cache right now.".into()));
+        }
+        gamecache::clear(&game, old_only)
+    })
+    .await
+    .map_err(|e| AppError::Storage(e.to_string()))?
+}
+
+/// Sets how big VRChat lets its cache grow, in gigabytes. VRChat reads it at its next start.
+#[tauri::command]
+fn set_game_cache_limit(gb: u64) -> AppResult<u64> {
+    gamecache::set_limit(&game_folder()?, gb)
+}
+
+// ---------- notices in the headset ----------
+
+static VR_RULES: Mutex<Option<vr::Rules>> = Mutex::new(None);
+
+#[tauri::command]
+fn set_vr_notices(rules: vr::Rules) {
+    *VR_RULES.lock().unwrap() = Some(rules);
+}
+
+/// Hands a notice to the overlay programs switched on, while VRChat runs. Quiet hours hold
+/// here too; "quiet while VRChat runs" does not, since the headset is where I am looking then.
+fn vr_notice(title: String, body: String) {
+    let Some(rules) = (*VR_RULES.lock().unwrap()).filter(vr::Rules::any) else {
+        return;
+    };
+    if !GAME_RUNNING.load(std::sync::atomic::Ordering::Relaxed) || in_quiet_time() {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let _ = vr::send(rules, title, body).await;
+    });
+}
+
+#[tauri::command]
+fn notify_vr(title: String, body: String) {
+    vr_notice(title, body);
+}
+
+/// Sends a sample notice now, game running or not, and says how each overlay program took it.
+#[tauri::command]
+async fn test_vr_notice(rules: vr::Rules) -> Vec<vr::Sent> {
+    vr::send(rules, "Anonymous VRX".into(), "This is what a notice looks like in the headset.".into()).await
 }
 
 /// Makes the daily automatic backup when it is due. Nothing happens otherwise.
@@ -706,14 +849,18 @@ fn may_notify() -> bool {
     if rules.in_game && GAME_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
         return false;
     }
-    if rules.hours {
-        use chrono::Timelike;
-        let now = chrono::Local::now();
-        if in_quiet_hours(rules.from, rules.to, (now.hour() * 60 + now.minute()) as u16) {
-            return false;
-        }
+    !in_quiet_time()
+}
+
+/// Whether the clock is inside the quiet hours I set.
+fn in_quiet_time() -> bool {
+    let rules = QUIET.lock().unwrap().unwrap_or_default();
+    if !rules.hours {
+        return false;
     }
-    true
+    use chrono::Timelike;
+    let now = chrono::Local::now();
+    in_quiet_hours(rules.from, rules.to, (now.hour() * 60 + now.minute()) as u16)
 }
 
 #[tauri::command]
@@ -962,6 +1109,7 @@ fn add_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 pub fn run() {
+    apply_gpu_choice();
     tauri::Builder::default()
         // Starting the app a second time brings the running one to the front.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -982,12 +1130,13 @@ pub fn run() {
             let api = Arc::new(ApiClient::new().map_err(|e: AppError| e.to_string())?);
             let emit: hub::Emit = Arc::new(move |name, payload| {
                 if name == "popup" {
+                    let text = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    vr_notice(text("title"), text("body"));
                     if !may_notify() {
                         return;
                     }
                     // Shown from here, so it works while the window is hidden in the tray.
                     use tauri_plugin_notification::NotificationExt;
-                    let text = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let mut note = handle.notification().builder().title(text("title"));
                     let body = text("body");
                     if !body.is_empty() {
@@ -1092,6 +1241,16 @@ pub fn run() {
             auto_backup,
             vrcx_found,
             import_vrcx,
+            vrcx_stamp,
+            get_no_gpu,
+            set_no_gpu,
+            restart_app,
+            game_cache,
+            clear_game_cache,
+            set_game_cache_limit,
+            set_vr_notices,
+            notify_vr,
+            test_vr_notice,
             restore_backup,
             open_backups_folder,
             photos,

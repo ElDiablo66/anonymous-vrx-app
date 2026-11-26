@@ -304,6 +304,31 @@ export const demoBackend: Backend = {
   async vrcxFound() {
     return true;
   },
+  async vrcxStamp() {
+    return "";
+  },
+  async getNoGpu() {
+    return false;
+  },
+  async setNoGpu() {},
+  async restartApp() {},
+  async gameCache() {
+    return { path: "C:\\Users\\You\\AppData\\LocalLow\\VRChat\\VRChat\\Cache-WindowsPlayer", found: true, bytes: 23_640_000_000, items: 412, oldVersions: 37, oldBytes: 3_180_000_000, limitGb: 30 };
+  },
+  async clearGameCache(oldOnly) {
+    return { bytes: oldOnly ? 3_180_000_000 : 23_640_000_000, folders: oldOnly ? 37 : 412, kept: 0 };
+  },
+  async setGameCacheLimit(gb) {
+    return Math.max(30, gb);
+  },
+  async setVrNotices() {},
+  async testVrNotice(rules) {
+    return [
+      ...(rules.xs ? [{ target: "XSOverlay", ok: true, problem: "" }] : []),
+      ...(rules.ovrHud ? [{ target: "OVR Toolkit, in view", ok: false, problem: "It is not running, or its outside messages are switched off." }] : []),
+      ...(rules.ovrWrist ? [{ target: "OVR Toolkit, on the wrist", ok: false, problem: "It is not running, or its outside messages are switched off." }] : []),
+    ];
+  },
   async importVrcx() {
     await wait(900);
     return { broughtOver: { feed: 1840, friendLog: 61, visits: 412, people: 3907, notes: 4, favourites: 12 }, backup: "before bringing over VRCX 2026-11-25 21.10.00" };
@@ -330,6 +355,8 @@ export const demoBackend: Backend = {
         displayName: f.displayName,
         tags: ["system_trust_trusted", "language_eng", "language_spa", "system_supporter"],
         ageVerificationStatus: "18+",
+        bannerColor: "#c2410c",
+        iconFrame: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd166"/><stop offset="1" stop-color="#ef476f"/></linearGradient></defs><circle cx="50" cy="50" r="39" fill="none" stroke="url(#g)" stroke-width="5"/><circle cx="50" cy="50" r="45" fill="none" stroke="#ffd166" stroke-opacity=".45" stroke-width="1.5" stroke-dasharray="3 5"/></svg>')}`,
         last_activity: ago(33),
         currentAvatar: "avtr_demo_worn",
         currentAvatarName: "Sunset Fox",

@@ -452,15 +452,27 @@ impl Hub {
 
     /// Brings the history VRCX kept for this account into this one. A backup is made first,
     /// named so it can be told apart, and VRCX's own file is only read.
-    pub fn import_vrcx(&self, other: &std::path::Path, backups: &std::path::Path, settings_json: &str) -> AppResult<Value> {
+    ///
+    /// `by_itself` is the run the app makes when VRCX's file has changed. It backs up at most
+    /// once a day and keeps three of those, so a PC with both apps open does not fill up.
+    pub fn import_vrcx(&self, other: &std::path::Path, backups: &std::path::Path, settings_json: &str, by_itself: bool) -> AppResult<Value> {
         let me = self.me().ok_or(AppError::NotSignedIn)?;
         if !other.is_file() {
             return Err(AppError::CannotDo("VRCX's history file was not found on this PC.".into()));
         }
-        let saved = self.backup(backups, settings_json, "before bringing over VRCX")?;
+        const QUIET_LABEL: &str = "before taking over VRCX news";
+        let saved = if !by_itself {
+            self.backup(backups, settings_json, "before bringing over VRCX")?.name
+        } else if backup::due_for(backups, QUIET_LABEL, std::time::Duration::from_secs(24 * 3600)) {
+            let made = self.backup(backups, settings_json, QUIET_LABEL)?;
+            backup::prune_for(backups, QUIET_LABEL, 3);
+            made.name
+        } else {
+            String::new()
+        };
         let got = self.with_store(|s| s.import_vrcx(other, &me.id))?;
         self.send("here:changed", Value::Null);
-        Ok(json!({ "broughtOver": got, "backup": saved.name }))
+        Ok(json!({ "broughtOver": got, "backup": saved }))
     }
 
     /// Makes an automatic backup when the last one is older than a day, then keeps only the

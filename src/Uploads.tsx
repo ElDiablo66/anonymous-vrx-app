@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { backend, errorText } from "./backend";
-import { tidy } from "./bits";
+import { dateText, tidy } from "./bits";
 import { openThing } from "./Detail";
 import { usePic } from "./Pic";
 import { ALL_TAGS, TagChips, TagEditor, TagFilter, liveTag, passesTag, useTags } from "./Mine";
@@ -13,7 +13,7 @@ const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 const list = (v: unknown): Json[] => (Array.isArray(v) ? (v.filter((x) => x && typeof x === "object") as Json[]) : []);
 
 function when(iso: string): string {
-  return iso ? new Date(iso).toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) : "";
+  return dateText(iso, "short");
 }
 
 function Picture({ url }: { url: string }) {

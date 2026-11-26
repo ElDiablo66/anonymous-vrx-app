@@ -159,6 +159,26 @@ export interface HereNow {
 }
 
 /** One event on a group's calendar. */
+export interface GameCache {
+  path: string;
+  found: boolean;
+  bytes: number;
+  /** Worlds and avatars kept. */
+  items: number;
+  /** Versions a newer download has replaced, and how much room they take. */
+  oldVersions: number;
+  oldBytes: number;
+  limitGb: number;
+}
+
+export interface VrRules {
+  xs: boolean;
+  ovrHud: boolean;
+  ovrWrist: boolean;
+  seconds: number;
+  opacity: number;
+}
+
 export interface CalendarEvent {
   id: string;
   groupId: string;
@@ -473,7 +493,25 @@ export interface Backend {
   /** Whether VRCX's history file is on this PC. */
   vrcxFound(): Promise<boolean>;
   /** Brings VRCX's history for my account into this app, after making a backup. Safe to run again. */
-  importVrcx(settings: string): Promise<{ broughtOver: { feed: number; friendLog: number; visits: number; people: number; notes: number; favourites: number }; backup: string }>;
+  /** Changes whenever VRCX has written to its history. Empty when VRCX is not on this PC. */
+  vrcxStamp(): Promise<string>;
+  /** Draw without the graphics card, from the next start on. */
+  getNoGpu(): Promise<boolean>;
+  setNoGpu(on: boolean): Promise<void>;
+  /** Closes the app and opens it again. */
+  restartApp(): Promise<void>;
+  /** VRChat's own download cache on this PC. */
+  gameCache(): Promise<GameCache>;
+  /** Clears it: everything, or only versions a newer download replaced. Refused while VRChat runs. */
+  clearGameCache(oldOnly: boolean): Promise<{ bytes: number; folders: number; kept: number }>;
+  /** How big VRChat lets the cache grow, in GB. Gives back what was written (never under 30). */
+  setGameCacheLimit(gb: number): Promise<number>;
+  /** Which overlay programs get my notifications in the headset. */
+  setVrNotices(rules: VrRules): Promise<void>;
+  /** Sends a sample notice now and says how each program took it. */
+  testVrNotice(rules: VrRules): Promise<Array<{ target: string; ok: boolean; problem: string }>>;
+  /** `byItself` is the quiet run the app makes when VRCX's file has changed. */
+  importVrcx(settings: string, byItself?: boolean): Promise<{ broughtOver: { feed: number; friendLog: number; visits: number; people: number; notes: number; favourites: number }; backup: string }>;
   /** Makes the daily automatic backup if one is due and keeps the newest `keep`. Null when none was due. */
   autoBackup(settings: string, keep: number): Promise<BackupInfo | null>;
   backups(): Promise<BackupInfo[]>;
@@ -602,6 +640,8 @@ const desktop: Backend = {
   noticeAction: (id, action, replyKind, replyData) =>
     invoke("notice_action", { id, action, replyKind: replyKind ?? null, replyData: replyData ?? null }),
   notify: async (title, body, always) => {
+    // The headset gets it as well, by its own rules.
+    if (!always) void invoke("notify_vr", { title, body }).catch(() => {});
     if (!always && !(await invoke<boolean>("may_notify"))) return false;
     let allowed = await isPermissionGranted();
     if (!allowed) allowed = (await requestPermission()) === "granted";
@@ -625,7 +665,16 @@ const desktop: Backend = {
   restoreBackup: (name, settings) => invoke("restore_backup", { name, settings }),
   autoBackup: (settings, keep) => invoke("auto_backup", { settings, keep }),
   vrcxFound: () => invoke("vrcx_found"),
-  importVrcx: (settings) => invoke("import_vrcx", { settings }),
+  importVrcx: (settings, byItself) => invoke("import_vrcx", { settings, byItself: byItself ?? false }),
+  vrcxStamp: () => invoke("vrcx_stamp"),
+  getNoGpu: () => invoke("get_no_gpu"),
+  setNoGpu: (on) => invoke("set_no_gpu", { on }),
+  restartApp: () => invoke("restart_app"),
+  gameCache: () => invoke("game_cache"),
+  clearGameCache: (oldOnly) => invoke("clear_game_cache", { oldOnly }),
+  setGameCacheLimit: (gb) => invoke("set_game_cache_limit", { gb }),
+  setVrNotices: (rules) => invoke("set_vr_notices", { rules }),
+  testVrNotice: (rules) => invoke("test_vr_notice", { rules }),
   openBackupsFolder: () => invoke("open_backups_folder"),
   here: () => invoke("get_here"),
   visits: (limit, before) => invoke("get_visits", { limit, before: before ?? null }),

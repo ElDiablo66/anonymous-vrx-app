@@ -11,7 +11,63 @@ export const EXTRA_AVATAR_PROVIDERS = [
   { name: "Puppy's Avatar World", url: "https://paw-api.amelia.fun/vrcx_search" },
 ];
 
+/** Fonts that come with the app, then ones every Windows PC has. The first of each list is the default. */
+export const headingFonts = ["Barlow Condensed", "Rajdhani", "Orbitron Variable", "Outfit Variable", "Space Grotesk Variable", "Bahnschrift", "Impact", "Georgia", "Segoe UI"];
+export const textFonts = ["Instrument Sans Variable", "Outfit Variable", "Space Grotesk Variable", "Rajdhani", "Segoe UI", "Bahnschrift", "Verdana", "Georgia", "Consolas"];
+
+/** The trust ranks in VRChat's order, with the colour each has unless I pick another. */
+export const rankDefaults = {
+  Visitor: "#cccccc",
+  NewUser: "#4f9bff",
+  User: "#2bcf5c",
+  KnownUser: "#ff7b42",
+  TrustedUser: "#b18cff",
+  Nuisance: "#ff5470",
+} as const;
+export type RankKey = keyof typeof rankDefaults;
+export const rankWords: Record<RankKey, string> = {
+  Visitor: "Visitor",
+  NewUser: "New User",
+  User: "User",
+  KnownUser: "Known User",
+  TrustedUser: "Trusted User",
+  Nuisance: "Nuisance",
+};
+
 export interface Settings {
+  /** `pc` follows Windows; otherwise a 12-hour or 24-hour clock everywhere. */
+  timeFormat: "pc" | "12" | "24";
+  /** `words` writes "25 November 2026", `iso` writes "2026-11-25". */
+  dateFormat: "words" | "iso";
+  /** The font of headings and of everything else. A name from the lists, or any font installed on this PC. */
+  headingFont: string;
+  textFont: string;
+  /** Headings lean to the right. */
+  headingSlant: boolean;
+  /** What colours a name in lists: the trust rank, one colour per person, or nothing. */
+  nameColours: "rank" | "person" | "plain";
+  /** Own colours for the trust ranks; a rank left out keeps its usual colour. */
+  rankColours: Partial<Record<RankKey, string>>;
+  /** Show an instance's own number or name next to its kind. */
+  showInstanceId: boolean;
+  /** List instances that only let in people VRChat has verified as 18 or older. */
+  showAgeGated: boolean;
+  /** Show the icon frame, the profile effect and the banner colour a person picked in VRChat. */
+  profileCosmetics: boolean;
+  /** Tint a profile window with the person's banner colour or banner picture. */
+  profileBackdrop: boolean;
+  /** How strong that tint is, 0.1 to 0.9. */
+  profileBackdropStrength: number;
+  /** Take over what is new in VRCX's history by itself. */
+  vrcxAuto: boolean;
+  /** Send my notifications into the headset through XSOverlay or OVR Toolkit. */
+  vrXs: boolean;
+  vrOvrHud: boolean;
+  vrOvrWrist: boolean;
+  /** How many seconds a notice stays up in XSOverlay. */
+  vrSeconds: number;
+  /** How see-through a notice is in XSOverlay, 0.2 to 1. */
+  vrOpacity: number;
   /** A fixed size, or null to let the size follow the window. */
   size: number | null;
   rows: "roomy" | "tight";
@@ -163,6 +219,24 @@ function load(): Settings {
     avatarProvider: DEFAULT_AVATAR_PROVIDER,
     avatarExtras: EXTRA_AVATAR_PROVIDERS.map((p) => p.url),
     cardPacking: "rows",
+    timeFormat: "pc",
+    dateFormat: "words",
+    headingFont: headingFonts[0],
+    textFont: textFonts[0],
+    headingSlant: true,
+    nameColours: "rank",
+    rankColours: {},
+    showInstanceId: true,
+    showAgeGated: true,
+    profileCosmetics: true,
+    profileBackdrop: true,
+    profileBackdropStrength: 0.5,
+    vrcxAuto: true,
+    vrXs: false,
+    vrOvrHud: false,
+    vrOvrWrist: false,
+    vrSeconds: 4,
+    vrOpacity: 1,
   };
   try {
     const stored = JSON.parse(read("settings") ?? "{}") as Partial<Settings>;
@@ -178,12 +252,31 @@ function load(): Settings {
     if (!merged.alertPeople || typeof merged.alertPeople !== "object") merged.alertPeople = {};
     if (!Array.isArray(merged.alertGroupsOff)) merged.alertGroupsOff = [];
     if (!merged.feedHidden || typeof merged.feedHidden !== "object") merged.feedHidden = {};
+    if (!["pc", "12", "24"].includes(merged.timeFormat)) merged.timeFormat = defaults.timeFormat;
+    if (!["words", "iso"].includes(merged.dateFormat)) merged.dateFormat = defaults.dateFormat;
+    if (!["rank", "person", "plain"].includes(merged.nameColours)) merged.nameColours = defaults.nameColours;
+    if (!merged.rankColours || typeof merged.rankColours !== "object") merged.rankColours = {};
+    if (typeof merged.headingFont !== "string" || !merged.headingFont.trim()) merged.headingFont = defaults.headingFont;
+    if (typeof merged.textFont !== "string" || !merged.textFont.trim()) merged.textFont = defaults.textFont;
+    if (!(merged.profileBackdropStrength >= 0.1 && merged.profileBackdropStrength <= 0.9)) merged.profileBackdropStrength = defaults.profileBackdropStrength;
+    if (!(merged.vrSeconds >= 1 && merged.vrSeconds <= 30)) merged.vrSeconds = defaults.vrSeconds;
+    if (!(merged.vrOpacity >= 0.2 && merged.vrOpacity <= 1)) merged.vrOpacity = defaults.vrOpacity;
     return merged;
   } catch {
     return defaults;
   }
 }
 
+/** The settings as they are right now, for parts of the window that do not hold them. */
+let current: Settings = load();
+export function live(): Settings {
+  return current;
+}
+
+/** A font name as CSS wants it: quoted, with nothing that could end the quote. */
+function fontName(name: string): string {
+  return `"${name.replace(/["\\;{}<>]/g, "").trim().slice(0, 80)}"`;
+}
 
 /** Every avatar database a search asks: the main one first, then the extra ones switched on. */
 export function savedAvatarProviders(): string[] {
@@ -237,6 +330,14 @@ function applyTheme(s: Settings, picture: string) {
   set("--bg-b", s.background === "custom" ? s.bgB : null);
   set("--bg-image", s.background === "image" && picture ? `url("${picture}")` : null);
   set("--bg-dim", s.background === "image" ? String(s.imageDim) : null);
+  set("--display", s.headingFont === headingFonts[0] ? null : `${fontName(s.headingFont)}, "Barlow Condensed", "Segoe UI", sans-serif`);
+  set("--body", s.textFont === textFonts[0] ? null : `${fontName(s.textFont)}, "Instrument Sans Variable", "Segoe UI", sans-serif`);
+  root.dataset.slant = s.headingSlant ? "on" : "off";
+  root.dataset.names = s.nameColours;
+  for (const key of Object.keys(rankDefaults) as RankKey[]) {
+    const own = s.rankColours[key];
+    set(`--rank-${key}`, own && /^#[0-9a-f]{6}$/i.test(own) ? own : null);
+  }
 }
 
 /**
@@ -281,6 +382,8 @@ export function sizeForWindow(): number {
 
 export function useSettings() {
   const [settings, setSettings] = useState<Settings>(load);
+  // Kept in step while drawing, so a row drawn in the same pass already uses the new choice.
+  current = settings;
   const [fitted, setFitted] = useState(sizeForWindow);
   const [picture, setPictureState] = useState(() => read(IMAGE_KEY) ?? "");
 

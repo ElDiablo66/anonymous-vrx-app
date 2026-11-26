@@ -7,7 +7,8 @@ import { openPicture } from "./Viewer";
 import { Stars, TagEditor, beenWords, useTags, useWorldMarks } from "./Mine";
 import { prettyGroup } from "./Favourites";
 import { SafeImg, usePic } from "./Pic";
-import { accessName, regionName } from "./bits";
+import { accessName, ageGated, instanceName, regionName } from "./bits";
+import { live } from "./settings";
 import { parsePlace } from "./place";
 
 export type ThingKind = "world" | "avatar" | "group" | "instance";
@@ -471,11 +472,13 @@ export function DetailPanel({
                       {instances.map(([instance, count]) => {
                         const location = `${id}:${instance}`;
                         const place = parsePlace(location);
+                        if (ageGated(location) && !live().showAgeGated) return null;
                         return (
                           <li key={instance}>
                             <button className="visit-row" title="Open this instance" onClick={() => openThing("instance", location)}>
-                              <span>#{place.instance}</span>
+                              {live().showInstanceId && <span>#{place.instance}</span>}
                               <span className={`access access-${place.access}`}>{accessName(place)}</span>
+                              {ageGated(location) && <span className="mark mark-adult" title="Only people VRChat has verified as 18 or older get in">18+</span>}
                               <span>{regionName(place)}</span>
                               <span>{count} {count === 1 ? "person" : "people"}</span>
                             </button>
@@ -598,6 +601,7 @@ export function DetailPanel({
                 ) : (
                   <ul className="card-grid">
                     {extra.groupInstances.map((i) => {
+                      if (ageGated(str(i.location)) && !live().showAgeGated) return null;
                       const world = (i.world ?? {}) as Json;
                       const pic = str(world.thumbnailImageUrl) || str(world.imageUrl);
                       return (
@@ -607,6 +611,8 @@ export function DetailPanel({
                             <span className="tile-name">{tidy(str(world.name)) || "World"}</span>
                             <span className="tile-note">
                               {num(i.memberCount)} {num(i.memberCount) === 1 ? "person" : "people"}, {accessName(parsePlace(str(i.location)))}
+                              {ageGated(str(i.location)) ? ", 18+" : ""}
+                              {live().showInstanceId ? `, #${instanceName(str(i.location))}` : ""}
                             </span>
                           </button>
                         </li>

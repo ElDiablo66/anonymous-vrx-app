@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { backend, errorText, type BackupInfo } from "./backend";
 import { Avatar } from "./bits";
 import { DEFAULT_AVATAR_PROVIDER, EXTRA_AVATAR_PROVIDERS, shrinkPicture, sizes, themeColours, type Settings } from "./settings";
+import { DateSettings, FontSettings, GameCacheSettings, InstanceSettings, PeopleColourSettings, PerformanceSettings, ProfileLookSettings, VrNoticeSettings } from "./SettingsMore";
 
 function Swatch({ label, value, set }: { label: string; value: string; set: (value: string) => void }) {
   // Dragging in the colour picker reports a new colour dozens of times a second. The swatch
@@ -41,6 +42,7 @@ const settingsTabs = [
   ["look", "Look and privacy"],
   ["alerts", "Notifications"],
   ["feed", "Feed and Discord"],
+  ["vr", "VR and VRChat"],
   ["data", "Data and account"],
   ["about", "About"],
 ] as const;
@@ -372,6 +374,11 @@ export function SettingsPage({
         </div>
       </section>
 
+      <FontSettings settings={settings} change={change} />
+      <DateSettings settings={settings} change={change} />
+      <PeopleColourSettings settings={settings} change={change} swatch={(label, value, set) => <Swatch label={label} value={value} set={set} />} />
+      <ProfileLookSettings settings={settings} change={change} />
+
       <section data-group="feed">
         <h2>Activity feed</h2>
         <Switch
@@ -538,6 +545,8 @@ export function SettingsPage({
         </div>
       </section>
 
+      <InstanceSettings settings={settings} change={change} />
+
       <section data-group="general">
         <h2>Starting up</h2>
         <Switch
@@ -606,6 +615,11 @@ export function SettingsPage({
           </div>
         </div>
       </section>
+
+      <PerformanceSettings />
+
+      <VrNoticeSettings settings={settings} change={change} />
+      <GameCacheSettings />
 
       <section data-group="general">
         <h2>Avatar search</h2>
@@ -855,6 +869,12 @@ export function SettingsPage({
           the favourites VRCX kept on this PC. VRCX's own file is only read, never changed, and a backup of this app's history is made first. Running
           it again only adds what is new.
         </p>
+        <Switch
+          label="Keep taking over what is new"
+          hint="When the app starts, and once an hour after that, it looks whether VRCX has written anything and brings over only that. You can keep using both."
+          on={settings.vrcxAuto}
+          set={(on) => change({ vrcxAuto: on })}
+        />
         <div className="data-actions">
           <button className="plain go" disabled={!vrcx || bringing} onClick={() => void bringOver()}>
             {bringing ? "Bringing it over" : "Bring my VRCX history over"}
@@ -903,7 +923,7 @@ export function SettingsPage({
         <ul className="credits">
           <li><b>Tauri</b> and <b>React</b>, with the Rust crates they bring along. The window and the interface. MIT and Apache 2.0.</li>
           <li>
-            <b>Instrument Sans</b>, <b>Barlow Condensed</b> and <b>Yellowtail</b>. The fonts. SIL Open Font License 1.1
+            <b>Instrument Sans</b>, <b>Barlow Condensed</b>, <b>Yellowtail</b>, <b>Rajdhani</b>, <b>Orbitron</b>, <b>Outfit</b> and <b>Space Grotesk</b>. The fonts. SIL Open Font License 1.1
             and Apache 2.0.
           </li>
           <li>

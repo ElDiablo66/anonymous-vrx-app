@@ -87,6 +87,26 @@ pub const AUTO_LABEL: &str = "automatic backup";
 
 /// The automatic backups under `root` with the time each was made, newest first.
 fn automatic(root: &Path) -> Vec<(std::time::SystemTime, PathBuf)> {
+    labelled(root, AUTO_LABEL)
+}
+
+/// True when there is no backup with this label yet, or the newest is older than `every`.
+pub fn due_for(root: &Path, label: &str, every: std::time::Duration) -> bool {
+    match labelled(root, label).first() {
+        Some((made, _)) => made.elapsed().map(|age| age >= every).unwrap_or(false),
+        None => true,
+    }
+}
+
+/// Keeps the newest `keep` backups with this label and removes the older ones.
+pub fn prune_for(root: &Path, label: &str, keep: usize) {
+    for (_, folder) in labelled(root, label).into_iter().skip(keep.max(1)) {
+        let _ = fs::remove_dir_all(&folder);
+    }
+}
+
+/// The backups under `root` that carry this label, with the time each was made, newest first.
+fn labelled(root: &Path, label: &str) -> Vec<(std::time::SystemTime, PathBuf)> {
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
     };
@@ -94,7 +114,7 @@ fn automatic(root: &Path) -> Vec<(std::time::SystemTime, PathBuf)> {
         .filter_map(Result::ok)
         .filter(|e| e.path().is_dir())
         // A real one of ours: the right name, and the note this app writes into every backup.
-        .filter(|e| e.file_name().to_string_lossy().starts_with(&format!("{AUTO_LABEL} ")) && e.path().join(ABOUT_FILE).is_file())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&format!("{label} ")) && e.path().join(ABOUT_FILE).is_file())
         .filter_map(|e| Some((e.metadata().and_then(|m| m.modified()).ok()?, e.path())))
         .collect();
     found.sort_by(|a, b| b.0.cmp(&a.0));

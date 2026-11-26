@@ -220,6 +220,37 @@ export function App() {
     };
   }, [me, settings.autoBackup]);
 
+  // What VRCX has written since the last look is taken over without asking, when I want that.
+  useEffect(() => {
+    if (!me || !settings.vrcxAuto) return;
+    const key = `vrcx-seen:${me.id}`;
+    const look = async () => {
+      try {
+        const stamp = await backend.vrcxStamp();
+        if (!stamp || localStorage.getItem(key) === stamp) return;
+        const { broughtOver: got } = await backend.importVrcx(JSON.stringify(settingsNow.current), true);
+        localStorage.setItem(key, stamp);
+        const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites;
+        if (total > 0) setToast(`Brought over ${total.toLocaleString()} new ${total === 1 ? "entry" : "entries"} from VRCX.`);
+      } catch {
+        // VRCX may be in the middle of writing; the next look tries again.
+      }
+    };
+    const first = window.setTimeout(() => void look(), 8_000);
+    const hourly = window.setInterval(() => void look(), 3_600_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(hourly);
+    };
+  }, [me, settings.vrcxAuto]);
+
+  // Which overlay programs get my notifications while I am in the headset.
+  useEffect(() => {
+    void backend
+      .setVrNotices({ xs: settings.vrXs, ovrHud: settings.vrOvrHud, ovrWrist: settings.vrOvrWrist, seconds: settings.vrSeconds, opacity: settings.vrOpacity })
+      .catch(() => {});
+  }, [settings.vrXs, settings.vrOvrHud, settings.vrOvrWrist, settings.vrSeconds, settings.vrOpacity]);
+
   // The title names the tab that is open on screens that have tabs.
   const [tabTitle, setTabTitle] = useState("");
   useEffect(() => {

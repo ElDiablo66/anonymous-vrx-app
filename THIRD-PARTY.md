@@ -8,7 +8,7 @@ None of this is stored in the repository. The table says which licence each piec
 |---|---|---|
 | Tauri v2 | The app window | Apache License 2.0 or MIT |
 | React | The interface | MIT License |
-| Instrument Sans, Barlow Condensed, Yellowtail | The fonts | SIL Open Font License 1.1, Apache License 2.0 |
+| Instrument Sans, Barlow Condensed, Yellowtail, Rajdhani, Orbitron, Outfit, Space Grotesk | The fonts | SIL Open Font License 1.1, Apache License 2.0 |
 
 The Rust crates and npm packages are listed with their versions in `src-tauri/Cargo.lock` and `package-lock.json`. Each carries its own licence.
 

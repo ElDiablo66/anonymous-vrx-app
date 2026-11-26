@@ -2745,19 +2745,22 @@ button {
 }
 
 .rank-TrustedUser {
-  color: #b18cff;
+  color: var(--rank-TrustedUser, #b18cff);
 }
 .rank-KnownUser {
-  color: #ff7b42;
+  color: var(--rank-KnownUser, #ff7b42);
 }
 .rank-User {
-  color: #2bcf5c;
+  color: var(--rank-User, #2bcf5c);
 }
 .rank-NewUser {
-  color: #4f9bff;
+  color: var(--rank-NewUser, #4f9bff);
 }
 .rank-Nuisance {
-  color: var(--busy);
+  color: var(--rank-Nuisance, var(--busy));
+}
+.rank-Visitor {
+  color: var(--rank-Visitor, var(--text-soft));
 }
 .rank-friend {
   color: var(--teal);
@@ -3261,7 +3264,7 @@ button {
 }
 
 .badges li.chip-rank.rank-Visitor {
-  color: var(--text-soft);
+  color: var(--rank-Visitor, var(--text-soft));
 }
 
 .badges li.chip-adult {
@@ -6369,4 +6372,227 @@ body .month-nav .plain {
 
 .events-lead {
   font: italic 700 20px/1 var(--display);
+}
+
+/* =====================================================================
+   Settings added with fonts, dates, name colours, VR and VRChat's cache
+   ===================================================================== */
+.settings-cols[data-show="general"] > section:not([data-group="general"]),
+.settings-cols[data-show="look"] > section:not([data-group="look"]),
+.settings-cols[data-show="alerts"] > section:not([data-group="alerts"]),
+.settings-cols[data-show="feed"] > section:not([data-group="feed"]),
+.settings-cols[data-show="vr"] > section:not([data-group="vr"]),
+.settings-cols[data-show="data"] > section:not([data-group="data"]),
+.settings-cols[data-show="about"] > section:not([data-group="about"]) {
+  display: none;
+}
+
+.settings-cols[data-show="vr"] {
+  columns: 1;
+  max-width: 780px;
+}
+
+/* Upright headings, for whoever does not like the lean. */
+:root[data-slant="off"] body *:not(em):not(i):not(cite) {
+  font-style: normal;
+}
+
+:root[data-names="plain"] .rank-name {
+  color: inherit;
+}
+
+.font-pick {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.font-pick input {
+  width: 220px;
+  height: var(--btn-h);
+  padding: 0 12px;
+  border: 1px solid var(--card-line);
+  border-radius: var(--btn-radius);
+  background: rgb(0 0 0 / 0.25);
+  color: var(--text);
+  font: 500 13.5px/1 var(--body);
+}
+
+.font-sample {
+  display: grid;
+  gap: 6px;
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.22);
+}
+
+.font-sample b {
+  font: italic 700 24px/1.05 var(--display);
+}
+
+.font-sample span {
+  color: var(--text-soft);
+}
+
+.rank-swatches {
+  justify-content: flex-end;
+}
+
+.rank-swatches .swatch {
+  color: inherit;
+  font-weight: 600;
+}
+
+.settings .dim {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings input[type="range"] {
+  width: 180px;
+  accent-color: var(--lamp);
+}
+
+.settings .data-actions .setting-hint {
+  margin: 0;
+  align-self: center;
+}
+
+.cache-meter {
+  height: 12px;
+  margin: 16px 0 10px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 0.35);
+  box-shadow: inset 0 0 0 1px var(--card-line);
+  overflow: hidden;
+}
+
+.cache-meter span {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--teal), var(--lamp));
+  transition: width 0.4s ease;
+}
+
+.cache-meter span.full {
+  background: linear-gradient(90deg, var(--sunset), var(--busy));
+}
+
+.cache-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin: 0 0 14px;
+}
+
+.cache-line b {
+  font: italic 700 22px/1 var(--display);
+  font-variant-numeric: tabular-nums;
+}
+
+.cache-line span {
+  color: var(--text-soft);
+}
+
+.settings .data-actions.backup-ask {
+  align-items: center;
+}
+
+.settings .quiet-times input[type="number"] {
+  width: 92px;
+}
+
+.vr-results {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-soft);
+}
+
+.vr-results li {
+  padding-left: 12px;
+  border-left: 3px solid var(--busy);
+}
+
+.vr-results li.ok {
+  border-left-color: var(--online);
+}
+
+.vr-results b {
+  color: var(--text);
+}
+
+.mark-adult {
+  border-color: #6aa8ff;
+  color: #6aa8ff;
+  background: rgb(106 168 255 / 0.1);
+}
+
+/* ---------- what a person picked in VRChat to dress their profile ---------- */
+.icon-frame {
+  position: absolute;
+  inset: -18%;
+  background: center / contain no-repeat;
+  pointer-events: none;
+}
+
+.profile-effect {
+  position: absolute;
+  inset: 0;
+  background: center / cover no-repeat;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+
+.person-window.tinted::before {
+  content: "";
+  position: absolute;
+  inset: -60px;
+  z-index: 0;
+  background-color: var(--tint);
+  background-image: var(--tint-pic);
+  background-position: center;
+  background-size: cover;
+  filter: blur(48px) saturate(1.25);
+  opacity: calc(var(--tint-strength) * 0.55);
+  pointer-events: none;
+}
+
+.person-window.tinted > * {
+  position: relative;
+  z-index: 1;
+}
+
+:root[data-hide="on"] body .person-window.tinted::before {
+  display: none;
+}
+
+/* The rank chip on a profile wears its rank's colour. */
+body .badges li.chip-rank.rank-TrustedUser {
+  color: var(--rank-TrustedUser, #b18cff);
+}
+body .badges li.chip-rank.rank-KnownUser {
+  color: var(--rank-KnownUser, #ff7b42);
+}
+body .badges li.chip-rank.rank-User {
+  color: var(--rank-User, #2bcf5c);
+}
+body .badges li.chip-rank.rank-NewUser {
+  color: var(--rank-NewUser, #4f9bff);
+}
+body .badges li.chip-rank.rank-Nuisance {
+  color: var(--rank-Nuisance, var(--busy));
+}
+
+.settings .font-pick select {
+  height: var(--btn-h);
 }

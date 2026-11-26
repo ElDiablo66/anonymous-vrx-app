@@ -151,6 +151,12 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | Starting up | It can start with Windows, in the tray, and open its window when VRChat starts |
 | After a crash | When VRChat closes without warning while you are in a world, the app offers to take you back to the same instance, or does it by itself if you choose that |
 | Moving over from VRCX | Copies the friend activity, friend log, world visits, notes and local favourites VRCX recorded for your account into this app. VRCX's file is only read, a backup is made first, and running it again adds only what is new |
+| Keeping up with VRCX | With the switch on, the app looks at start and once an hour whether VRCX has written anything new and brings over only that, with a backup at most once a day. |
+| Notifications in the headset | While VRChat runs, notifications also go to XSOverlay or OVR Toolkit when one of them is running on the PC. Nothing leaves the PC. |
+| VRChat's cache | Shows how full VRChat's download cache is, clears old versions or all of it while the game is closed, and sets the size limit in VRChat's `config.json`. |
+| Fonts, dates and name colours | Pick the heading and text font, a 12 or 24 hour clock, dates in words or as year-month-day, and the colour of each trust rank or one colour per person. |
+| Profile dress | Shows a person's icon frame and profile effect, and tints their profile window with their banner colour or picture. Each can be switched off. |
+| Drawing without the graphics card | A switch for PCs where the window flickers or where VRChat should keep all the graphics memory. Counts from the next start. |
 | Backups | History and settings go to a folder in Documents, by hand or by itself once a day (the newest 7 automatic ones are kept, you can change that). The sign-in is never part of a backup |
 | VRChat outages | A warning appears when VRChat's status page reports trouble |
 | Discord | Optional. Shows the world you are in on your Discord profile, with switches for the world name, the kind of instance, the head count and a Join button. Invite instances show as a private world. Needs your own Discord application ID |
@@ -222,7 +228,7 @@ This app is built on other people's work. Thank you to them.
 | | By | Used for | Licence its makers state |
 |---|---|---|---|
 | [Tauri](https://tauri.app), [React](https://react.dev) | Their contributors | The window and the interface | MIT, Apache-2.0 |
-| Instrument Sans, Barlow Condensed, Yellowtail | Their designers | The fonts | OFL-1.1, Apache-2.0 |
+| Instrument Sans, Barlow Condensed, Yellowtail, Rajdhani, Orbitron, Outfit, Space Grotesk | Their designers | The fonts | OFL-1.1, Apache-2.0 |
 | VRChat | VRChat Inc. | The game this app is a companion to | |
 
 The installer carries the full licence texts in a `licences` folder, and the app lists the same credits under Settings, Credits. [THIRD-PARTY.md](THIRD-PARTY.md) has more detail.

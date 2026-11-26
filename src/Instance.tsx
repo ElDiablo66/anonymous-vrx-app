@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { backend, errorText, type Friend } from "./backend";
-import { Avatar, accessName, regionName, statusTone, tidy } from "./bits";
+import { Avatar, accessName, ageGated, regionName, statusTone, tidy } from "./bits";
+import { live } from "./settings";
 import { openThing } from "./Detail";
 import { WayBack } from "./History";
 import { parsePlace } from "./place";
@@ -91,7 +92,8 @@ export function InstancePanel({
           <ul className="badges">
             <li className={`access access-${place.access}`}>{accessName(place)}</li>
             {regionName(place) && <li>{regionName(place)}</li>}
-            {place.instance && <li>#{place.instance}</li>}
+            {place.instance && live().showInstanceId && <li>#{place.instance}</li>}
+            {ageGated(location) && <li className="chip-adult" title="Only people VRChat has verified as 18 or older get in">18+</li>}
           </ul>
           <WayBack location={location} onDone={onDone} />
         </aside>

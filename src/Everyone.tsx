@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorText, type Favorites, type FeedItem, type Friend, type Moderation, type World } from "./backend";
-import { Avatar, accessName, clock, dayLabel, daysAgo, deviceLine, statusTone, statusWords, tidy } from "./bits";
+import { Avatar, accessName, clock, dayLabel, daysAgo, deviceLine, nameTone, statusTone, statusWords, tidy } from "./bits";
 import { openProfile } from "./Profile";
 
 const rank = { online: 0, active: 1, offline: 2 } as const;
@@ -118,7 +118,7 @@ function BlockedRow({ m, friend, busy, onUndo }: { m: Moderation; friend?: Frien
       <Avatar name={name} image={brief?.image ?? ""} tone={brief ? statusTone(brief) : undefined} />
       <div className="notice-text">
         <p className="notice-title">
-          <button className={`name-link${brief?.rank ? ` rank-name rank-${brief.rank.replace(/ /g, "")}` : ""}`} title={brief?.rank || undefined} onClick={() => openProfile(m.userId)}>
+          <button {...nameTone(m.userId, brief?.rank)} className={`name-link ${nameTone(m.userId, brief?.rank).className}`} onClick={() => openProfile(m.userId)}>
             {name}
           </button>
           {brief?.vrcPlus && <span className="mark" title="VRChat+ supporter">VRC+</span>}
@@ -359,7 +359,7 @@ export function Everyone({
                   <td>
                     <span className="person">
                       <Avatar name={f.displayName} image={f.image} tone={statusTone(f)} />
-                      <span className={f.rank ? `rank-name rank-${f.rank.replace(/ /g, "")}` : ""} title={f.rank || undefined}>
+                      <span {...nameTone(f.id, f.rank)}>
                         {f.displayName}
                       </span>
                       {f.vrcPlus && <span className="mark" title="VRChat+ supporter">VRC+</span>}

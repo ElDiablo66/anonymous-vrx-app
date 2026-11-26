@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { type CSSProperties, useEffect, useState, type ReactNode } from "react";
 import { backend, errorText, type Friend, type Profile, type World } from "./backend";
-import { Avatar, accessName, clock, dayLabel, deviceLine, statusTone, statusWords, tidy } from "./bits";
+import { Avatar, accessName, clock, dateText, dayLabel, deviceLine, statusTone, statusWords, tidy } from "./bits";
 import { WayBack } from "./History";
 import { openThing } from "./Detail";
-import { savedAvatarProvider } from "./settings";
+import { live, savedAvatarProvider } from "./settings";
 import { openPicture } from "./Viewer";
 import { usePic } from "./Pic";
 import { AddFriend, BlockMute, FriendFavourite, Unfriend, type BlockState } from "./FriendTools";
@@ -14,6 +14,23 @@ export function openProfile(userId: string) {
 }
 
 type Json = Record<string, unknown>;
+/**
+ * The picture behind an icon frame or a profile effect. VRChat sends an address, or the id of
+ * a file it keeps; anything else is left out.
+ */
+function cosmeticPicture(value: unknown): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (/^(https:\/\/|data:image\/)/.test(text)) return text;
+  if (/^file_[0-9a-f-]{36}$/.test(text)) return `https://api.vrchat.cloud/api/1/file/${text}/1/file`;
+  return "";
+}
+
+/** A banner colour as CSS can use it: "#aabbcc" from "#aabbcc" or "aabbcc"; empty for anything else. */
+function colourOf(value: unknown): string {
+  const text = typeof value === "string" ? value.trim().replace(/^#/, "") : "";
+  return /^[0-9a-f]{6}$/i.test(text) ? `#${text}` : "";
+}
+
 type Tab = "info" | "mutuals" | "groups" | "worlds" | "favoriteWorlds" | "avatars" | "activity" | "json";
 
 const tabNames: Array<[Tab, string]> = [
@@ -44,7 +61,7 @@ function longTime(seconds: number): string {
 }
 
 function day(iso: string): string {
-  return iso ? new Date(iso).toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" }) : "";
+  return dateText(iso);
 }
 
 function ago(iso: string): string {
@@ -341,6 +358,15 @@ export function ProfilePanel({
   const banner = str(raw.bannerUrl) || str(raw.bannerCustomUrl) || str(raw.profilePicOverride) || str(raw.currentAvatarImageUrl);
   const icon = str(raw.iconUrl) || str(raw.userIcon) || person?.image || friend?.image || "";
   const adult = str(raw.ageVerificationStatus) === "18+";
+  // What the person picked in VRChat to dress their profile: a frame around the picture, an
+  // effect over the banner, and a banner colour.
+  const dressed = live().profileCosmetics;
+  const frame = usePic(dressed ? cosmeticPicture(raw.iconFrame) : "");
+  const effect = usePic(dressed ? cosmeticPicture(raw.profileEffect) : "");
+  const tintOn = live().profileBackdrop;
+  const tintColour = tintOn ? colourOf(raw.bannerColor) : "";
+  const tintPicture = usePic(tintOn && !tintColour ? banner : "");
+  const tinted = !!(tintColour || tintPicture);
   const vrcPlus = raw.hasVrcPlus === true || tags.includes("system_supporter");
   const representedRaw = raw.representedGroup ?? parts.represented;
   const representedBase = representedRaw && typeof representedRaw === "object" ? (representedRaw as Json) : null;
@@ -453,13 +479,22 @@ export function ProfilePanel({
 
   return (
     <div className="veil" onClick={onClose}>
-      <div className="profile person-window" role="dialog" aria-modal="true" aria-label={`${name}, profile`} onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`profile person-window${tinted ? " tinted" : ""}`}
+        style={tinted ? ({ "--tint": tintColour || "transparent", "--tint-pic": tintPicture ? `url("${tintPicture}")` : "none", "--tint-strength": String(live().profileBackdropStrength) } as CSSProperties) : undefined}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${name}, profile`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <aside className="profile-side">
           <div className="banner-pic" style={banner ? { backgroundImage: `url("${banner}")` } : undefined}>
             {banner && <button className="pic-open" onClick={() => openPicture(banner, `${name} banner`, true)} title="Show the banner full size" aria-label="Show the banner full size" />}
             <button className="icon-open" disabled={!icon} onClick={() => openPicture(icon, `${name} picture`, true)} title="Show the profile picture full size" aria-label="Show the profile picture full size">
               <Avatar name={name} image={icon} tone={friend ? statusTone(friend) : undefined} size={104} />
+              {frame && <span className="icon-frame" style={{ backgroundImage: `url("${frame}")` }} aria-hidden="true" />}
             </button>
+            {effect && <span className="profile-effect" style={{ backgroundImage: `url("${effect}")` }} aria-hidden="true" />}
           </div>
           <div className="name-wrap" tabIndex={formerly.length ? 0 : undefined}>
             <h2 className="hide-me">

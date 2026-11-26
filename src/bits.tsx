@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { SafeImg } from "./Pic";
 import type { Friend, Place } from "./backend";
+import { live } from "./settings";
 
 const accessNames: Record<string, string> = {
   public: "Public",
@@ -147,10 +148,49 @@ export function deviceLine(platform: string): string {
   }
 }
 
-/** The time of day the way the PC is set: "4:03pm" on a 12-hour clock, "16:03" on a 24-hour one. */
+/**
+ * The time of day: "4:03pm" on a 12-hour clock, "16:03" on a 24-hour one. Which of the two
+ * follows Windows unless Settings says otherwise.
+ */
 export function clock(iso: string): string {
-  const text = new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const pick = live().timeFormat;
+  const text = new Date(iso).toLocaleTimeString([], { hour: pick === "24" ? "2-digit" : "numeric", minute: "2-digit", ...(pick === "pc" ? {} : { hour12: pick === "12" }) });
   return text.replace(/\s*([AaPp])\.?\s?[Mm]\.?$/, (_, half: string) => `${half.toLowerCase()}m`);
+}
+
+/** "2026-11-25", in the PC's own time. */
+function isoDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** A date: "25 November 2026" or "25 Nov 2026", or "2026-11-25" when Settings asks for that. Empty when unknown. */
+export function dateText(iso: string | number, month: "long" | "short" = "long"): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return live().dateFormat === "iso" ? isoDay(d) : d.toLocaleDateString([], { day: "numeric", month, year: "numeric" });
+}
+
+/**
+ * What colours a name in a list: the trust rank's colour, a colour of the person's own
+ * (always the same one for the same person), or nothing.
+ */
+export function nameTone(userId: string, rank?: string): { className: string; style?: { color: string }; title?: string } {
+  const how = live().nameColours;
+  if (how === "person" && userId) return { className: "rank-name", style: { color: `oklch(0.8 0.13 ${hue(userId)})` }, title: rank || undefined };
+  if (how === "rank" && rank) return { className: `rank-name rank-${rank.replace(/ /g, "")}`, title: rank };
+  return { className: "", title: rank || undefined };
+}
+
+/** The part of a location that names the instance itself: "12345" or a word the maker picked. */
+export function instanceName(location: string): string {
+  const cut = location.indexOf(":");
+  return cut < 0 ? "" : location.slice(cut + 1).split("~")[0];
+}
+
+/** Only people VRChat has verified as 18 or older get into this instance. */
+export function ageGated(location: string): boolean {
+  return /~ageGate(~|$)/.test(location);
 }
 
 export function dayLabel(iso: string): string {
@@ -159,5 +199,6 @@ export function dayLabel(iso: string): string {
   const yesterday = new Date(today.getTime() - 86_400_000);
   if (d.toDateString() === today.toDateString()) return "Today";
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  if (live().dateFormat === "iso") return `${isoDay(d)}, ${d.toLocaleDateString([], { weekday: "long" })}`;
   return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
 }
