@@ -108,7 +108,7 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | Activity feed | Who came online, left, changed world or status. Searchable, saved per account. Your own changes can be included with a switch |
 | Friend log | Who was added, removed or renamed, including while the app was closed |
 | World history | Every instance you visited, for how long, and who was there, read from VRChat's own log files |
-| Photos | The photos VRChat's camera saved on your PC, each with the world it was taken in and who was in the instance, looked up in the world history. The files are not changed |
+| Photos | The photos VRChat's camera saved on your PC, each with the world it was taken in and who was in the instance, looked up in the world history. Search them by world or by who was in the instance at that moment, and up to a day. The files are not changed |
 | Here | The instance you are in now and everyone in it, with friends marked |
 | Going back | From any past instance you can send yourself an invite, copy a join link or open VRChat's join page. Opening a past visit asks VRChat once whether that instance is still open and how many are in it |
 
@@ -133,6 +133,7 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | My tags | Your own tags on avatars, like folders an avatar can be in more than one of. They filter My uploads and favourite avatars, search finds them, and Hide takes an avatar out of the lists without touching it on VRChat |
 | My stars | Your own 1 to 5 star rating on any world, and whether the game log has seen you there, both usable as filters on favourite worlds and in world search. They stay on your PC |
 | Search | People, worlds and avatars |
+| Events | The events of your groups, the ones you follow and VRChat's featured ones, month by month. Follow one and Windows reminds you before it starts |
 
 ### Your own uploads
 

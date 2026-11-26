@@ -210,6 +210,18 @@ async fn get_moderations(hub: State<'_, Arc<Hub>>, fresh: bool) -> AppResult<ser
     hub.moderations(fresh).await
 }
 
+/// One month of events: `which` is `mine`, `following` or `featured`; `month` is `YYYY-MM`.
+#[tauri::command]
+async fn get_calendar(hub: State<'_, Arc<Hub>>, which: String, month: String, fresh: bool) -> AppResult<serde_json::Value> {
+    hub.calendar(&which, &month, fresh).await
+}
+
+/// Follows a group event, or stops following it.
+#[tauri::command]
+async fn follow_event(hub: State<'_, Arc<Hub>>, group_id: String, event_id: String, on: bool) -> AppResult<()> {
+    hub.follow_event(&group_id, &event_id, on).await
+}
+
 /// Picture, rank and status of one person, for a list row.
 #[tauri::command]
 async fn get_person_brief(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<serde_json::Value> {
@@ -826,8 +838,8 @@ fn photos_root(app: &AppHandle) -> AppResult<std::path::PathBuf> {
 
 /// VRChat's photos on this PC, newest first, with the world and people the history has for each.
 #[tauri::command]
-fn photos(app: AppHandle, hub: State<'_, Arc<Hub>>, limit: usize, skip: usize) -> AppResult<serde_json::Value> {
-    hub.photos(&photos_root(&app)?, limit, skip)
+fn photos(app: AppHandle, hub: State<'_, Arc<Hub>>, limit: usize, skip: usize, query: Option<String>, until: Option<String>) -> AppResult<serde_json::Value> {
+    hub.photos(&photos_root(&app)?, limit, skip, query.as_deref().unwrap_or(""), until.as_deref().unwrap_or(""))
 }
 
 /// Opens the folder of one VRChat photo with the file selected.
@@ -1016,6 +1028,8 @@ pub fn run() {
             friend_action,
             get_moderations,
             get_person_brief,
+            get_calendar,
+            follow_event,
             set_moderation,
             upload_action,
             get_friend_status,

@@ -3,6 +3,7 @@ import type { HereNow } from "./backend";
 import { PersonMenu } from "./PersonMenu";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  type CalendarEvent,
   backend,
   errorText,
   type Favorites,
@@ -31,15 +32,17 @@ import { PictureViewer } from "./Viewer";
 import { MyStatus } from "./MyStatus";
 import { InstancePanel } from "./Instance";
 import { Uploads } from "./Uploads";
+import { Events, monthOf } from "./Events";
 import { useSettings } from "./settings";
 import logo from "./assets/logo.svg";
 
-type View = "around" | "here" | "history" | "everyone" | "favourites" | "uploads" | "search" | "inbox" | "settings";
+type View = "around" | "here" | "history" | "everyone" | "favourites" | "events" | "uploads" | "search" | "inbox" | "settings";
 
 /** What the page is called while a tab other than the first is open. */
 const tabTitles: Partial<Record<View, Record<string, string>>> = {
   history: { Worlds: "World history", Photos: "Photos", Avatars: "Avatar history", "Friend activity": "Friend activity" },
   everyone: { "Friend list": "Everyone", "Friend log": "Friend log", "Blocked and muted": "Blocked and muted" },
+  events: { "My groups": "Events", Following: "Events you follow", Featured: "Featured events" },
   favourites: { Avatars: "Favourite avatars", Worlds: "Favourite worlds", Friends: "Favourite friends", "Group names": "Favourite group names" },
   uploads: { Avatars: "My avatars", Worlds: "My worlds" },
   inbox: { Waiting: "Inbox", Done: "Inbox, done" },
@@ -52,6 +55,7 @@ const titles: Record<View, string> = {
   history: "World history",
   everyone: "Everyone",
   favourites: "Favourites",
+  events: "Events",
   uploads: "My uploads",
   search: "Search",
   inbox: "Inbox",
@@ -72,6 +76,7 @@ const icons: Record<View, string> = {
   everyone:
     "M8 12.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4zm9 .4a2.6 2.6 0 1 0 0-5.2 2.6 2.6 0 0 0 0 5.2zM2.5 19c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6zm12.1 0c-.2-1.5-.8-2.8-1.7-3.8 1-.6 2.3-.9 4.1-.9 2.4 0 4.1 1.5 4.5 4.700z",
   favourites: "M12 2.6l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.5l-5.9 3.1 1.2-6.5L2.5 9.5l6.6-.9z",
+  events: "M7 2h2v2h6V2h2v2h3v17H4V4h3zm11 7H6v10h12zM8 11h3v3H8z",
   uploads: "M12 3l6 6h-4v6h-4V9H6zM4 17h16v4H4z",
   search: "M10.5 3a7.5 7.5 0 0 1 5.9 12.1l4.5 4.5-1.4 1.4-4.5-4.5A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z",
   inbox: "M4 4h16l2 9v7H2v-7zm1.6 2-1.4 6.500H9a3 3 0 0 0 6 0h4.800L18.4 6z",
@@ -85,6 +90,7 @@ const railHints: Record<View, string> = {
   history: "Worlds you visited and who was there",
   everyone: "Your whole friend list, and the log of who was added, removed or renamed",
   favourites: "Your favourite avatars, worlds and friends",
+  events: "Events of your groups, the ones you follow, and reminders",
   uploads: "The avatars and worlds you uploaded",
   search: "Find people, worlds and avatars",
   inbox: "Friend requests, invites and other notifications",
@@ -97,6 +103,7 @@ const railNames: Record<View, string> = {
   history: "History",
   everyone: "Everyone",
   favourites: "Favourites",
+  events: "Events",
   uploads: "Uploads",
   search: "Search",
   inbox: "Inbox",
@@ -299,6 +306,58 @@ export function App() {
       .setQuiet({ hours: settings.quietHours, from: minutes(settings.quietFrom), to: minutes(settings.quietTo), inGame: settings.quietInGame })
       .catch(() => {});
   }, [settings.quietHours, settings.quietFrom, settings.quietTo, settings.quietInGame]);
+  // Reminders for the events I follow. The list is read when I sign in, every half hour and
+  // when I follow or unfollow something; each event is announced once, the set number of
+  // minutes before it starts. It works with the window in the tray.
+  useEffect(() => {
+    const lead = settings.eventReminder;
+    if (!me || !lead) return;
+    let alive = true;
+    let following: CalendarEvent[] = [];
+    const KEY = "event-reminders";
+    const told = new Set<string>();
+    try {
+      for (const k of JSON.parse(localStorage.getItem(KEY) ?? "[]") as string[]) told.add(k);
+    } catch {
+      /* a broken list only means a reminder may come twice */
+    }
+    const read = () => {
+      const now = new Date();
+      // Near the end of a month an event can start in the next one.
+      const months = [monthOf(now), monthOf(new Date(now.getTime() + lead * 60_000 + 86_400_000))];
+      void Promise.all([...new Set(months)].map((m) => backend.calendar("following", m).catch(() => ({ events: [] as CalendarEvent[], more: false })))).then((pages) => {
+        if (alive) following = pages.flatMap((p) => p.events).filter((e) => e.following);
+      });
+    };
+    const check = () => {
+      const now = Date.now();
+      for (const e of following) {
+        const starts = Date.parse(e.startsAt);
+        const key = `${e.id}@${e.startsAt}`;
+        if (!(starts > now && starts - now <= lead * 60_000) || told.has(key)) continue;
+        told.add(key);
+        try {
+          localStorage.setItem(KEY, JSON.stringify([...told].slice(-200)));
+        } catch {
+          /* not being able to save it only means a reminder may come twice */
+        }
+        const minutes = Math.max(1, Math.round((starts - now) / 60_000));
+        void backend.notify(`${e.title} starts in ${minutes} min`, e.groupName ? `An event of ${e.groupName}` : "An event you follow");
+      }
+    };
+    read();
+    const first = window.setTimeout(check, 20_000);
+    const everyMinute = window.setInterval(check, 60_000);
+    const everyHalfHour = window.setInterval(read, 30 * 60_000);
+    window.addEventListener("events:changed", read);
+    return () => {
+      alive = false;
+      window.clearTimeout(first);
+      window.clearInterval(everyMinute);
+      window.clearInterval(everyHalfHour);
+      window.removeEventListener("events:changed", read);
+    };
+  }, [me?.id, settings.eventReminder]);
   // VRChat closed without warning: where I was, until I go back or put the note away.
   const [crash, setCrash] = useState<{ location: string; worldName: string } | null>(null);
   const asked = useRef(false);
@@ -530,6 +589,7 @@ export function App() {
         {railButton("everyone")}
         {railButton("favourites")}
         {railButton("uploads")}
+        {railButton("events")}
         {railButton("search")}
         {railButton("inbox", notices.length)}
         <div className="rail-end">
@@ -609,6 +669,7 @@ export function App() {
         )}
         {view === "uploads" && <Uploads meId={me.id} onDone={setToast} />}
         {view === "favourites" && <Favourites friends={friends} favorites={favorites} meId={me.id} onDone={setToast} />}
+        {view === "events" && <Events onDone={setToast} />}
         {view === "search" && <Search onDone={setToast} />}
         {view === "inbox" && <Inbox notices={notices} friends={friends} inWorld={inWorld} meId={me.id} onDone={setToast} />}
         {view === "settings" && (

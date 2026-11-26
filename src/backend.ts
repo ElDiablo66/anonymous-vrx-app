@@ -158,6 +158,24 @@ export interface HereNow {
   people: Sighting[];
 }
 
+/** One event on a group's calendar. */
+export interface CalendarEvent {
+  id: string;
+  groupId: string;
+  groupName: string;
+  title: string;
+  description: string;
+  category: string;
+  access: string;
+  startsAt: string;
+  endsAt: string;
+  image: string;
+  interested: number;
+  friends: number;
+  following: boolean;
+  featured: boolean;
+}
+
 /** Someone I blocked or muted. */
 export interface Moderation {
   kind: "block" | "mute";
@@ -326,7 +344,8 @@ export interface Backend {
   /** A world, avatar or group as VRChat describes it; also `groupMembers` and `groupPosts`. */
   thing(kind: string, id: string): Promise<unknown>;
   /** VRChat's photos on this PC, newest first, `limit` at a time after skipping `skip`. */
-  photos(limit: number, skip: number): Promise<{ total: number; photos: PhotoInfo[] }>;
+  /** `query` keeps photos whose world or one of whose people matches; `until` is a day, YYYY-MM-DD. `everything` counts all photos, `total` the ones that match. */
+  photos(limit: number, skip: number, query?: string, until?: string): Promise<{ total: number; everything: number; photos: PhotoInfo[] }>;
   /** Opens the photo's folder with the file selected. */
   showPhoto(path: string): Promise<void>;
   /** Opens the folder with the credits and licence texts. */
@@ -344,6 +363,10 @@ export interface Backend {
   friendStatus(userId: string): Promise<{ isFriend?: boolean; outgoingRequest?: boolean; incomingRequest?: boolean }>;
   /** The people I blocked or muted, newest first. `fresh` asks VRChat again. */
   moderations(fresh: boolean): Promise<Moderation[]>;
+  /** One month of events (`month` is YYYY-MM): my groups', the ones I follow, or VRChat's featured ones. */
+  calendar(which: "mine" | "following" | "featured", month: string, fresh?: boolean): Promise<{ events: CalendarEvent[]; more: boolean }>;
+  /** Follows a group event, or stops following it. */
+  followEvent(groupId: string, eventId: string, on: boolean): Promise<void>;
   /** Picture, rank, marks and status of someone, for a list row. Asked once per person. */
   personBrief(userId: string): Promise<Friend>;
   /** Blocks or mutes someone, or takes it back with `on` false. */
@@ -501,6 +524,10 @@ const desktop: Backend = {
   friendStatus: (userId) => invoke("get_friend_status", { userId }),
   moderations: (fresh) => invoke("get_moderations", { fresh }),
   personBrief: (userId) => invoke("get_person_brief", { userId }),
+  calendar: (which, month, fresh) => invoke("get_calendar", { which, month, fresh: fresh ?? false }),
+  followEvent: async (groupId, eventId, on) => {
+    await invoke("follow_event", { groupId, eventId, on });
+  },
   setModeration: async (userId, kind, on) => {
     await invoke("set_moderation", { userId, kind, on });
   },
@@ -509,9 +536,9 @@ const desktop: Backend = {
     forget(`thing:${kind}:${id}`);
     forget("part:");
   },
-  photos: async (limit, skip) => {
-    const page = await invoke<{ total: number; photos: Array<Omit<PhotoInfo, "url">> }>("photos", { limit, skip });
-    return { total: page.total, photos: page.photos.map((p) => ({ ...p, url: convertFileSrc(p.path) })) };
+  photos: async (limit, skip, query, until) => {
+    const page = await invoke<{ total: number; everything: number; photos: Array<Omit<PhotoInfo, "url">> }>("photos", { limit, skip, query: query ?? "", until: until ?? "" });
+    return { total: page.total, everything: page.everything, photos: page.photos.map((p) => ({ ...p, url: convertFileSrc(p.path) })) };
   },
   showPhoto: (path) => invoke("show_photo", { path }),
   openLicencesFolder: () => invoke("open_licences_folder"),

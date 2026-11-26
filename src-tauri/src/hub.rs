@@ -84,6 +84,8 @@ pub struct Hub {
     blocked: Mutex<Option<(String, Value)>>,
     /// Picture, rank and status of people looked up for a list, kept while the app runs.
     briefs: Mutex<HashMap<String, (Instant, Value)>>,
+    /// Calendar pages already asked for, by list and month, with when.
+    calendars: Mutex<HashMap<String, (Instant, Value)>>,
     /// Put my own world, avatar and status changes into the feed too.
     own_feed: std::sync::atomic::AtomicBool,
 }
@@ -167,6 +169,7 @@ impl Hub {
             fav_cache: Mutex::new(HashMap::new()),
             blocked: Mutex::new(None),
             briefs: Mutex::new(HashMap::new()),
+            calendars: Mutex::new(HashMap::new()),
             own_feed: std::sync::atomic::AtomicBool::new(false),
         })
     }
@@ -924,6 +927,73 @@ impl Hub {
         Ok(list)
     }
 
+    /// One month of events: `mine` (my groups), `following` or `featured`. `month` is `YYYY-MM`.
+    /// Each list and month is asked for at most once in ten minutes; `fresh` asks again now.
+    pub async fn calendar(&self, which: &str, month: &str, fresh: bool) -> AppResult<Value> {
+        let list = match which {
+            "mine" => "",
+            "following" => "following",
+            "featured" => "featured",
+            _ => return Err(AppError::CannotDo("That is not a calendar this app knows.".into())),
+        };
+        let day = chrono::NaiveDate::parse_from_str(&format!("{month}-15"), "%Y-%m-%d")
+            .map_err(|_| AppError::CannotDo("That is not a month.".into()))?;
+        if self.me().is_none() {
+            return Err(AppError::NotSignedIn);
+        }
+        let key = format!("{which}:{month}");
+        if !fresh {
+            if let Some((at, known)) = self.calendars.lock().unwrap().get(&key) {
+                if at.elapsed() < Duration::from_secs(600) {
+                    return Ok(known.clone());
+                }
+            }
+        }
+        let answer = self.api.calendar(list, &format!("{}T12:00:00.000Z", day.format("%Y-%m-%d"))).await?;
+        let events: Vec<Value> = answer["results"]
+            .as_array()
+            .map(|a| a.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .filter(|e| e["deletedAt"].is_null() && e["isDraft"].as_bool() != Some(true))
+            .map(|e| {
+                json!({
+                    "id": e["id"],
+                    "groupId": e["ownerId"],
+                    "groupName": e["ownerName"],
+                    "title": e["title"],
+                    "description": e["description"],
+                    "category": e["category"],
+                    "access": e["accessType"],
+                    "startsAt": e["startsAt"],
+                    "endsAt": e["endsAt"],
+                    "image": e["imageUrl"],
+                    "interested": e["interestedUserCount"],
+                    "friends": e["interestedFriendCount"],
+                    "following": e["userInterest"]["isFollowing"].as_bool().unwrap_or(false),
+                    "featured": e["featured"].as_bool().unwrap_or(false),
+                })
+            })
+            .collect();
+        let out = json!({ "events": events, "more": answer["hasNext"].as_bool().unwrap_or(false) });
+        self.calendars.lock().unwrap().insert(key, (Instant::now(), out.clone()));
+        Ok(out)
+    }
+
+    /// Follows an event of a group, or stops following it. What was kept of the calendar is
+    /// dropped, so the lists are read again.
+    pub async fn follow_event(&self, group_id: &str, event_id: &str, on: bool) -> AppResult<()> {
+        if !group_id.starts_with("grp_") || !event_id.starts_with("cal_") || group_id.len() > 80 || event_id.len() > 80 {
+            return Err(AppError::CannotDo("That is not a group event.".into()));
+        }
+        if self.me().is_none() {
+            return Err(AppError::NotSignedIn);
+        }
+        self.api.follow_event(group_id, event_id, on).await?;
+        self.calendars.lock().unwrap().clear();
+        Ok(())
+    }
+
     /// The little a list row shows about someone who is not a friend: picture, rank, marks and
     /// status. One request the first time, none after that.
     pub async fn person_brief(&self, user_id: &str) -> AppResult<Value> {
@@ -1206,38 +1276,77 @@ impl Hub {
         }
     }
 
-    /// One page of VRChat's photos under `root`, each with the world I was in and who was
-    /// there when it was taken, looked up in the world history. Leaves out myself.
-    pub fn photos(&self, root: &std::path::Path, limit: usize, skip: usize) -> AppResult<Value> {
+    /// One page of VRChat's photos under `root`, newest first, each with the world I was in and
+    /// who was in the instance at that moment, from the app's own history.
+    ///
+    /// `query` narrows it to photos whose world name or one of whose people's names contains
+    /// the text. `until` (a day, `YYYY-MM-DD`, in the PC's own time) leaves out anything taken
+    /// after that day. Both come from the history on this PC; nothing is asked of VRChat and
+    /// no photo is opened or changed. "With someone" means they were in the instance when the
+    /// photo was taken, not that they are in the picture.
+    pub fn photos(&self, root: &std::path::Path, limit: usize, skip: usize, query: &str, until: &str) -> AppResult<Value> {
         let all = crate::photos::scan(root);
         let me = self.me().map(|m| m.id).unwrap_or_default();
+        let want = query.trim().to_lowercase();
+        // A photo's time is kept in UTC; the day the user picks is a day on their own clock.
+        let last = chrono::NaiveDate::parse_from_str(until.trim(), "%Y-%m-%d")
+            .ok()
+            .and_then(|d| d.succ_opt())
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .and_then(|t| chrono::TimeZone::from_local_datetime(&chrono::Local, &t).earliest())
+            .map(|t| t.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
         let inner = self.inner.lock().unwrap();
         let store = inner.store.as_ref().ok_or(AppError::NotSignedIn)?;
-        let mut page = Vec::new();
-        for photo in all.iter().skip(skip).take(limit.min(200)) {
+        let describe = |photo: &crate::photos::Photo| -> AppResult<(Value, bool)> {
             let visit = store.visit_at(&photo.taken_at)?;
-            let people: Vec<Value> = match &visit {
+            let people: Vec<(String, String)> = match &visit {
                 Some(v) => store
                     .people_at(v.id, &photo.taken_at)?
                     .into_iter()
                     .filter(|(id, _)| id.is_empty() || *id != me)
-                    .map(|(id, name)| serde_json::json!({ "userId": id, "displayName": name }))
                     .collect(),
                 None => Vec::new(),
             };
-            page.push(serde_json::json!({
+            let world_name = visit.as_ref().map(|v| v.world_name.clone()).unwrap_or_default();
+            let hit = want.is_empty()
+                || world_name.to_lowercase().contains(&want)
+                || people.iter().any(|(_, name)| name.to_lowercase().contains(&want));
+            let row = serde_json::json!({
                 "path": photo.path,
                 "file": photo.file,
                 "takenAt": photo.taken_at,
                 "width": photo.width,
                 "height": photo.height,
                 "worldId": visit.as_ref().map(|v| v.world_id.clone()).unwrap_or_default(),
-                "worldName": visit.as_ref().map(|v| v.world_name.clone()).unwrap_or_default(),
+                "worldName": world_name,
                 "location": visit.as_ref().map(|v| v.location.clone()).unwrap_or_default(),
-                "people": people,
-            }));
+                "people": people.iter().map(|(id, name)| serde_json::json!({ "userId": id, "displayName": name })).collect::<Vec<_>>(),
+            });
+            Ok((row, hit))
+        };
+        let in_range = |photo: &&crate::photos::Photo| last.as_ref().is_none_or(|end| photo.taken_at.as_str() < end.as_str());
+        let limit = limit.min(200);
+        let mut page = Vec::new();
+        if want.is_empty() {
+            // Nothing to look up for photos that are not on this page.
+            let dated: Vec<&crate::photos::Photo> = all.iter().filter(in_range).collect();
+            for photo in dated.iter().skip(skip).take(limit) {
+                page.push(describe(photo)?.0);
+            }
+            return Ok(serde_json::json!({ "total": dated.len(), "everything": all.len(), "photos": page }));
         }
-        Ok(serde_json::json!({ "total": all.len(), "photos": page }))
+        let mut found = 0usize;
+        for photo in all.iter().filter(in_range) {
+            let (row, hit) = describe(photo)?;
+            if !hit {
+                continue;
+            }
+            if found >= skip && page.len() < limit {
+                page.push(row);
+            }
+            found += 1;
+        }
+        Ok(serde_json::json!({ "total": found, "everything": all.len(), "photos": page }))
     }
 
     pub fn visit_people(&self, visit_id: i64) -> AppResult<Vec<Sighting>> {
@@ -1405,6 +1514,7 @@ impl Hub {
         self.fav_cache.lock().unwrap().clear();
         *self.blocked.lock().unwrap() = None;
         self.briefs.lock().unwrap().clear();
+        self.calendars.lock().unwrap().clear();
         let mut inner = self.inner.lock().unwrap();
         inner.me = None;
         inner.store = None;

@@ -690,6 +690,27 @@ export function SettingsPage({
           on={settings.alertEverythingElse}
           set={(on) => change({ alertEverythingElse: on })}
         />
+        <div className="setting">
+          <span>
+            <span className="setting-name">Before an event I follow starts</span>
+            <span className="setting-hint">Follow events on the Events screen. Each one is announced once.</span>
+          </span>
+          <div className="choices" role="radiogroup" aria-label="Event reminder">
+            {(
+              [
+                [0, "Off"],
+                [5, "5 min"],
+                [15, "15 min"],
+                [30, "30 min"],
+                [60, "1 hour"],
+              ] as const
+            ).map(([minutes, label]) => (
+              <button key={minutes} role="radio" aria-checked={settings.eventReminder === minutes} className={settings.eventReminder === minutes ? "on" : ""} onClick={() => change({ eventReminder: minutes })}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="data-actions">
           <button className="plain" onClick={() => void sendTest()}>
             Send a test notification

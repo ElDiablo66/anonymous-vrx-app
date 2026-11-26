@@ -594,6 +594,20 @@ impl ApiClient {
         self.pages(path_and_query).await
     }
 
+    /// One month of calendar events. `which` is empty for the events of my own groups,
+    /// `following` for the ones I follow, `featured` for the ones VRChat puts forward.
+    /// `month` is any moment in that month, RFC 3339. One request, up to 100 events.
+    pub async fn calendar(&self, which: &str, month: &str) -> AppResult<Value> {
+        let tail = if which.is_empty() { String::new() } else { format!("/{}", Self::part(which)) };
+        self.read(&format!("/calendar{tail}?date={}&n=100", Self::part(month))).await
+    }
+
+    /// Follows a group's calendar event, or stops following it.
+    pub async fn follow_event(&self, group_id: &str, calendar_id: &str, on: bool) -> AppResult<()> {
+        let path = format!("/calendar/{}/{}/follow", Self::part(group_id), Self::part(calendar_id));
+        self.act(Method::POST, path, Some(serde_json::json!({ "isFollowing": on }))).await
+    }
+
     /// One user's public profile.
     pub async fn user(&self, user_id: &str) -> AppResult<Value> {
         let path = format!("/users/{}", Self::part(user_id));

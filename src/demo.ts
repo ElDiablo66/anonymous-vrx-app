@@ -170,6 +170,7 @@ const demoBlocked: Moderation[] = [
 const demoHandled: Handled[] = [];
 let demoAutostart = false;
 const demoRatings: Record<string, number> = {};
+const demoFollowed = new Set<string>(["cal_demo_1"]);
 const demoTags: Record<string, string[]> = {};
 const demoRemoved = new Set<string>();
 let demoMember = false;
@@ -425,7 +426,7 @@ export const demoBackend: Backend = {
   async loadSettings() {
     return null;
   },
-  async photos(limit, skip) {
+  async photos(limit, skip, query, until) {
     await wait(300);
     const all = Array.from({ length: 7 }, (_, i) => {
       const hue = (i * 47) % 360;
@@ -443,7 +444,12 @@ export const demoBackend: Backend = {
         people: i === 5 ? [] : [{ userId: "usr_demo_1", displayName: "Fennel" }, { userId: "usr_demo_2", displayName: "Mossy" }].slice(0, 1 + (i % 2)),
       };
     });
-    return { total: all.length, photos: all.slice(skip, skip + limit) };
+    const q = (query ?? "").trim().toLowerCase();
+    const end = until ? Date.parse(`${until}T23:59:59`) : Infinity;
+    const hits = all.filter(
+      (p) => Date.parse(p.takenAt) <= end && (!q || p.worldName.toLowerCase().includes(q) || p.people.some((who) => who.displayName.toLowerCase().includes(q))),
+    );
+    return { total: hits.length, everything: all.length, photos: hits.slice(skip, skip + limit) };
   },
   async showPhoto() {
     throw { kind: "cannotDo", message: "Folders open in the desktop app; this is demo data." };
@@ -460,6 +466,25 @@ export const demoBackend: Backend = {
   async moderations() {
     await wait(250);
     return demoBlocked.slice();
+  },
+  async calendar(which, month) {
+    await wait(350);
+    const now = new Date();
+    if (month !== `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`) return { events: [], more: false };
+    const at = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString();
+    const all = [
+      { id: "cal_demo_1", groupId: "grp_demo", groupName: "Night Owls", title: "Pier sunset hangout", description: "Bring a blanket. We sit on the pier until the sun is gone, then move to the arcade.", category: "hangout", access: "public", startsAt: at(0.4), endsAt: at(2.4), image: "", interested: 41, friends: 3, featured: false },
+      { id: "cal_demo_2", groupId: "grp_demo", groupName: "Night Owls", title: "Friday dance night", description: "Three DJs, two rooms.", category: "music", access: "group", startsAt: at(26), endsAt: at(30), image: "", interested: 128, friends: 5, featured: true },
+      { id: "cal_demo_3", groupId: "grp_demo_2", groupName: "Arcade High Scores", title: "High score tournament, round 2", description: "", category: "gaming", access: "public", startsAt: at(74), endsAt: at(77), image: "", interested: 9, friends: 0, featured: false },
+      { id: "cal_demo_4", groupId: "grp_demo_2", groupName: "Arcade High Scores", title: "Last week's finals", description: "", category: "gaming", access: "public", startsAt: at(-50), endsAt: at(-47), image: "", interested: 30, friends: 1, featured: false },
+    ].map((e) => ({ ...e, following: demoFollowed.has(e.id) }));
+    const events = which === "following" ? all.filter((e) => e.following) : which === "featured" ? all.filter((e) => e.featured) : all;
+    return { events, more: false };
+  },
+  async followEvent(_groupId, eventId, on) {
+    await wait(250);
+    if (on) demoFollowed.add(eventId);
+    else demoFollowed.delete(eventId);
   },
   async personBrief(userId) {
     await wait(300);

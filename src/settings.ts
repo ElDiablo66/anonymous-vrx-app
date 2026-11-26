@@ -68,6 +68,8 @@ export interface Settings {
   quietInGame: boolean;
   /** Friends with a notification rule of their own: user id to their name and the rule. */
   alertPeople: Record<string, { name: string; rule: "always" | "never" }>;
+  /** How many minutes before an event I follow starts Windows should tell me; 0 for never. */
+  eventReminder: number;
   /** Bring the window up when VRChat starts. */
   openWithGame: boolean;
   /** What to do when VRChat closes without a goodbye while I am in an instance. */
@@ -143,6 +145,7 @@ function load(): Settings {
     quietTo: "08:00",
     quietInGame: false,
     alertPeople: {},
+    eventReminder: 15,
     openWithGame: false,
     rejoin: "ask",
     autoBackup: true,
