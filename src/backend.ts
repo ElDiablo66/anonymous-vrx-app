@@ -426,6 +426,8 @@ export interface Backend {
   /** Shows a Windows notification. `always` skips the quiet rules, for the test button. */
   notify(title: string, body: string, always?: boolean): Promise<boolean>;
   worlds(): Promise<World[]>;
+  /** Asks for a world's name and picture when they are not known yet; they arrive as `world:resolved`. */
+  wantWorld(worldId: string): Promise<void>;
   instances(): Promise<Instance[]>;
   /** Sends you an invite to an instance; it shows up inside VRChat. */
   inviteMyself(location: string): Promise<void>;
@@ -575,6 +577,7 @@ const desktop: Backend = {
     return allowed;
   },
   worlds: () => invoke("get_worlds"),
+  wantWorld: (worldId) => invoke("want_world", { worldId }),
   instances: () => invoke("get_instances"),
   inviteMyself: (location) => invoke("invite_myself", { location }),
   requestInvite: (userId) => invoke("request_invite", { userId }),

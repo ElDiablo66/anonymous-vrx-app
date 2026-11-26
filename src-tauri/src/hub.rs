@@ -1582,6 +1582,19 @@ impl Hub {
         Ok(())
     }
 
+    /// Asks for a world's name and picture when they are not known yet. The answer arrives as
+    /// `world:resolved`. Asked once per world; the request gate spaces the questions out.
+    pub fn ask_world(&self, world_id: &str) -> AppResult<()> {
+        if !(world_id.starts_with("wrld_") || world_id.starts_with("wld_")) || world_id.len() > 80 {
+            return Err(AppError::CannotDo("That is not a world.".into()));
+        }
+        if self.me().is_none() {
+            return Err(AppError::NotSignedIn);
+        }
+        self.want_world(world_id);
+        Ok(())
+    }
+
     fn want_world(&self, world_id: &str) {
         let mut inner = self.inner.lock().unwrap();
         if inner.worlds.contains_key(world_id) || inner.wanted.contains(world_id) {

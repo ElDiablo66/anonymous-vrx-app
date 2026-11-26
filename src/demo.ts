@@ -3,11 +3,16 @@
 
 import type { AvatarWorn, Backend, Moderation, FeedItem, Friend, Handled, LiveEvents, LocalFavorite, Notice, Person, Place, Sighting, Visit, World } from "./backend";
 
+/** A flat picture in two colours, so the demo has something where a real picture goes. */
+const swatch = (a: string, b: string) =>
+  `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 6"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="8" height="6" fill="url(#g)"/><circle cx="5.6" cy="2" r="1.1" fill="#fff" opacity=".35"/></svg>`)}`;
+
 const worlds: World[] = [
-  { id: "wrld_demo_pier", name: "\uFF3BAutumn\uFF3D\u3000Quiet Pier at Dusk", image: "" },
-  { id: "wrld_demo_arcade", name: "Basement Arcade", image: "" },
-  { id: "wrld_demo_attic", name: "Rainy Attic Hangout", image: "" },
-  { id: "wrld_demo_mirror", name: "Mirror Room 4", image: "" },
+  { id: "wrld_demo_pier", name: "\uFF3BAutumn\uFF3D\u3000Quiet Pier at Dusk", image: swatch("#ff7a5c", "#3a1a78") },
+  { id: "wrld_demo_arcade", name: "Basement Arcade", image: swatch("#2de2e6", "#1a2a6b") },
+  { id: "wrld_demo_attic", name: "Rainy Attic Hangout", image: swatch("#5a6a8a", "#1c1f33") },
+  { id: "wrld_demo_mirror", name: "Mirror Room 4", image: swatch("#c39bff", "#40206a") },
+  { id: "wrld_demo_long", name: "Fate/Grand Order: Gilgamesh's Ziggurat, the long way round [NO AI] (READ DESCRIPTION)", image: swatch("#ffd166", "#7a3b12") },
 ];
 
 function place(location: string): Place {
@@ -371,7 +376,7 @@ export const demoBackend: Backend = {
     return {
       groups: [{ name: "worlds1", displayName: "Chill" }],
       entries: worlds.map((w, i) => ({ id: `fvrt_w${i}`, favoriteId: w.id, tags: ["worlds1"] })).filter((e) => !demoRemoved.has(e.id)),
-      items: worlds.map((w) => ({ id: w.id, name: w.name, authorName: "Rook", releaseStatus: "public" })),
+      items: worlds.map((w) => ({ id: w.id, name: w.name, authorName: "Rook", releaseStatus: "public", thumbnailImageUrl: w.image })),
     };
   },
   async addFavorite(kind, id, group) {
@@ -533,6 +538,7 @@ export const demoBackend: Backend = {
     else delete demoTags[itemId];
     return clean;
   },
+  async wantWorld() {},
   async setOwnFeed() {},
   async setQuiet() {},
   async togetherCounts() {

@@ -501,6 +501,12 @@ fn get_worlds(hub: State<'_, Arc<Hub>>) -> Vec<World> {
     hub.worlds()
 }
 
+/// Asks for a world's name and picture if the app does not have them yet.
+#[tauri::command]
+fn want_world(hub: State<'_, Arc<Hub>>, world_id: String) -> AppResult<()> {
+    hub.ask_world(&world_id)
+}
+
 #[tauri::command]
 fn get_feed(hub: State<'_, Arc<Hub>>, limit: u32, before: Option<i64>) -> AppResult<Vec<FeedItem>> {
     hub.feed(limit, before)
@@ -1042,6 +1048,7 @@ pub fn run() {
             open_link,
             notice_action,
             get_worlds,
+            want_world,
             get_feed,
             get_here,
             get_visits,

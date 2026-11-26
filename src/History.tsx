@@ -1,5 +1,5 @@
 import { Photos } from "./Photos";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { backend, errorText, type Friend, type Sighting, type Visit, type World } from "./backend";
 import { Avatar, accessName, clock, dayLabel, regionName, statusTone, tidy } from "./bits";
 import { joinLink } from "./place";
@@ -7,6 +7,38 @@ import { savedLaunchMode } from "./settings";
 import { AvatarHistory } from "./AvatarHistory";
 import { FeedBrowser } from "./FeedBrowser";
 import { openProfile } from "./Profile";
+import { openThing } from "./Detail";
+import { usePic } from "./Pic";
+
+/** Worlds already asked for, so scrolling past a row twice asks once. */
+const askedWorlds = new Set<string>();
+
+/** The world's picture on a history row. A world this PC has no picture for yet is asked
+ *  for when its row has been on screen for a moment. */
+function WorldThumb({ id, world }: { id: string; world?: World }) {
+  const box = useRef<HTMLSpanElement>(null);
+  const shown = usePic(world?.image ?? "");
+  useEffect(() => {
+    if (world?.image || !id || askedWorlds.has(id) || !box.current) return;
+    let wait = 0;
+    const watch = new IntersectionObserver((seen) => {
+      window.clearTimeout(wait);
+      if (!seen.some((s) => s.isIntersecting)) return;
+      wait = window.setTimeout(() => {
+        watch.disconnect();
+        if (askedWorlds.has(id)) return;
+        askedWorlds.add(id);
+        void backend.wantWorld(id).catch(() => {});
+      }, 500);
+    });
+    watch.observe(box.current);
+    return () => {
+      window.clearTimeout(wait);
+      watch.disconnect();
+    };
+  }, [id, world?.image]);
+  return <span ref={box} className="thumb visit-thumb" style={world?.image ? { backgroundImage: `url("${shown}")` } : undefined} />;
+}
 
 export function stayLength(from: string, to: string | null): string {
   const minutes = Math.max(0, Math.round(((to ? Date.parse(to) : Date.now()) - Date.parse(from)) / 60_000));
@@ -275,19 +307,35 @@ function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
             <li className="visit" key={v.id}>
               <button className="visit-row" aria-expanded={isOpen} onClick={() => { setPeople([]); setOpen(isOpen ? null : v.id); }}>
                 <time dateTime={v.joinedAt}>{clock(v.joinedAt)}</time>
-                <span className="visit-name">{name}</span>
-                <span className={`access access-${v.place.access}`}>{accessName(v.place)}</span>
-                <span>{regionName(v.place)}</span>
-                <span title="Instance number">{v.place.instance ? `#${v.place.instance}` : ""}</span>
-                <span>{v.leftAt ? stayLength(v.joinedAt, v.leftAt) : "there now"}</span>
-                <span>{Math.max(0, v.people - 1)} others</span>
+                <WorldThumb id={v.worldId} world={worlds.get(v.worldId)} />
+                <span className="visit-main">
+                  <span className="visit-name">{name}</span>
+                  <span className="visit-sub">
+                    <span className={`access access-${v.place.access}`}>{accessName(v.place)}</span>
+                    {regionName(v.place) && <span>{regionName(v.place)}</span>}
+                    {v.place.instance && <span title="Instance number">#{v.place.instance}</span>}
+                  </span>
+                </span>
+                <span className="visit-stay">{v.leftAt ? stayLength(v.joinedAt, v.leftAt) : "there now"}</span>
+                <span className="visit-others">
+                  {Math.max(0, v.people - 1)} {v.people - 1 === 1 ? "other" : "others"}
+                </span>
               </button>
               {isOpen && (
-                <>
+                <div className="visit-more">
                   {v.leftAt && v.place.kind === "world" && <StillOpen location={v.location} />}
-                  <WayBack location={v.location} onDone={onDone} />
+                  <div className="visit-actions">
+                    <WayBack location={v.location} onDone={onDone} />
+                    {v.worldId && (
+                      <div className="wayback">
+                        <button title="The world's own window: description, facts, open instances" onClick={() => openThing("world", v.worldId)}>
+                          Open the world
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <PeopleList people={people} friends={friends} meId={meId} />
-                </>
+                </div>
               )}
             </li>,
           ];

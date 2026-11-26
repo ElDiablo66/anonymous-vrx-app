@@ -5708,3 +5708,402 @@ time,
   background-color: color-mix(in srgb, var(--text) 7%, transparent);
   border-radius: 10px;
 }
+
+/* =====================================================================
+   World history: a picture and the details next to the name
+   ===================================================================== */
+.visit-row {
+  grid-template-columns: 74px 46px minmax(0, 1fr) max-content max-content;
+  gap: 14px;
+  padding: 8px 14px;
+  text-align: left;
+}
+
+.visit-thumb {
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+}
+
+.visit-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.visit-main .visit-name {
+  white-space: nowrap;
+}
+
+.visit-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+
+.visit-stay,
+.visit-others {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-soft);
+}
+
+.visit-stay {
+  min-width: 78px;
+  text-align: right;
+  color: var(--text);
+}
+
+.visit-others {
+  min-width: 72px;
+  text-align: right;
+}
+
+/* What opens under a row lines up with the world's name, all of it. */
+.visit-more {
+  display: grid;
+  gap: 10px;
+  padding: 4px 14px 14px 162px;
+}
+
+.visit-more .still-open,
+.visit-more .people-none {
+  margin: 0;
+  padding: 0;
+}
+
+.visit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.visit .visit-more .wayback {
+  padding: 0;
+  margin: 0;
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+@media (max-width: 1040px) {
+  .visit-more {
+    padding-left: 14px;
+  }
+}
+
+/* The same row is used for open instances inside a window; those keep their own layout. */
+.profile-body .instance-list .visit-row {
+  grid-template-columns: none;
+}
+
+/* =====================================================================
+   Favourites: every card the same size, whatever the name is
+   ===================================================================== */
+.fav-list {
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 8px;
+}
+
+.fav-item {
+  height: 68px;
+  padding: 0 10px 0 10px;
+  gap: 0;
+  overflow: hidden;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.fav-item:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 45%, transparent);
+}
+
+/* The whole card lights up; the name no longer gets a box of its own inside it. */
+.fav-item .row-link,
+.fav-item .row-link:hover {
+  background: none;
+  padding: 0 0 0 10px;
+  height: 100%;
+  text-align: left;
+}
+
+.fav-item .thumb {
+  width: 48px;
+  height: 48px;
+}
+
+.fav-item .row-link > span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.fav-item .tile-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.2;
+  font-size: 14.5px;
+}
+
+.fav-item .tile-note {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tags and marks would make one card taller than its neighbours, so they sit on one line. */
+.fav-item .my-marks {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  margin-top: 0;
+}
+
+.fav-item .my-marks .mark {
+  font-size: 10.5px;
+  padding: 0 5px;
+}
+
+/* Remove shows on the card being pointed at, over a fade so it never sits on the name. */
+.fav-item .fav-remove {
+  right: 8px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  border-radius: 9px;
+  color: var(--text);
+  background: var(--solid);
+  box-shadow: -18px 0 14px 4px var(--solid);
+}
+
+.avatar-history .fav-item {
+  height: auto;
+  padding: 10px 12px;
+}
+
+/* =====================================================================
+   One button
+   Every action button in the app shares a height, a corner, a weight and the
+   same three kinds: plain, the one to press (gradient), and the dangerous one.
+   Tabs and filters stay pills, so going somewhere reads differently from doing something.
+   ===================================================================== */
+:root {
+  --btn-h: 34px;
+  --btn-radius: 10px;
+}
+
+body :is(
+  .plain,
+  .wayback button,
+  .quiet-actions button,
+  .window-nav button,
+  .data-actions button,
+  .cleanup button,
+  .fav-pick button,
+  .tag-add button,
+  .notice-actions button,
+  .dialog-actions button,
+  .older
+) {
+  min-height: var(--btn-h);
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--btn-radius);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  color: var(--text);
+  font: 500 13.5px/1 var(--body);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease, filter 0.14s ease, transform 0.08s ease;
+}
+
+body :is(
+  .plain,
+  .wayback button,
+  .quiet-actions button,
+  .window-nav button,
+  .data-actions button,
+  .cleanup button,
+  .fav-pick button,
+  .tag-add button,
+  .notice-actions button,
+  .dialog-actions button,
+  .older
+):not(:disabled):not(.go):not(.danger):hover {
+  border-color: var(--teal);
+  color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  filter: none;
+}
+
+/* The one to press */
+body :is(.plain, .wayback button, .quiet-actions button, .data-actions button, .cleanup button, .fav-pick button, .tag-add button, .notice-actions button, .dialog-actions button).go {
+  border-color: transparent;
+  background: var(--go);
+  color: var(--go-text);
+  font-weight: 600;
+}
+
+body :is(.plain, .wayback button, .notice-actions button, .dialog-actions button).go:not(:disabled):hover {
+  filter: brightness(1.12);
+}
+
+/* The dangerous one */
+body :is(.plain, .wayback button, .quiet-actions button, .dialog-actions button).danger {
+  border-color: var(--busy);
+  background: color-mix(in srgb, var(--busy) 18%, transparent);
+  color: var(--busy);
+  font-weight: 600;
+}
+
+body :is(.plain, .wayback button, .quiet-actions button, .window-nav button, .data-actions button, .cleanup button, .fav-pick button, .tag-add button, .notice-actions button, .dialog-actions button):disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* A small button, for rows that must stay compact */
+body :is(.feed-list .entry .plain, .fav-item .fav-remove, .entry-hide) {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.settings .plain,
+.settings .data-actions .plain {
+  margin-top: 0;
+}
+
+/* Selects and text fields stand next to buttons at the same height. */
+body :is(.tool select, .list-tools select, .fav-pick select, .settings select, .new-instance .tool select, .tag-add input, .provider input, .quiet-times input) {
+  height: var(--btn-h);
+  min-height: var(--btn-h);
+  border-radius: var(--btn-radius);
+}
+
+/* Tabs: one size on every screen and in every window */
+body .tabs button {
+  min-height: 36px;
+  padding: 0 16px;
+  font: 500 14.5px/1 var(--body);
+  border-radius: 18px;
+  white-space: nowrap;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+body .profile-top .tabs button {
+  min-height: 32px;
+  padding: 0 13px;
+  font-size: 13.5px;
+}
+
+/* Filters: the small pill under the tabs */
+body .filters button {
+  min-height: 28px;
+  padding: 0 12px;
+  font: 500 12.5px/1 var(--body);
+  border-radius: 14px;
+  white-space: nowrap;
+}
+
+/* ---------- Settings: choices are one control with parts ---------- */
+.choices {
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+body .choices button {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text-soft);
+  font: 500 13px/1 var(--body);
+  white-space: nowrap;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+body .choices button:not(.on):hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+body .choices button.on {
+  background: var(--panel-high);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--teal);
+}
+
+.choices-left {
+  width: fit-content;
+}
+
+/* Colour swatches read as buttons of the same height */
+.swatch {
+  min-height: var(--btn-h);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Buttons on tiles are the same size as everywhere else. Only the size is set here, so the
+   one to press keeps its gradient. */
+.tile .wayback button,
+.tiles-wide .tile .wayback button,
+.profile-body .tile .wayback button {
+  min-height: var(--btn-h);
+  padding: 0 14px;
+  font-size: 13.5px;
+}
+
+/* Avatar history uses bigger cards with facts and its own buttons; the uniform favourite
+   card above is not for it. */
+.fav-list.avatar-history {
+  grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+  gap: 10px;
+}
+
+.avatar-history .fav-item {
+  height: auto;
+  min-height: 112px;
+  padding: 12px 14px;
+  gap: 12px;
+  overflow: visible;
+}
+
+.avatar-history .fav-item .row-link,
+.avatar-history .fav-item .row-link:hover {
+  height: auto;
+  padding: 0;
+  gap: 14px;
+}
+
+.avatar-history .fav-item .thumb {
+  width: 72px;
+  height: 72px;
+}
+
+.avatar-history .fav-item .tile-name {
+  display: block;
+  font-size: 15.5px;
+}
+
+.avatar-history .row-actions {
+  display: grid;
+  gap: 8px;
+  align-content: center;
+  flex: none;
+}
+
+.avatar-history .row-actions button {
+  width: 100%;
+}
+
+.avatar-history .fav-item:hover {
+  background: var(--panel);
+}
