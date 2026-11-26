@@ -6,6 +6,7 @@ import { openThing } from "./Detail";
 import { parsePlace } from "./place";
 import { FriendChip } from "./App";
 import { whereText } from "./Everyone";
+import { FriendMap } from "./FriendMap";
 
 interface Room {
   location: string;
@@ -94,6 +95,24 @@ export function Around({
   onDone: (message: string) => void;
 }) {
   const [showOffline, setShowOffline] = useState(false);
+  // Cards, or the same people as a picture. The choice is kept.
+  const [view, setView] = useState<"cards" | "map">(() => {
+    try {
+      // The browser demo can ask for the map by address ("?view=map").
+      if (new URLSearchParams(location.search).get("view") === "map") return "map";
+      return localStorage.getItem("around-view") === "map" ? "map" : "cards";
+    } catch {
+      return "cards";
+    }
+  });
+  const pickView = (next: "cards" | "map") => {
+    setView(next);
+    try {
+      localStorage.setItem("around-view", next);
+    } catch {
+      // Without storage the choice lasts until the window closes.
+    }
+  };
   const [busy, setBusy] = useState("");
 
   async function getIn(room: Room) {
@@ -175,6 +194,16 @@ export function Around({
 
   return (
     <div className="around">
+      <div className="segments around-view" role="radiogroup" aria-label="How friends are shown">
+        <button role="radio" aria-checked={view === "cards"} className={view === "cards" ? "on" : ""} onClick={() => pickView("cards")}>
+          Cards
+        </button>
+        <button role="radio" aria-checked={view === "map"} className={view === "map" ? "on" : ""} onClick={() => pickView("map")}>
+          Map
+        </button>
+      </div>
+      {view === "map" && <FriendMap rooms={groups.rooms} hidden={groups.hidden} moving={groups.moving} worlds={worlds} instances={instances} />}
+      <div className="around-cards" hidden={view === "map"}>
       {pinned.length > 0 && (
         <Bricks className="pinned">
           {pinned.map((g) => (
@@ -334,6 +363,7 @@ export function Around({
           )}
         </section>
       )}
+      </div>
     </div>
   );
 }

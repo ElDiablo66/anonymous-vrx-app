@@ -620,7 +620,7 @@ export function SettingsPage({
       <PerformanceSettings />
 
       <VrNoticeSettings settings={settings} change={change} />
-      <GameCacheSettings />
+      <GameCacheSettings settings={settings} change={change} />
 
       <section data-group="general">
         <h2>Avatar search</h2>

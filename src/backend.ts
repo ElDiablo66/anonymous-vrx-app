@@ -170,6 +170,18 @@ export interface Cosmetic {
   to: string;
 }
 
+/** How one of my worlds stood on one day. */
+export interface WorldDay {
+  worldId: string;
+  /** "2026-11-25", in the PC's own time. */
+  day: string;
+  /** Visits and favourites in total up to that day. */
+  visits: number;
+  favorites: number;
+  /** The most people seen in it that day, at the times the app looked. */
+  occupants: number;
+}
+
 export interface GameCache {
   path: string;
   found: boolean;
@@ -354,6 +366,8 @@ export type LiveEvents = {
   "avatars:changed": null;
   "notice:new": Notice;
   "here:changed": null;
+  /** VRChat closed and its cache was emptied, as asked for in Settings. */
+  "cache:cleared": { bytes: number };
   /** How far the download of an update is, in bytes. `total` is 0 when the size is not known. */
   "update:progress": { done: number; total: number };
   /** A notice for the app's own panel in the headset: the window draws it and hands it back. */
@@ -460,7 +474,7 @@ export interface Backend {
   /** Which notifications get a Windows pop-up. */
   setAlerts(alerts: { invites: boolean; friendRequests: boolean; boops: boolean; everythingElse: boolean }): Promise<void>;
   /** Says what to do when VRChat starts, and when it closes without warning. */
-  setGameWatch(watch: { openWithGame: boolean; rejoin: "off" | "ask" | "auto"; launchMode: "auto" | "desktop" | "vr" }): Promise<void>;
+  setGameWatch(watch: { openWithGame: boolean; rejoin: "off" | "ask" | "auto"; launchMode: "auto" | "desktop" | "vr"; clearCache: boolean }): Promise<void>;
   /** Whether the app starts with Windows. */
   getAutostart(): Promise<boolean>;
   setAutostart(on: boolean): Promise<void>;
@@ -512,6 +526,8 @@ export interface Backend {
   /** Whether VRCX's history file is on this PC. */
   vrcxFound(): Promise<boolean>;
   /** Brings VRCX's history for my account into this app, after making a backup. Safe to run again. */
+  /** How my own worlds stood day by day over the last `days` days. Noted each time my worlds are listed. */
+  worldStats(days: number): Promise<WorldDay[]>;
   /** The running version, and whether this edition can update itself. */
   updateInfo(): Promise<{ version: string; supported: boolean }>;
   /** Asks whether a newer version is out. */
@@ -699,6 +715,7 @@ const desktop: Backend = {
   importVrcx: (settings, byItself, since) => invoke("import_vrcx", { settings, byItself: byItself ?? false, since: since ?? null }),
   vrcxStamp: () => invoke("vrcx_stamp"),
   cosmetics: () => invoke("get_cosmetics"),
+  worldStats: (days) => invoke("get_world_stats", { days }),
   updateInfo: () => invoke("update_info"),
   updateCheck: () => invoke("update_check"),
   updateInstall: () => invoke("update_install"),

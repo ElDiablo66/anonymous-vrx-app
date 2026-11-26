@@ -364,7 +364,7 @@ function gb(bytes: number): string {
   return g >= 10 ? g.toFixed(1) : g.toFixed(2);
 }
 
-export function GameCacheSettings() {
+export function GameCacheSettings({ settings, change }: Props) {
   const [info, setInfo] = useState<GameCache | null>(null);
   const [problem, setProblem] = useState("");
   const [asking, setAsking] = useState<"" | "old" | "all">("");
@@ -383,6 +383,12 @@ export function GameCacheSettings() {
       .catch((err) => setProblem(errorText(err)));
   };
   useEffect(() => void count(), []);
+  // Emptied by itself after VRChat closed: the numbers here follow.
+  useEffect(() => {
+    const again = () => void count();
+    window.addEventListener("cache:cleared", again);
+    return () => window.removeEventListener("cache:cleared", again);
+  }, []);
 
   async function clear(oldOnly: boolean) {
     setBusy(true);
@@ -431,7 +437,7 @@ export function GameCacheSettings() {
       {info && info.found && (
         <>
           <div className="cache-meter" role="img" aria-label={`${gb(info.bytes)} of ${info.limitGb} GB used`}>
-            <span style={{ width: `${Math.max(1, share * 100)}%` }} className={share > 0.9 ? "full" : ""} />
+            {info.bytes > 0 && <span style={{ width: `${Math.max(1, share * 100)}%` }} className={share > 0.9 ? "full" : ""} />}
           </div>
           <p className="cache-line">
             <b>
@@ -484,6 +490,12 @@ export function GameCacheSettings() {
           {note}
         </p>
       )}
+      <Switch
+        label="Empty the cache each time VRChat closes"
+        hint="Keeps the disk free without a thought. The price: every world and avatar downloads again at the next start, so the first loads of a session are slower. Works while this app is running."
+        on={settings.clearCacheOnClose}
+        set={(clearCacheOnClose) => change({ clearCacheOnClose })}
+      />
     </section>
   );
 }

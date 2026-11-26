@@ -380,6 +380,12 @@ fn get_last_seen(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMa
     hub.last_seen()
 }
 
+/// How my own worlds stood day by day: visits, favourites and the most people seen.
+#[tauri::command]
+fn get_world_stats(hub: State<'_, Arc<Hub>>, days: i64) -> AppResult<serde_json::Value> {
+    hub.world_stats(days)
+}
+
 /// My stars, by world or avatar id.
 #[tauri::command]
 fn get_ratings(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, i64>> {
@@ -967,6 +973,9 @@ struct GameWatch {
     rejoin: String,
     /// How VRChat is started again: `auto`, `desktop` or `vr`.
     launch_mode: String,
+    /// Empty VRChat's download cache each time the game closes.
+    #[serde(default)]
+    clear_cache: bool,
 }
 
 static GAME_WATCH: Mutex<Option<GameWatch>> = Mutex::new(None);
@@ -1041,6 +1050,16 @@ fn watch_game(app: AppHandle) {
                 if !is_running("VRChat.exe") {
                     crashed(&app, &watch, &visit, &mut last_rejoin);
                     app.state::<Arc<Hub>>().game_gone();
+                }
+            }
+            // The cache is emptied when I asked for that, but not while the game is being
+            // started again after a crash: it would be reading those files.
+            let starting_again = last_rejoin.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60));
+            if watch.clear_cache && !starting_again && !is_running("VRChat.exe") {
+                if let Some(Ok(done)) = gamecache::game_folder().map(|game| gamecache::clear(&game, false)) {
+                    if done.folders > 0 {
+                        let _ = app.emit("cache:cleared", serde_json::json!({ "bytes": done.bytes }));
+                    }
                 }
             }
         }
@@ -1333,6 +1352,7 @@ pub fn run() {
             import_vrcx,
             vrcx_stamp,
             get_cosmetics,
+            get_world_stats,
             update_info,
             update_check,
             update_install,

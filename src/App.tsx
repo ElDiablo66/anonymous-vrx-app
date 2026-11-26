@@ -229,6 +229,19 @@ export function App() {
     return () => window.removeEventListener("history:imported", again);
   }, [me]);
 
+  // My own worlds are noted a little after the start and twice a day, so their numbers have
+  // a point for every day the app ran. One question each time.
+  useEffect(() => {
+    if (!me) return;
+    const note = () => void backend.profilePart(me.id, "worlds", "", "").catch(() => {});
+    const first = window.setTimeout(note, 90_000);
+    const later = window.setInterval(note, 12 * 3_600_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(later);
+    };
+  }, [me]);
+
   // A newer version: looked for a little after the start and every six hours after that.
   // `auto` installs it straight away, `tell` puts up a note with a button.
   const [update, setUpdate] = useState<{ version: string; notes: string } | null>(null);
@@ -359,8 +372,24 @@ export function App() {
       .catch(() => {});
   }, [settings.alertInvites, settings.alertFriendRequests, settings.alertBoops, settings.alertEverythingElse]);
   useEffect(() => {
-    void backend.setGameWatch({ openWithGame: settings.openWithGame, rejoin: settings.rejoin, launchMode: settings.launchMode }).catch(() => {});
-  }, [settings.openWithGame, settings.rejoin, settings.launchMode]);
+    void backend
+      .setGameWatch({ openWithGame: settings.openWithGame, rejoin: settings.rejoin, launchMode: settings.launchMode, clearCache: settings.clearCacheOnClose })
+      .catch(() => {});
+  }, [settings.openWithGame, settings.rejoin, settings.launchMode, settings.clearCacheOnClose]);
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void backend
+      .on("cache:cleared", (c) => {
+        setToast(`VRChat closed. Its cache was emptied, ${(c.bytes / 1024 ** 3).toFixed(1)} GB freed.`);
+        window.dispatchEvent(new Event("cache:cleared"));
+      })
+      .then((off) => (gone ? off() : (stop = off)));
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, []);
   useEffect(() => {
     void backend.setOwnFeed(settings.feedMine).catch(() => {});
   }, [settings.feedMine, me]);

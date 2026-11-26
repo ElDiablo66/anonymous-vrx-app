@@ -246,6 +246,17 @@ impl Hub {
         self.with_store(|s| Ok(s.ratings()?.into_iter().collect()))
     }
 
+    /// What was noted about my own worlds over the last `days` days, oldest first.
+    pub fn world_stats(&self, days: i64) -> AppResult<Value> {
+        let since = (chrono::Local::now() - chrono::Duration::days(days.clamp(1, 730))).format("%Y-%m-%d").to_string();
+        let rows = self.with_store(|s| s.world_stats(&since))?;
+        Ok(Value::Array(
+            rows.into_iter()
+                .map(|(world_id, day, visits, favorites, occupants)| json!({ "worldId": world_id, "day": day, "visits": visits, "favorites": favorites, "occupants": occupants }))
+                .collect(),
+        ))
+    }
+
     /// My stars for a world or an avatar, 0 to take them away.
     pub fn set_rating(&self, item_id: &str, stars: i64) -> AppResult<()> {
         if !(item_id.starts_with("wrld_") || item_id.starts_with("wld_") || item_id.starts_with("avtr_")) || !(0..=5).contains(&stars) {
@@ -675,9 +686,23 @@ impl Hub {
             "groups" => self.api.read(&format!("/users/{id}/groups")).await,
             "represented" => self.api.read(&format!("/users/{id}/groups/represented")).await,
             "worlds" if mine => {
-                self.api
-                    .read("/worlds?user=me&releaseStatus=all&n=100&sort=updated&order=descending")
-                    .await
+                let list = self.api.read("/worlds?user=me&releaseStatus=all&n=100&sort=updated&order=descending").await?;
+                // Each look at my worlds is also a note of how they stand today.
+                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                let rows: Vec<(String, i64, i64, i64)> = list
+                    .as_array()
+                    .map(|a| a.as_slice())
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|w| {
+                        let n = |k: &str| w[k].as_i64().unwrap_or(0);
+                        Some((w["id"].as_str()?.to_string(), n("visits"), n("favorites"), n("occupants")))
+                    })
+                    .collect();
+                if !rows.is_empty() {
+                    let _ = self.with_store(|s| s.record_world_stats(&today, &rows));
+                }
+                Ok(list)
             }
             "worlds" => {
                 self.api

@@ -3,6 +3,7 @@ import { backend, errorText } from "./backend";
 import { dateText, tidy } from "./bits";
 import { openThing } from "./Detail";
 import { usePic } from "./Pic";
+import { WorldSummary, WorldTrend, useWorldStats } from "./WorldStats";
 import { ALL_TAGS, TagChips, TagEditor, TagFilter, liveTag, passesTag, useTags } from "./Mine";
 
 type Kind = "avatars" | "worlds";
@@ -81,6 +82,12 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
   }, [kind, meId, rows]);
 
   const all = rows[kind];
+  // How my worlds moved, read once their list is in (listing them also notes today's numbers).
+  const stats = useWorldStats(kind === "worlds" && !!rows.worlds);
+  const worldsNow = useMemo(() => {
+    const mine = rows.worlds ?? [];
+    return { count: mine.length, visits: mine.reduce((n, r) => n + num(r.visits), 0), favorites: mine.reduce((n, r) => n + num(r.favorites), 0), occupants: mine.reduce((n, r) => n + num(r.occupants), 0) };
+  }, [rows.worlds]);
   const tag = liveTag((rows.avatars ?? []).map((r) => str(r.id)), tags, pickedTag);
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -151,6 +158,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
       </div>
 
       {kind === "avatars" && all && <TagFilter ids={all.map((r) => str(r.id))} tags={tags} value={tag} set={setTag} />}
+      {kind === "worlds" && all && <WorldSummary stats={stats} now={worldsNow} />}
 
       {problem && (
         <p className="banner" role="alert">
@@ -178,6 +186,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
               </button>
               <span className="tile-note">{notes.filter(Boolean).join(", ")}</span>
               {str(r.updated_at) && <span className="tile-note">Updated {when(str(r.updated_at))}</span>}
+              {kind === "worlds" && <WorldTrend days={stats.get(id)} />}
               {kind === "avatars" && tagging !== id && <TagChips id={id} tags={tags} />}
               {kind === "avatars" && tagging === id && <TagEditor id={id} tags={tags} onDone={onDone} />}
               <div className="wayback">

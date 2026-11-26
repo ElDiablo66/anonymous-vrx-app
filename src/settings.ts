@@ -35,6 +35,8 @@ export const rankWords: Record<RankKey, string> = {
 };
 
 export interface Settings {
+  /** Empty VRChat's download cache each time the game closes. */
+  clearCacheOnClose: boolean;
   /** A newer version: `auto` installs it when the app starts, `tell` asks first, `off` never looks. */
   updates: "auto" | "tell" | "off";
   /** `pc` follows Windows; otherwise a 12-hour or 24-hour clock everywhere. */
@@ -230,6 +232,7 @@ function load(): Settings {
     avatarExtras: EXTRA_AVATAR_PROVIDERS.map((p) => p.url),
     cardPacking: "rows",
     updates: "auto",
+    clearCacheOnClose: false,
     timeFormat: "pc",
     dateFormat: "words",
     headingFont: headingFonts[0],

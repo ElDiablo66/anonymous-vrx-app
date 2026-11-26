@@ -59,6 +59,14 @@ CREATE TABLE IF NOT EXISTS tags (
     tag     TEXT NOT NULL,
     PRIMARY KEY (item_id, tag)
 );
+CREATE TABLE IF NOT EXISTS world_stats (
+    world_id  TEXT NOT NULL,
+    day       TEXT NOT NULL,
+    visits    INTEGER NOT NULL,
+    favorites INTEGER NOT NULL,
+    occupants INTEGER NOT NULL,
+    PRIMARY KEY (world_id, day)
+);
 CREATE TABLE IF NOT EXISTS ratings (
     item_id    TEXT PRIMARY KEY,
     stars      INTEGER NOT NULL,
@@ -650,6 +658,30 @@ impl Store {
     }
 
     /// My own stars for a world or an avatar, 1 to 5. Nothing leaves this PC.
+    /// Notes how my own worlds stand on `day` ("2026-11-25"): visits and favourites so far, and
+    /// the most people seen in them that day. A second note on the same day replaces the first.
+    pub fn record_world_stats(&self, day: &str, worlds: &[(String, i64, i64, i64)]) -> AppResult<()> {
+        let tx = self.db.unchecked_transaction()?;
+        for (id, visits, favorites, occupants) in worlds {
+            tx.execute(
+                "INSERT INTO world_stats (world_id, day, visits, favorites, occupants) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(world_id, day) DO UPDATE SET visits = excluded.visits, favorites = excluded.favorites,
+                     occupants = MAX(world_stats.occupants, excluded.occupants)",
+                params![id, day, visits, favorites, occupants],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// What was noted about my worlds from `since` on, oldest day first:
+    /// world, day, visits, favourites, most people that day.
+    pub fn world_stats(&self, since: &str) -> AppResult<Vec<(String, String, i64, i64, i64)>> {
+        let mut stmt = self.db.prepare("SELECT world_id, day, visits, favorites, occupants FROM world_stats WHERE day >= ?1 ORDER BY day, world_id")?;
+        let rows = stmt.query_map(params![since], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     pub fn ratings(&self) -> AppResult<Vec<(String, i64)>> {
         let mut stmt = self.db.prepare("SELECT item_id, stars FROM ratings")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -1590,6 +1622,20 @@ mod tests {
         assert_eq!(s.tags().unwrap(), vec![("avtr_a".to_string(), "club".to_string()), ("avtr_b".to_string(), "club".to_string())]);
         s.set_tags("avtr_b", &[]).unwrap();
         assert_eq!(s.tags().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn my_worlds_are_noted_once_a_day_and_read_back_in_order() {
+        let s = Store::in_memory().unwrap();
+        s.record_world_stats("2026-11-24", &[("wrld_a".into(), 100, 10, 3)]).unwrap();
+        s.record_world_stats("2026-11-25", &[("wrld_a".into(), 130, 12, 7), ("wrld_b".into(), 5, 0, 0)]).unwrap();
+        // Later the same day: the totals move on, the most people seen stays the day's peak.
+        s.record_world_stats("2026-11-25", &[("wrld_a".into(), 140, 12, 2)]).unwrap();
+        let all = s.world_stats("2026-11-01").unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0], ("wrld_a".into(), "2026-11-24".into(), 100, 10, 3));
+        assert_eq!(all[1], ("wrld_a".into(), "2026-11-25".into(), 140, 12, 7));
+        assert_eq!(s.world_stats("2026-11-25").unwrap().len(), 2);
     }
 
     #[test]

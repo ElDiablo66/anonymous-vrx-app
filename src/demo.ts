@@ -304,6 +304,20 @@ export const demoBackend: Backend = {
   async vrcxFound() {
     return true;
   },
+  async worldStats(days) {
+    const out = [];
+    for (const [n, id] of ["wrld_demo_pier", "wrld_demo_arcade"].entries()) {
+      let visits = n ? 2100 : 12400;
+      let favorites = n ? 60 : 300;
+      for (let d = Math.min(days, 30); d >= 0; d--) {
+        const day = new Date(Date.now() - d * 86_400_000);
+        visits += Math.round((n ? 6 : 22) + 14 * Math.abs(Math.sin(d * (n + 1.3))) + (day.getDay() % 6 === 0 ? 25 : 0));
+        favorites += d % (n ? 5 : 2) === 0 ? 1 : 0;
+        out.push({ worldId: id, day: `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`, visits, favorites, occupants: Math.round(3 + 9 * Math.abs(Math.cos(d + n))) });
+      }
+    }
+    return out;
+  },
   async updateInfo() {
     return { version: "0.1.1", supported: true };
   },
