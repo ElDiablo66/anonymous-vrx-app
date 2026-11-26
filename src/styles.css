@@ -8542,3 +8542,10 @@ body .map-toggle input[role="switch"]:checked::after {
     height: 64vh;
   }
 }
+
+/* A face in a district is centred on its seat. It used to hang from the seat's left edge,
+   which pushed every face half its width to the right. */
+body .town-face {
+  width: 74px;
+  translate: -37px -21px;
+}
