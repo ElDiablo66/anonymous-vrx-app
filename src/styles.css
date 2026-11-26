@@ -5193,3 +5193,518 @@ time,
 .profile-body .instance-list li:last-child {
   border-bottom: 0;
 }
+
+/* =====================================================================
+   From the audit of every screen: settings, the rail and small windows
+   ===================================================================== */
+
+/* The rail scrolls when the window is too short for it, so Settings and the account
+   button can always be reached. */
+.rail {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.rail::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-height: 820px) {
+  .rail {
+    gap: 2px;
+    padding-block: 10px;
+  }
+  .rail > button,
+  .rail-end > button {
+    padding-block: 6px;
+  }
+  .rail-logo {
+    margin-bottom: 4px;
+  }
+}
+
+/* Settings: two columns as soon as there is room for them */
+.settings-cols {
+  columns: 2 460px;
+}
+
+.settings-cols[data-show="data"],
+.settings-cols[data-show="about"] {
+  columns: 1;
+  max-width: 780px;
+}
+
+.settings section > .setting:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.settings section > p.setting-hint {
+  margin: 0 0 8px;
+}
+
+.setting-hint {
+  line-height: 1.45;
+  max-width: 52ch;
+  text-wrap: pretty;
+}
+
+.settings .data-actions {
+  margin-top: 14px;
+}
+
+.settings .data-actions .plain {
+  margin-top: 0;
+}
+
+.group-alerts {
+  gap: 6px;
+}
+
+/* One height and corner for every control in Settings */
+.choices button,
+.swatch input,
+.provider input,
+.quiet-times input,
+.settings select {
+  min-height: 32px;
+  border-radius: 9px;
+}
+
+.quiet-times input {
+  background: var(--dusk-deep);
+}
+
+/* A Reset with nothing to reset is not shown at all. */
+.swatches .plain:disabled {
+  visibility: hidden;
+}
+
+/* A label keeps its room; a long row of choices wraps under its own right edge. */
+.setting > span:first-child {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.setting > .choices {
+  flex: 0 1 auto;
+  max-width: 60%;
+}
+
+.settings-tabs {
+  background: color-mix(in srgb, var(--solid) 86%, transparent);
+  margin-inline: -28px;
+  padding-inline: 28px;
+}
+
+.credits li {
+  max-width: 78ch;
+}
+
+/* A small window: the header, and the windows that open over it */
+@media (max-width: 1040px) {
+  .stage-head {
+    align-items: center;
+    padding: 18px 28px 12px;
+  }
+  .stage-head h1 {
+    font-size: 32px;
+  }
+  .search {
+    width: min(220px, 32%);
+  }
+}
+
+@media (max-width: 1100px) {
+  .profile {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+  .veil:has(.profile) {
+    padding: 12px;
+  }
+  .profile-side {
+    padding-inline: 16px;
+  }
+  .profile-top .tabs {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .profile-top .tabs button {
+    flex: none;
+    padding: 5px 10px;
+  }
+}
+
+/* =====================================================================
+   From the audit of every screen: the windows
+   ===================================================================== */
+
+/* A world or an avatar uses the same wide column and rail as a person. A group has
+   nothing for the rail, so it keeps one column. */
+.info-solo {
+  grid-template-columns: 1fr;
+}
+
+.info-solo .info-rail:empty {
+  display: none;
+}
+
+/* Facts are label and value rows in every window. */
+.profile-body .facts {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.profile-body .facts div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.profile-body .facts dt {
+  font-size: 13.5px;
+}
+
+.profile-body .facts dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.fact-rows + .profile-fine,
+.fact-rows:last-child {
+  margin-bottom: 0;
+}
+
+/* A card ends where its last line ends. */
+.profile-body section > :last-child {
+  margin-bottom: 0;
+}
+
+.profile-body p.tile-note {
+  margin: 8px 0 0;
+}
+
+.profile-body section > h3 + .profile-fine {
+  margin-top: 0;
+}
+
+.profile-body section > .profile-fine + :is(.tiles, .rows, .card-grid) {
+  margin-top: 12px;
+}
+
+/* A card that only has a line to say says it at reading size. */
+.profile-body section > h3 + .profile-fine:last-child {
+  font-size: 13.5px;
+  max-width: 68ch;
+  line-height: 1.55;
+}
+
+/* The raw data fills the window and scrolls with it; no box inside a box. */
+.profile-body .raw {
+  max-height: none;
+}
+
+/* A person's activity: one row per entry */
+.profile-body .profile-feed {
+  gap: 0;
+  font-size: 14px;
+}
+
+.profile-body .profile-feed li {
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 45%, transparent);
+}
+
+.profile-body .profile-feed li:last-child {
+  border-bottom: 0;
+}
+
+/* Open instances line up with the card's own edge; the head count sits at the right. */
+.profile-body .instance-list .visit-row,
+.profile-body .instance-list button {
+  padding: 9px 0;
+  font-size: 13.5px;
+}
+
+.profile-body .instance-list button > span:last-child {
+  margin-left: auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Every tile in a window is the same card with the same buttons. */
+.profile-body .card {
+  padding: 8px;
+  border: 0;
+  background: var(--panel);
+  box-shadow: var(--card-line);
+}
+
+.profile-body .tile .wayback button {
+  padding: 6px 12px;
+  font-size: 13.5px;
+}
+
+.post:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.post:first-of-type {
+  padding-top: 0;
+}
+
+/* Side panel headings match the card headings. */
+.profile-side h3 {
+  font-size: 17px;
+  margin: 18px 0 10px;
+}
+
+.profile-side .wayback {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+/* The instance window has one view, so it has a title where others have tabs. */
+.window-title {
+  margin: 0;
+  font: italic 700 20px/1.1 var(--display);
+  color: var(--teal);
+}
+
+/* Making an instance: the two selects and the button share one height. */
+.new-instance {
+  align-items: center;
+}
+
+.new-instance .tool select {
+  height: 36px;
+  border-radius: 10px;
+}
+
+.tag-add input {
+  flex: 1 1 120px;
+}
+
+/* =====================================================================
+   From the audit of every screen: the main screens
+   ===================================================================== */
+
+/* The day label is the same small pill on every list. */
+.feed-list .day,
+.photo-day,
+.day {
+  width: fit-content;
+  margin: 14px 0 8px;
+  padding: 3px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--solid) 80%, transparent);
+}
+
+/* Activity panel: more room for the sentence, and the panel a little wider */
+@media (min-width: 1041px) {
+  .shell:not(.shell-wide) {
+    grid-template-columns: 92px minmax(0, 1fr) clamp(340px, 22vw, 400px);
+  }
+}
+
+.activity .entry {
+  grid-template-columns: max-content 28px minmax(0, 1fr);
+}
+
+.activity .entry-hide {
+  position: absolute;
+  top: 4px;
+  right: 0;
+}
+
+.activity-head {
+  padding-right: 20px;
+}
+
+.entry-more {
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* An empty list says so on a card, lined up with everything else. */
+.table-wrap .empty,
+.feed-browser .empty {
+  margin: 0;
+  padding: 16px 18px;
+  max-width: none;
+  border-radius: var(--card-radius);
+  background: var(--panel);
+  box-shadow: var(--card-line);
+}
+
+/* Avatar history */
+.worn-facts {
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  gap: 4px 16px;
+}
+
+.avatar-history .fav-item {
+  background: var(--panel);
+  box-shadow: var(--card-line);
+  border-radius: var(--card-radius);
+}
+
+.avatar-history .row-actions {
+  justify-content: flex-end;
+}
+
+.list-tools .filters-flat {
+  padding: 0;
+}
+
+/* Friend activity: a card of compact rows */
+.feed-list {
+  padding: 4px 14px;
+  background: var(--panel);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-line);
+}
+
+.feed-list .entry {
+  padding: 5px 0 5px 10px;
+}
+
+.feed-list .entry .plain {
+  padding: 3px 10px;
+  font-size: 12.5px;
+  align-self: center;
+}
+
+/* Inbox, friend log and the blocked list share one row */
+.notice,
+.notice-done {
+  background: var(--panel);
+  box-shadow: var(--card-line);
+  border-radius: var(--card-radius);
+}
+
+.notice-new {
+  box-shadow: inset 3px 0 0 var(--lamp), var(--card-line);
+}
+
+.blocked-title {
+  font-size: 20px;
+  margin: var(--gap) 0 8px;
+}
+
+/* Tiles of my own uploads: the same buttons as in search, in even rows */
+.tiles-wide {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.tiles-wide .tile {
+  padding: 10px;
+}
+
+.tiles-wide .tile .wayback {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+.tiles-wide .tile .wayback button {
+  padding: 6px 12px;
+  font-size: 13.5px;
+}
+
+/* Favourites */
+.cleanup {
+  margin: 0 0 var(--gap);
+  background: var(--panel);
+  box-shadow: var(--card-line);
+  border-color: transparent;
+}
+
+.cleanup + .fav-group {
+  margin-top: 0;
+}
+
+.fav-item {
+  position: relative;
+}
+
+.fav-item .fav-remove {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.group-names-cols {
+  gap: var(--gap);
+}
+
+.group-names-card {
+  border: 0;
+  box-shadow: var(--card-line);
+}
+
+.group-names-card .plain.go:disabled {
+  background: none;
+  box-shadow: var(--card-line);
+  color: var(--text-soft);
+  opacity: 1;
+}
+
+/* Here */
+.room-here {
+  max-width: none;
+}
+
+/* Search */
+.result {
+  border-radius: var(--card-radius);
+  background: var(--panel);
+  box-shadow: var(--card-line);
+}
+
+.world-result > .tile-open {
+  flex: none;
+  width: auto;
+}
+
+.world-result .result-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.world-result .wayback {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+.search-bar {
+  align-items: stretch;
+  margin-bottom: var(--gap);
+}
+
+.search-bar .search {
+  height: 38px;
+}
+
+/* A setting whose choices do not fit beside its label puts them on the next line,
+   whole, at the right edge. They no longer break in the middle. */
+.setting {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.setting > .choices {
+  max-width: 100%;
+  margin-left: auto;
+}
+
+/* An avatar without a picture still shows the frame the picture would be in. */
+.side-card .thumb {
+  background-color: color-mix(in srgb, var(--text) 7%, transparent);
+  border-radius: 10px;
+}

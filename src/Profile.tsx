@@ -52,7 +52,8 @@ function ago(iso: string): string {
   const minutes = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60_000));
   if (minutes < 60) return `${minutes} min ago`;
   if (minutes < 60 * 48) return `${Math.floor(minutes / 60)} h ago`;
-  return `${Math.floor(minutes / 1440)} days ago`;
+  const days = Math.floor(minutes / 1440);
+  return days === 1 ? "yesterday" : `${days} days ago`;
 }
 
 const feedWords: Record<string, string> = {
@@ -599,7 +600,7 @@ export function ProfilePanel({
                 <div className="info-grid">
                   <div className="info-main">
                     <section>
-                      <h3>Where they are</h3>
+                      <h3>{isMe ? "Where you are" : "Where they are"}</h3>
                       {friend && inRoom ? (
                         <>
                           <p className="profile-where">
@@ -784,7 +785,7 @@ export function ProfilePanel({
                     {isMe && (
                       <section>
                         <h3>My settings on VRChat</h3>
-                        <dl className="setting-rows">
+                        <dl className="fact-rows">
                           {ownSettings
                             .filter(([key]) => typeof raw[key] === "boolean")
                             .map(([key, label, inverted]) => (

@@ -170,7 +170,7 @@ export function TagEditor({ id, tags, onDone }: { id: string; tags: Record<strin
           void saveTags(id, [...mine, ...add], onDone);
         }}
       >
-        <input value={text} maxLength={60} list={listId} placeholder="Add a tag, for example club or sleep" aria-label="Add a tag" onChange={(e) => setText(e.target.value)} />
+        <input value={text} maxLength={60} list={listId} placeholder="Add a tag" aria-label="Add a tag" onChange={(e) => setText(e.target.value)} />
         <datalist id={listId}>
           {every.map((t) => (
             <option key={t} value={t} />

@@ -150,7 +150,7 @@ export function App() {
     // The browser demo can start with a window open: "?open=<user, world, avatar or group id>".
     const asked = backend.demo ? new URLSearchParams(location.search).get("open") : null;
     if (!asked) return [];
-    const kind = asked.startsWith("wrld_") ? "world" : asked.startsWith("avtr_") ? "avatar" : asked.startsWith("grp_") ? "group" : "profile";
+    const kind = asked.startsWith("wrld_") && asked.includes(":") ? "instance" : asked.startsWith("wrld_") ? "world" : asked.startsWith("avtr_") ? "avatar" : asked.startsWith("grp_") ? "group" : "profile";
     return [{ kind, id: asked }];
   });
   const top = windows[windows.length - 1];
@@ -259,6 +259,32 @@ export function App() {
   useEffect(() => {
     void backend.setOwnFeed(settings.feedMine).catch(() => {});
   }, [settings.feedMine, me]);
+  // The browser demo can open a tab on the screen ("?tab=Worlds"), a tab in the open window
+  // ("?wtab=Avatars") and run a search ("?q=robot"), so every view can be looked at by address.
+  useEffect(() => {
+    if (!backend.demo || !me) return;
+    const asked = new URLSearchParams(location.search);
+    const press = (within: string, label: string | null) => {
+      if (!label) return;
+      const all = [...document.querySelectorAll<HTMLButtonElement>(`${within} button`)];
+      all.find((b) => (b.textContent ?? "").trim().toLowerCase().startsWith(label.toLowerCase()))?.click();
+    };
+    const timers = [
+      window.setTimeout(() => press(".stage .tabs", asked.get("tab")), 500),
+      window.setTimeout(() => press(".profile-top .tabs", asked.get("wtab")), 1400),
+      window.setTimeout(() => {
+        const q = asked.get("q");
+        const box = document.querySelector<HTMLInputElement>(".search-bar input");
+        if (!q || !box) return;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(box, q);
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+        box.form?.requestSubmit();
+      }, 1200),
+    ];
+    return () => timers.forEach((t) => window.clearTimeout(t));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.id]);
+
   // Lists kept outside this screen's state are told when the account changes.
   const meIdNow = me?.id ?? "";
   useEffect(() => {

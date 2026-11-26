@@ -98,11 +98,7 @@ export function InstancePanel({
 
         <div className="profile-main">
           <div className="profile-top">
-            <div className="tabs" role="tablist" aria-label="Instance">
-              <button role="tab" aria-selected className="on">
-                Who is here
-              </button>
-            </div>
+            <h3 className="window-title">Who is here</h3>
             <span className="window-nav">
               {onBack && <button onClick={onBack}>Back</button>}
               <button onClick={onClose}>Close</button>

@@ -66,7 +66,7 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
   return (
     <>
       <div className="list-tools">
-        <div className="choices" role="radiogroup" aria-label="Order">
+        <div className="filters filters-flat" role="radiogroup" aria-label="Order">
           <button role="radio" aria-checked={order === "recent"} className={order === "recent" ? "on" : ""} onClick={() => setOrder("recent")}>
             Latest first
           </button>

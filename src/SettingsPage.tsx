@@ -359,7 +359,7 @@ export function SettingsPage({
           on={settings.feedMine}
           set={(on) => change({ feedMine: on })}
         />
-        <div className="setting setting-top">
+        <div className={Object.keys(settings.feedHidden).length ? "setting setting-top" : "setting"}>
           <span>
             <span className="setting-name">Friends left out</span>
             <span className="setting-hint">
@@ -690,9 +690,11 @@ export function SettingsPage({
           on={settings.alertEverythingElse}
           set={(on) => change({ alertEverythingElse: on })}
         />
-        <button className="plain" onClick={() => void sendTest()}>
-          Send a test notification
-        </button>
+        <div className="data-actions">
+          <button className="plain" onClick={() => void sendTest()}>
+            Send a test notification
+          </button>
+        </div>
         {testResult && (
           <p className="setting-hint" role="status">
             {testResult}

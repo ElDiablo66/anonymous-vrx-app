@@ -26,6 +26,7 @@ function age(iso: string): string {
   if (!iso) return "";
   const days = Math.floor((Date.now() - Date.parse(iso)) / 86_400_000);
   if (days < 1) return "today";
+  if (days === 1) return "yesterday";
   if (days < 60) return `${days} days ago`;
   if (days < 730) return `${Math.floor(days / 30)} months ago`;
   return `${Math.floor(days / 365)} years ago`;
@@ -437,7 +438,8 @@ export function DetailPanel({
             {!data && !problem && <p className="profile-fine">Asking VRChat</p>}
 
             {tab === "info" && data && (
-              <div className="detail-grid">
+              <div className={kind === "group" ? "info-grid info-solo" : "info-grid"}>
+                <div className="info-main">
                 <section>
                   <h3>{kind === "group" ? "About" : "Description"}</h3>
                   {str(d.description) ? <p className="profile-bio">{str(d.description)}</p> : <p className="profile-fine">Nothing written.</p>}
@@ -483,6 +485,8 @@ export function DetailPanel({
                     </ul>
                   </section>
                 )}
+                </div>
+                <aside className="info-rail">
                 {kind === "world" && (
                   <section>
                     <h3>Mine</h3>
@@ -530,6 +534,7 @@ export function DetailPanel({
                     </div>
                   </section>
                 )}
+                </aside>
               </div>
             )}
 

@@ -377,7 +377,7 @@ export function Everyone({
                   </td>
                   <td>{whereText(f, worlds)}</td>
                   <td className="num">{together[f.id] ? together[f.id] : ""}</td>
-                  <td>{f.state !== "offline" ? "now" : lastSeen[f.id] ? daysAgo(lastSeen[f.id]) : "not on record"}</td>
+                  <td className="num">{f.state !== "offline" ? "now" : lastSeen[f.id] ? daysAgo(lastSeen[f.id]) : "not on record"}</td>
                 </tr>
               ))}
             </tbody>
