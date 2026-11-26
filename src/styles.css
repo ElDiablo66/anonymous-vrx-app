@@ -6107,3 +6107,36 @@ body .choices button.on {
 .avatar-history .fav-item:hover {
   background: var(--panel);
 }
+
+/* Under a history row everything starts at the same left edge as the world's name:
+   the line about the instance, the buttons, and the people who were there. */
+.visit .visit-more .chips,
+.visit .visit-more > .empty,
+.visit .visit-more .people-none {
+  padding: 0;
+  margin: 0;
+}
+
+/* The friend table's header is solid and covers the strip above it, so rows scrolling
+   under it never show through or peek out over the top. */
+.table-wrap .people th {
+  top: 0;
+  z-index: 3;
+  background: var(--solid);
+  box-shadow: 0 -12px 0 var(--solid), inset 0 -1px 0 var(--line);
+  border-bottom: 0;
+}
+
+:root:is([data-bg="sunset"], [data-bg="custom"], [data-bg="image"]) .table-wrap .people th {
+  background: var(--solid);
+}
+
+.people td.num,
+.people th:last-child {
+  white-space: nowrap;
+}
+
+.people td:last-child {
+  min-width: 108px;
+  text-align: right;
+}
