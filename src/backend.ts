@@ -354,6 +354,8 @@ export type LiveEvents = {
   "avatars:changed": null;
   "notice:new": Notice;
   "here:changed": null;
+  /** How far the download of an update is, in bytes. `total` is 0 when the size is not known. */
+  "update:progress": { done: number; total: number };
   /** A notice for the app's own panel in the headset: the window draws it and hands it back. */
   "vr:draw": { title: string; body: string };
   "world:resolved": World;
@@ -510,6 +512,12 @@ export interface Backend {
   /** Whether VRCX's history file is on this PC. */
   vrcxFound(): Promise<boolean>;
   /** Brings VRCX's history for my account into this app, after making a backup. Safe to run again. */
+  /** The running version, and whether this edition can update itself. */
+  updateInfo(): Promise<{ version: string; supported: boolean }>;
+  /** Asks whether a newer version is out. */
+  updateCheck(): Promise<{ version: string; notes: string } | null>;
+  /** Downloads and installs the update that was found; the app closes and opens again as the new version. */
+  updateInstall(): Promise<void>;
   /** Every icon frame, profile effect and nameplate effect, by the id a profile names. Asked for once a day. */
   cosmetics(): Promise<Record<string, Cosmetic>>;
   /** Changes whenever VRCX has written to its history. Empty when VRCX is not on this PC. */
@@ -691,6 +699,9 @@ const desktop: Backend = {
   importVrcx: (settings, byItself, since) => invoke("import_vrcx", { settings, byItself: byItself ?? false, since: since ?? null }),
   vrcxStamp: () => invoke("vrcx_stamp"),
   cosmetics: () => invoke("get_cosmetics"),
+  updateInfo: () => invoke("update_info"),
+  updateCheck: () => invoke("update_check"),
+  updateInstall: () => invoke("update_install"),
   getNoGpu: () => invoke("get_no_gpu"),
   setNoGpu: (on) => invoke("set_no_gpu", { on }),
   restartApp: () => invoke("restart_app"),

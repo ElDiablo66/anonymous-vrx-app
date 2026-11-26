@@ -229,6 +229,55 @@ export function App() {
     return () => window.removeEventListener("history:imported", again);
   }, [me]);
 
+  // A newer version: looked for a little after the start and every six hours after that.
+  // `auto` installs it straight away, `tell` puts up a note with a button.
+  const [update, setUpdate] = useState<{ version: string; notes: string } | null>(null);
+  const [updating, setUpdating] = useState("");
+  const installUpdate = (version: string) => {
+    setUpdating(`Getting version ${version}`);
+    void backend.updateInstall().catch((err) => {
+      setUpdating("");
+      setToast(`The update did not install: ${errorText(err)}`);
+    });
+  };
+  useEffect(() => {
+    if (settings.updates === "off") return;
+    let alive = true;
+    const look = (atStart: boolean) =>
+      void backend
+        .updateCheck()
+        .then((found) => {
+          if (!alive || !found) return;
+          setUpdate(found);
+          // Only right after the start: later in the day a restart would cut into whatever I am doing.
+          if (atStart && settingsNow.current.updates === "auto") installUpdate(found.version);
+        })
+        // No connection, or GitHub is slow: the next look tries again.
+        .catch(() => {});
+    const first = window.setTimeout(() => look(true), 12_000);
+    const later = window.setInterval(() => look(false), 6 * 3_600_000);
+    return () => {
+      alive = false;
+      window.clearTimeout(first);
+      window.clearInterval(later);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.updates === "off"]);
+  useEffect(() => {
+    if (!updating) return;
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void backend
+      .on("update:progress", (p) => {
+        if (p.total > 0) setUpdating(`Getting the new version, ${Math.round((p.done / p.total) * 100)}%`);
+      })
+      .then((off) => (gone ? off() : (stop = off)));
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, [updating !== ""]);
+
   // What VRCX has written since the last look is taken over without asking, when I want that.
   useEffect(() => {
     if (!me || !settings.vrcxAuto) return;
@@ -684,6 +733,19 @@ export function App() {
           )}
         </header>
         {backend.demo && <p className="demo-strip">Demo data. Open the desktop app to see your own friends.</p>}
+        {update && (
+          <div className="banner crash-note update-note" role="status">
+            <span>{updating ? `${updating}. The app closes and opens again by itself.` : `Version ${update.version} of Anonymous VRX is out.`}</span>
+            {!updating && (
+              <>
+                <button className="go" onClick={() => installUpdate(update.version)}>
+                  Update now
+                </button>
+                <button onClick={() => setUpdate(null)}>Later</button>
+              </>
+            )}
+          </div>
+        )}
         {crash && (
           <div className="banner crash-note" role="alert">
             <span>VRChat closed without warning while you were in {crash.worldName}.</span>

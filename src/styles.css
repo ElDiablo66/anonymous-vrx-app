@@ -6829,3 +6829,22 @@ body .wear-bar > span {
 .notice-title .name-link:hover {
   text-decoration: underline;
 }
+
+/* The Settings tabs stay at the top while the page scrolls. Nothing may show through or
+   above them. */
+body .settings {
+  padding-top: 0;
+}
+
+body .settings-tabs {
+  top: 0;
+  margin-top: 0;
+  padding-top: 12px;
+  background: var(--solid);
+  backdrop-filter: none;
+  box-shadow: 0 -24px 0 var(--solid), 0 10px 14px -10px rgb(0 0 0 / 0.55);
+}
+
+.update-notes {
+  white-space: pre-line;
+}

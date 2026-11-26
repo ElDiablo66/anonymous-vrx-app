@@ -35,6 +35,8 @@ export const rankWords: Record<RankKey, string> = {
 };
 
 export interface Settings {
+  /** A newer version: `auto` installs it when the app starts, `tell` asks first, `off` never looks. */
+  updates: "auto" | "tell" | "off";
   /** `pc` follows Windows; otherwise a 12-hour or 24-hour clock everywhere. */
   timeFormat: "pc" | "12" | "24";
   /** `words` writes "25 November 2026", `iso` writes "2026-11-25". */
@@ -227,6 +229,7 @@ function load(): Settings {
     avatarProvider: DEFAULT_AVATAR_PROVIDER,
     avatarExtras: EXTRA_AVATAR_PROVIDERS.map((p) => p.url),
     cardPacking: "rows",
+    updates: "auto",
     timeFormat: "pc",
     dateFormat: "words",
     headingFont: headingFonts[0],
@@ -264,6 +267,7 @@ function load(): Settings {
     if (!merged.alertPeople || typeof merged.alertPeople !== "object") merged.alertPeople = {};
     if (!Array.isArray(merged.alertGroupsOff)) merged.alertGroupsOff = [];
     if (!merged.feedHidden || typeof merged.feedHidden !== "object") merged.feedHidden = {};
+    if (!["auto", "tell", "off"].includes(merged.updates)) merged.updates = defaults.updates;
     if (!["pc", "12", "24"].includes(merged.timeFormat)) merged.timeFormat = defaults.timeFormat;
     if (!["words", "iso"].includes(merged.dateFormat)) merged.dateFormat = defaults.dateFormat;
     if (!["rank", "person", "plain"].includes(merged.nameColours)) merged.nameColours = defaults.nameColours;

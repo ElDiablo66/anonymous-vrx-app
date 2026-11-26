@@ -89,6 +89,84 @@ function FontPick({ label, hint, value, list, set }: { label: string; hint: stri
   );
 }
 
+export function UpdateSettings({ settings, change }: Props) {
+  const [info, setInfo] = useState<{ version: string; supported: boolean } | null>(null);
+  const [found, setFound] = useState<{ version: string; notes: string } | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState("");
+  useEffect(() => {
+    void backend
+      .updateInfo()
+      .then(setInfo)
+      .catch(() => {});
+  }, []);
+
+  async function look() {
+    setBusy("look");
+    setNote("");
+    try {
+      const got = await backend.updateCheck();
+      setFound(got);
+      setNote(got ? "" : "This is the newest version.");
+    } catch (err) {
+      setNote(`Could not ask for updates: ${errorText(err)}`);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function install() {
+    setBusy("install");
+    setNote("Getting the new version. The app closes and opens again by itself.");
+    try {
+      await backend.updateInstall();
+    } catch (err) {
+      setNote(`The update did not install: ${errorText(err)}`);
+      setBusy("");
+    }
+  }
+
+  return (
+    <section data-group="about">
+      <h2>Updates</h2>
+      <p className="setting-hint">You have version {info?.version ?? "..."}.</p>
+      {info && !info.supported && <p className="setting-hint">This edition does not update itself. A newer one is installed by running its installer over this one.</p>}
+      {info?.supported && (
+        <>
+          <Row label="When a newer version is out" hint="The app asks its page on GitHub when it starts and every six hours. One found at the start is installed right away; one found later waits for you. An update is only installed when its signature matches this app's key.">
+            <Choices
+              label="Updates"
+              value={settings.updates}
+              set={(updates) => change({ updates })}
+              options={[
+                ["auto", "Install it at the start"],
+                ["tell", "Tell me"],
+                ["off", "Do nothing"],
+              ]}
+            />
+          </Row>
+          <div className="data-actions">
+            <button className="plain" disabled={busy !== ""} onClick={() => void look()}>
+              {busy === "look" ? "Asking" : "Look for an update now"}
+            </button>
+            {found && (
+              <button className="plain go" disabled={busy !== ""} onClick={() => void install()}>
+                {busy === "install" ? "Updating" : `Update to ${found.version}`}
+              </button>
+            )}
+          </div>
+          {found?.notes && busy !== "install" && <p className="setting-hint update-notes">{found.notes}</p>}
+          {note && (
+            <p className="setting-hint" role="status">
+              {note}
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 export function FontSettings({ settings, change }: Props) {
   return (
     <section data-group="look">

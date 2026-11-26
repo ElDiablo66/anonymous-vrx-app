@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { backend, errorText, type BackupInfo } from "./backend";
 import { Avatar } from "./bits";
 import { DEFAULT_AVATAR_PROVIDER, EXTRA_AVATAR_PROVIDERS, shrinkPicture, sizes, themeColours, type Settings } from "./settings";
-import { DateSettings, FontSettings, GameCacheSettings, InstanceSettings, PeopleColourSettings, PerformanceSettings, ProfileLookSettings, VrNoticeSettings } from "./SettingsMore";
+import { DateSettings, FontSettings, UpdateSettings, GameCacheSettings, InstanceSettings, PeopleColourSettings, PerformanceSettings, ProfileLookSettings, VrNoticeSettings } from "./SettingsMore";
 
 function Swatch({ label, value, set }: { label: string; value: string; set: (value: string) => void }) {
   // Dragging in the colour picker reports a new colour dozens of times a second. The swatch
@@ -904,6 +904,8 @@ export function SettingsPage({
           Signing out removes the saved sign-in from this PC. Your history stays on the disk.
         </p>
       </section>
+
+      <UpdateSettings settings={settings} change={change} />
 
       <section data-group="about">
         <h2>About</h2>

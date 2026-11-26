@@ -616,6 +616,68 @@ fn vrcx_stamp() -> String {
         .join("|")
 }
 
+// ---------- updates ----------
+
+/// Where a newer version is announced. Only the app-only edition has such a place; the full
+/// edition is passed on by hand and never replaces itself.
+const UPDATE_FEED: &str = "https://github.com/ElDiablo66/anonymous-vrx-app/releases/latest/download/latest.json";
+
+/// An update that was found and waits to be installed.
+static UPDATE_FOUND: Mutex<Option<tauri_plugin_updater::Update>> = Mutex::new(None);
+
+/// The running version, and whether this edition can update itself.
+#[tauri::command]
+fn update_info(app: AppHandle) -> serde_json::Value {
+    serde_json::json!({ "version": app.package_info().version.to_string(), "supported": !UPDATE_FEED.is_empty() })
+}
+
+/// Asks whether a newer version is out. Gives its number and notes, or nothing.
+#[tauri::command]
+async fn update_check(app: AppHandle) -> AppResult<Option<serde_json::Value>> {
+    use tauri_plugin_updater::UpdaterExt;
+    if UPDATE_FEED.is_empty() {
+        return Ok(None);
+    }
+    let problem = |e: tauri_plugin_updater::Error| AppError::Network(e.to_string());
+    let feed = UPDATE_FEED.parse().map_err(|_| AppError::CannotDo("The address for updates is not valid.".into()))?;
+    let found = app
+        .updater_builder()
+        .endpoints(vec![feed])
+        .map_err(problem)?
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(problem)?
+        .check()
+        .await
+        .map_err(problem)?;
+    let told = found.as_ref().map(|u| serde_json::json!({ "version": u.version, "notes": u.body.clone().unwrap_or_default() }));
+    *UPDATE_FOUND.lock().unwrap() = found;
+    Ok(told)
+}
+
+/// Downloads the update that was found, checks its signature and installs it. The installer
+/// closes the app and opens the new version.
+#[tauri::command]
+async fn update_install(app: AppHandle) -> AppResult<()> {
+    let Some(update) = UPDATE_FOUND.lock().unwrap().take() else {
+        return Err(AppError::CannotDo("No update is waiting. Look for one first.".into()));
+    };
+    let progress = app.clone();
+    let mut got: u64 = 0;
+    let bytes = update
+        .download(
+            move |chunk, total| {
+                got += chunk as u64;
+                let _ = progress.emit("update:progress", serde_json::json!({ "done": got, "total": total.unwrap_or(0) }));
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| AppError::Network(e.to_string()))?;
+    discord::show(None);
+    update.install(bytes).map_err(|e| AppError::CannotDo(format!("The update could not be installed: {e}")))
+}
+
 // ---------- drawing without the graphics card ----------
 
 /// The file whose presence means "draw without the graphics card". It has to be found before
@@ -1150,6 +1212,7 @@ pub fn run() {
             }
         })
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![TRAY_FLAG])))
         .setup(|app| {
             let handle = app.handle().clone();
@@ -1270,6 +1333,9 @@ pub fn run() {
             import_vrcx,
             vrcx_stamp,
             get_cosmetics,
+            update_info,
+            update_check,
+            update_install,
             get_no_gpu,
             set_no_gpu,
             restart_app,

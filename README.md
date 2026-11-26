@@ -47,7 +47,7 @@ It all sits in one window, so you never have to open the VRChat website.
 
 ## Get it
 
-1. Open [Releases](../../releases) and download `Anonymous-VRX-0.1.0-setup.exe`.
+1. Open [Releases](../../releases) and download the newest `Anonymous-VRX-...-setup.exe`.
 2. Run it. Everything is inside that one file.
 3. Sign in with your VRChat account inside the app.
 
@@ -55,7 +55,7 @@ You need 64-bit Windows 10 or 11 and a VRChat account. Nothing else has to be in
 
 It installs for your user only and needs no administrator rights. The installer is not code signed, so Windows SmartScreen warns the first time you run it: choose "More info", then "Run anyway".
 
-To update, quit the app and run the newer installer over the old one. Your history and settings stay. To remove it, use "Installed apps" in Windows Settings.
+From version 0.1.1 on the app looks for a newer release here when it starts and installs it; Settings, About has the switch for that. Each update file is signed, and the app only installs one whose signature matches. Version 0.1.0 has no updater: quit the app and run the newer installer over the old one once. Your history and settings stay. To remove it, use "Installed apps" in Windows Settings.
 
 Where it keeps things:
 
@@ -185,7 +185,7 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 - Windows only.
 - VRChat does not support outside tools on its web API, so a change on their side can break a screen until I update the app.
 - With "Hide names and pictures" on, Windows notifications and hover tooltips still show names.
-- This is version 0.1.0 and I have only tested it on my own PC and account.
+- This is an early version and I have only tested it on my own PC and account.
 
 ## Build it yourself
 

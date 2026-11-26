@@ -304,6 +304,16 @@ export const demoBackend: Backend = {
   async vrcxFound() {
     return true;
   },
+  async updateInfo() {
+    return { version: "0.1.1", supported: true };
+  },
+  async updateCheck() {
+    await wait(600);
+    return new URLSearchParams(location.search).has("update") ? { version: "0.2.0", notes: "Friend map, faster search." } : null;
+  },
+  async updateInstall() {
+    await wait(1500);
+  },
   async cosmetics() {
     const frame = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd166"/><stop offset="1" stop-color="#ef476f"/></linearGradient></defs><circle cx="50" cy="50" r="39" fill="none" stroke="url(#g)" stroke-width="5"/><circle cx="50" cy="50" r="45" fill="none" stroke="#ffd166" stroke-opacity=".45" stroke-width="1.5" stroke-dasharray="3 5"/></svg>')}`;
     const embers = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 150" preserveAspectRatio="none"><defs><linearGradient id="f" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff5a1f" stop-opacity=".85"/><stop offset=".55" stop-color="#ffb347" stop-opacity=".25"/><stop offset="1" stop-color="#ffb347" stop-opacity="0"/></linearGradient></defs><path d="M0 150V95q20-30 40-5t40-20 40 25 40-35 40 30 40-20 40 25 40-15v70z" fill="url(#f)"/></svg>')}`;
