@@ -4562,3 +4562,68 @@ button.pinned-away:hover {
 .settings-tabs {
   flex-wrap: wrap;
 }
+
+/* Choices that belong to a section of their own start at the left edge */
+.choices-left {
+  justify-content: flex-start;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* Long result lists: tiles off screen are not laid out or painted until they scroll in */
+.avatar-result,
+.world-result,
+.results > li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 340px;
+}
+
+/* My tags */
+.tag-editor {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.tag-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tag-on button {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.tag-on button:hover {
+  opacity: 1;
+}
+
+.mark-hidden {
+  border-style: dashed;
+  opacity: 0.75;
+}
+
+.tag-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-add input {
+  flex: 1 1 160px;
+  min-width: 0;
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+}

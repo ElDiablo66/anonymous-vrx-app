@@ -371,6 +371,18 @@ fn set_rating(hub: State<'_, Arc<Hub>>, item_id: String, stars: i64) -> AppResul
     hub.set_rating(&item_id, stars)
 }
 
+/// Item id to my tags on it.
+#[tauri::command]
+fn get_tags(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, Vec<String>>> {
+    hub.tags()
+}
+
+/// Replaces my tags on an avatar or a world; gives back the tags as saved.
+#[tauri::command]
+fn set_tags(hub: State<'_, Arc<Hub>>, item_id: String, tags: Vec<String>) -> AppResult<Vec<String>> {
+    hub.set_tags(&item_id, &tags)
+}
+
 /// World id to how often I visited it and when last.
 #[tauri::command]
 fn get_world_visits(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, (i64, String)>> {
@@ -972,6 +984,8 @@ pub fn run() {
             get_ratings,
             set_rating,
             get_world_visits,
+            get_tags,
+            set_tags,
             set_game_watch,
             set_quiet,
             may_notify,

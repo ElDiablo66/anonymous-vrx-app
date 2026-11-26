@@ -245,6 +245,41 @@ impl Hub {
         self.with_store(|s| s.set_rating(item_id, stars, &now_utc()))
     }
 
+    /// Item id to the tags I gave it.
+    pub fn tags(&self) -> AppResult<HashMap<String, Vec<String>>> {
+        self.with_store(|s| {
+            let mut out: HashMap<String, Vec<String>> = HashMap::new();
+            for (id, tag) in s.tags()? {
+                out.entry(id).or_default().push(tag);
+            }
+            Ok(out)
+        })
+    }
+
+    /// Sets my tags on an avatar or a world. Tags are trimmed, at most 24 characters each and
+    /// 12 per item, and the same word in different capitals counts once.
+    pub fn set_tags(&self, item_id: &str, tags: &[String]) -> AppResult<Vec<String>> {
+        if !(item_id.starts_with("avtr_") || item_id.starts_with("wrld_") || item_id.starts_with("wld_")) {
+            return Err(AppError::CannotDo("Tags go on an avatar or a world.".into()));
+        }
+        let mut clean: Vec<String> = Vec::new();
+        for tag in tags {
+            let tag: String = tag.split_whitespace().collect::<Vec<_>>().join(" ");
+            if tag.is_empty() || clean.iter().any(|t| t.to_lowercase() == tag.to_lowercase()) {
+                continue;
+            }
+            if tag.chars().count() > 24 {
+                return Err(AppError::CannotDo("A tag can be at most 24 characters.".into()));
+            }
+            clean.push(tag);
+        }
+        if clean.len() > 12 {
+            return Err(AppError::CannotDo("At most 12 tags on one thing.".into()));
+        }
+        self.with_store(|s| s.set_tags(item_id, &clean))?;
+        Ok(clean)
+    }
+
     /// World id to how often I was there and when last.
     pub fn world_visits(&self) -> AppResult<HashMap<String, (i64, String)>> {
         self.with_store(|s| Ok(s.world_visits()?.into_iter().map(|(id, n, at)| (id, (n, at))).collect()))

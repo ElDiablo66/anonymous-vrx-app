@@ -3,6 +3,7 @@ import { backend, errorText } from "./backend";
 import { tidy } from "./bits";
 import { openThing } from "./Detail";
 import { usePic } from "./Pic";
+import { ALL_TAGS, TagChips, TagEditor, TagFilter, passesTag, useTags } from "./Mine";
 
 type Kind = "avatars" | "worlds";
 type Json = Record<string, unknown>;
@@ -29,6 +30,10 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
   const [query, setQuery] = useState("");
   const [only, setOnly] = useState<"all" | "public" | "private">("all");
   const [busy, setBusy] = useState("");
+  const tags = useTags();
+  const [tag, setTag] = useState(ALL_TAGS);
+  /** The avatar whose tags are being edited. */
+  const [tagging, setTagging] = useState("");
   /** The upload whose Delete was pressed once and waits for the second click. */
   const [deleting, setDeleting] = useState("");
 
@@ -71,8 +76,14 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
   const all = rows[kind];
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (all ?? []).filter((r) => (only === "all" || str(r.releaseStatus) === only) && (!q || str(r.name).toLowerCase().includes(q)));
-  }, [all, query, only]);
+    return (all ?? []).filter(
+      (r) =>
+        (only === "all" || str(r.releaseStatus) === only) &&
+        // A search also finds an avatar by one of my tags.
+        (!q || str(r.name).toLowerCase().includes(q) || (tags[str(r.id)] ?? []).some((t) => t.toLowerCase().includes(q))) &&
+        (kind !== "avatars" || passesTag(str(r.id), tags, tag)),
+    );
+  }, [all, query, only, tags, tag, kind]);
 
   const copy = (text: string, done: string) =>
     void navigator.clipboard.writeText(text).then(
@@ -131,6 +142,8 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
         </label>
       </div>
 
+      {kind === "avatars" && all && <TagFilter ids={all.map((r) => str(r.id))} tags={tags} value={tag} set={setTag} />}
+
       {problem && (
         <p className="banner" role="alert">
           VRChat did not send your {kind}: {problem}
@@ -157,6 +170,8 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
               </button>
               <span className="tile-note">{notes.filter(Boolean).join(", ")}</span>
               {str(r.updated_at) && <span className="tile-note">Updated {when(str(r.updated_at))}</span>}
+              {kind === "avatars" && tagging !== id && <TagChips id={id} tags={tags} />}
+              {kind === "avatars" && tagging === id && <TagEditor id={id} tags={tags} onDone={onDone} />}
               <div className="wayback">
                 {kind === "avatars" && (
                   <>
@@ -166,6 +181,11 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
                   </>
                 )}
                 <button onClick={() => copy(id, "ID copied.")}>Copy ID</button>
+                {kind === "avatars" && (
+                  <button aria-expanded={tagging === id} title="Your own tags, kept on this PC" onClick={() => setTagging(tagging === id ? "" : id)}>
+                    {tagging === id ? "Done" : "Tags"}
+                  </button>
+                )}
                 {deleting === id ? (
                   <>
                     <button className="danger" disabled={busy === id} onClick={() => void change(id, name, "delete")}>

@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS sightings (
     joined_at    TEXT NOT NULL,
     left_at      TEXT
 );
+CREATE TABLE IF NOT EXISTS tags (
+    item_id TEXT NOT NULL,
+    tag     TEXT NOT NULL,
+    PRIMARY KEY (item_id, tag)
+);
 CREATE TABLE IF NOT EXISTS ratings (
     item_id    TEXT PRIMARY KEY,
     stars      INTEGER NOT NULL,
@@ -624,6 +629,24 @@ impl Store {
         )?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Every tag I put on something, as (item, tag) pairs. Nothing leaves this PC.
+    pub fn tags(&self) -> AppResult<Vec<(String, String)>> {
+        let mut stmt = self.db.prepare("SELECT item_id, tag FROM tags ORDER BY item_id, tag COLLATE NOCASE")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Replaces the tags on one item with `tags`.
+    pub fn set_tags(&self, item_id: &str, tags: &[String]) -> AppResult<()> {
+        let tx = self.db.unchecked_transaction()?;
+        tx.execute("DELETE FROM tags WHERE item_id = ?1", params![item_id])?;
+        for tag in tags {
+            tx.execute("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)", params![item_id, tag])?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// My own stars for a world or an avatar, 1 to 5. Nothing leaves this PC.
@@ -1272,5 +1295,12 @@ mod tests {
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].0, "usr_a");
         assert!(s.world_visits().unwrap().is_empty());
+
+        s.set_tags("avtr_a", &["Dance".to_string(), "club".to_string()]).unwrap();
+        s.set_tags("avtr_b", &["club".to_string()]).unwrap();
+        s.set_tags("avtr_a", &["club".to_string()]).unwrap();
+        assert_eq!(s.tags().unwrap(), vec![("avtr_a".to_string(), "club".to_string()), ("avtr_b".to_string(), "club".to_string())]);
+        s.set_tags("avtr_b", &[]).unwrap();
+        assert_eq!(s.tags().unwrap().len(), 1);
     }
 }

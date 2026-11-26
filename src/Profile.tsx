@@ -686,7 +686,7 @@ export function ProfilePanel({
                     {friend && !isMe && (
                       <section>
                         <h3>Notifications</h3>
-                        <div className="choices" role="radiogroup" aria-label={`Notifications about ${name}`}>
+                        <div className="choices choices-left" role="radiogroup" aria-label={`Notifications about ${name}`}>
                           {(
                             [
                               [null, "Like their favourite group"],

@@ -4,7 +4,7 @@ import { backend, errorText } from "./backend";
 import { tidy } from "./bits";
 import { openProfile } from "./Profile";
 import { openPicture } from "./Viewer";
-import { Stars, beenWords, useWorldMarks } from "./Mine";
+import { Stars, TagEditor, beenWords, useTags, useWorldMarks } from "./Mine";
 import { prettyGroup } from "./Favourites";
 import { SafeImg, usePic } from "./Pic";
 import { accessName, regionName } from "./bits";
@@ -53,6 +53,7 @@ export function DetailPanel({
   onDone: (message: string) => void;
 }) {
   const marks = useWorldMarks();
+  const myTags = useTags();
   const [data, setData] = useState<Json | null>(null);
   const [problem, setProblem] = useState("");
   const [tab, setTab] = useState("info");
@@ -464,6 +465,13 @@ export function DetailPanel({
                       <span className="tile-note">My own rating. It stays on this PC.</span>
                     </p>
                     <p className="tile-note">{beenWords(marks.visits[id])}</p>
+                  </section>
+                )}
+                {kind === "avatar" && (
+                  <section>
+                    <h3>My tags</h3>
+                    <TagEditor id={id} tags={myTags} onDone={onDone} />
+                    <p className="tile-note">Kept on this PC. They sort and filter My uploads and favourite avatars; VRChat does not see them.</p>
                   </section>
                 )}
                 {kind === "world" && <NewInstance worldId={id} onDone={onDone} />}

@@ -377,6 +377,10 @@ export interface Backend {
   ratings(): Promise<Record<string, number>>;
   /** Sets my stars, 1 to 5; 0 takes them away. */
   setRating(itemId: string, stars: number): Promise<void>;
+  /** Item id to the tags I gave it. They never leave this PC. */
+  tags(): Promise<Record<string, string[]>>;
+  /** Replaces my tags on an avatar or a world; gives back the tags as saved. */
+  setTags(itemId: string, tags: string[]): Promise<string[]>;
   /** World id to [how often I was there, when last]. */
   worldVisits(): Promise<Record<string, [number, string]>>;
   /** Switches recording my own changes in the feed. */
@@ -537,6 +541,8 @@ const desktop: Backend = {
   ratings: () => invoke("get_ratings"),
   setRating: (itemId, stars) => invoke("set_rating", { itemId, stars }),
   worldVisits: () => invoke("get_world_visits"),
+  tags: () => invoke("get_tags"),
+  setTags: (itemId, tags) => invoke("set_tags", { itemId, tags }),
   setOwnFeed: (on) => invoke("set_own_feed", { on }),
   setQuiet: (rules) => invoke("set_quiet", { rules }),
   localFavorites: (kind) => invoke("get_local_favorites", { kind }),

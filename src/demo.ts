@@ -165,6 +165,7 @@ const demoBlocked: Moderation[] = [
 const demoHandled: Handled[] = [];
 let demoAutostart = false;
 const demoRatings: Record<string, number> = {};
+const demoTags: Record<string, string[]> = {};
 const demoRemoved = new Set<string>();
 let demoMember = false;
 const demoNames = new Map<string, string>();
@@ -522,6 +523,15 @@ export const demoBackend: Backend = {
     const out: Record<string, [number, string]> = {};
     for (const v of demoVisits) out[v.worldId] = [(out[v.worldId]?.[0] ?? 0) + 1, v.joinedAt];
     return out;
+  },
+  async tags() {
+    return JSON.parse(JSON.stringify(demoTags));
+  },
+  async setTags(itemId, tags) {
+    const clean = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];
+    if (clean.length) demoTags[itemId] = clean;
+    else delete demoTags[itemId];
+    return clean;
   },
   async setOwnFeed() {},
   async setQuiet() {},

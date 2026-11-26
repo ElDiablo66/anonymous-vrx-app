@@ -5,7 +5,7 @@ import { Avatar, statusTone, tidy } from "./bits";
 import { openThing } from "./Detail";
 import { openProfile } from "./Profile";
 import { openPicture } from "./Viewer";
-import { MarkBadges, useWorldMarks } from "./Mine";
+import { ALL_TAGS, MarkBadges, TagChips, TagFilter, passesTag, useTags, useWorldMarks } from "./Mine";
 
 type Kind = "friend" | "world" | "avatar";
 type Json = Record<string, unknown>;
@@ -104,7 +104,10 @@ export function Favourites({
   const [naming, setNaming] = useState(false);
   const marks = useWorldMarks();
   const [mine, setMine] = useState<"all" | "top" | "unrated" | "been" | "new">("all");
+  const tags = useTags();
+  const [tag, setTag] = useState(ALL_TAGS);
   const passes = (id: string) =>
+    kind === "avatar" ? passesTag(id, tags, tag) :
     kind !== "world" ||
     mine === "all" ||
     (mine === "top" && (marks.ratings[id] ?? 0) >= 4) ||
@@ -382,6 +385,8 @@ export function Favourites({
         </div>
       )}
 
+      {kind === "avatar" && data && <TagFilter ids={data.entries.map((e) => str(e.favoriteId))} tags={tags} value={tag} set={setTag} />}
+
       {kind !== "friend" &&
         data &&
         groupKeys.map((key) => {
@@ -412,6 +417,7 @@ export function Favourites({
                         <span>
                           <span className="tile-name">{item ? tidy(str(item.name)) : gone ? "Gone" : "Not listed by VRChat"}</span>
                           {kind === "world" && <MarkBadges id={str(e.favoriteId)} marks={marks} />}
+                          {kind === "avatar" && <TagChips id={str(e.favoriteId)} tags={tags} />}
                           <span className="tile-note">
                             {item ? `${str(item.authorName)}${gone ? ", now private" : ""}` : gone ? "Deleted or made private" : "Open it to see if it still works"}
                           </span>

@@ -130,6 +130,7 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | Favourites | Shows how full each favourite group is. The clean-up asks VRChat about each missing favourite before offering to remove it. Local favourites on your PC have no limit |
 | New instance | Make your own instance of any world (Invite, Invite+, Friends, Friends+ or Public, in the region you pick) and join it |
 | Notes | Private notes on people, avatars and worlds |
+| My tags | Your own tags on avatars, like folders an avatar can be in more than one of. They filter My uploads and favourite avatars, search finds them, and Hide takes an avatar out of the lists without touching it on VRChat |
 | My stars | Your own 1 to 5 star rating on any world, and whether the game log has seen you there, both usable as filters on favourite worlds and in world search. They stay on your PC |
 | Search | People, worlds and avatars |
 

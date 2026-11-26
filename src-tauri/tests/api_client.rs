@@ -658,6 +658,25 @@ async fn blocks_and_mutes_are_listed_set_and_taken_back() {
 }
 
 #[tokio::test]
+async fn tags_are_cleaned_and_kept_per_item() {
+    let server = MockServer::start().await;
+    let api = Arc::new(client(&server));
+    let dir = std::env::temp_dir().join(format!("anonymous-vrx-tags-test-{}", std::process::id()));
+    let hub = Hub::new(api, dir.clone(), Arc::new(|_, _| {}), false, None);
+    assert!(matches!(hub.set_tags("avtr_1", &["club".to_string()]), Err(AppError::NotSignedIn)));
+    hub.begin(json!({ "id": "usr_me", "displayName": "Tester" })).unwrap();
+    let saved = hub.set_tags("avtr_1", &["  Club ".to_string(), "club".to_string(), "".to_string(), "dance   night".to_string()]).unwrap();
+    assert_eq!(saved, vec!["Club".to_string(), "dance night".to_string()]);
+    assert_eq!(hub.tags().unwrap().get("avtr_1"), Some(&vec!["Club".to_string(), "dance night".to_string()]));
+    assert!(matches!(hub.set_tags("usr_1", &["x".to_string()]), Err(AppError::CannotDo(_))));
+    assert!(matches!(hub.set_tags("avtr_1", &["this tag is far too long to keep".to_string()]), Err(AppError::CannotDo(_))));
+    hub.set_tags("avtr_1", &[]).unwrap();
+    assert!(hub.tags().unwrap().is_empty());
+    hub.sign_out().await.ok();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
 async fn boop_and_picture() {
     let server = MockServer::start().await;
     Mock::given(method("POST")).and(path("/user/usr_2/friendRequest")).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
