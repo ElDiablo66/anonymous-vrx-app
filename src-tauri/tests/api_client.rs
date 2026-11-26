@@ -877,3 +877,41 @@ async fn new_instance_is_owned_by_me_and_checked_before_asking() {
     let location = hub.create_instance("wrld_a", "invitePlus", "eu").await.unwrap();
     assert_eq!(location, "wrld_a:41872~private(usr_me)~canRequestInvite~region(eu)");
 }
+
+#[tokio::test]
+async fn frames_and_effects_are_listed_once_by_id() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/cosmetics/index/iconFrame")).respond_with(ResponseTemplate::new(200).set_body_json(json!([
+        { "id": "frame_fire", "metadata": { "assets": [
+            { "type": "base", "url": "https://assets.example/fire.png" },
+            { "type": "mainAnimation", "url": "https://assets.example/fire.webp" },
+            { "type": "introAnimation", "url": "https://assets.example/fire-in.webp", "totalDurationMs": 900 }
+        ] } },
+        { "id": "frame_plain", "metadata": { "assets": [ { "type": "base", "url": "https://assets.example/plain.png" } ] } },
+        { "id": "frame_odd", "metadata": { "assets": [ { "type": "base", "url": "javascript:alert(1)" } ] } },
+        { "metadata": {} }
+    ]))).expect(1).mount(&server).await;
+    // One list failing does not hide the others.
+    Mock::given(method("GET")).and(path("/cosmetics/index/profileEffect")).respond_with(ResponseTemplate::new(500)).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/cosmetics/index/nameplateEffect")).respond_with(ResponseTemplate::new(200).set_body_json(json!([
+        { "id": "plate_ember", "metadata": { "gradientStart": "7a1010", "gradientEnd": "f97316", "assets": [] } }
+    ]))).expect(1).mount(&server).await;
+
+    let api = Arc::new(client(&server));
+    api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
+    let hub = Hub::new(api, std::env::temp_dir(), Arc::new(|_, _| {}), false, None);
+    assert!(matches!(hub.cosmetics().await, Err(AppError::NotSignedIn)));
+    hub.begin(json!({ "id": "usr_me", "displayName": "Tester" })).unwrap();
+
+    let all = hub.cosmetics().await.unwrap();
+    assert_eq!(all["frame_fire"]["picture"], "https://assets.example/fire.webp");
+    assert_eq!(all["frame_fire"]["still"], "https://assets.example/fire.png");
+    assert_eq!(all["frame_plain"]["picture"], "https://assets.example/plain.png");
+    // Only plain web addresses are passed on to the window.
+    assert_eq!(all["frame_odd"]["picture"], "");
+    assert_eq!(all["plate_ember"]["from"], "7a1010");
+    assert_eq!(all["plate_ember"]["to"], "f97316");
+    assert_eq!(all.as_object().unwrap().len(), 4);
+    // Kept: a second profile asks VRChat nothing.
+    hub.cosmetics().await.unwrap();
+}

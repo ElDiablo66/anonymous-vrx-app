@@ -86,6 +86,8 @@ pub struct Hub {
     briefs: Mutex<HashMap<String, (Instant, Value)>>,
     /// Calendar pages already asked for, by list and month, with when.
     calendars: Mutex<HashMap<String, (Instant, Value)>>,
+    /// Every icon frame and profile effect VRChat offers, by id, with the time it was asked for.
+    cosmetics: Mutex<Option<(Instant, Value)>>,
     /// Group id to its name, for lists where VRChat sends only the id.
     group_names: Mutex<HashMap<String, String>>,
     /// Put my own world, avatar and status changes into the feed too.
@@ -172,6 +174,7 @@ impl Hub {
             blocked: Mutex::new(None),
             briefs: Mutex::new(HashMap::new()),
             calendars: Mutex::new(HashMap::new()),
+            cosmetics: Mutex::new(None),
             group_names: Mutex::new(HashMap::new()),
             own_feed: std::sync::atomic::AtomicBool::new(false),
         })
@@ -455,6 +458,63 @@ impl Hub {
     ///
     /// `by_itself` is the run the app makes when VRCX's file has changed. It backs up at most
     /// once a day and keeps three of those, so a PC with both apps open does not fill up.
+    /// The icon frames, profile effects and nameplate effects people can wear, by the id a
+    /// profile names. Three small lists, asked for at most once a day.
+    pub async fn cosmetics(&self) -> AppResult<Value> {
+        if self.me().is_none() {
+            return Err(AppError::NotSignedIn);
+        }
+        if let Some((at, kept)) = &*self.cosmetics.lock().unwrap() {
+            if at.elapsed() < Duration::from_secs(24 * 3600) {
+                return Ok(kept.clone());
+            }
+        }
+        let mut all = serde_json::Map::new();
+        let mut answered = false;
+        for kind in ["iconFrame", "profileEffect", "nameplateEffect"] {
+            let list = match self.api.read(&format!("/cosmetics/index/{kind}")).await {
+                Ok(list) => list,
+                Err(AppError::RateLimited) => return Err(AppError::RateLimited),
+                // One list failing does not hide the others.
+                Err(_) => continue,
+            };
+            answered = true;
+            for item in list.as_array().map(|a| a.as_slice()).unwrap_or_default() {
+                let Some(id) = item["id"].as_str().filter(|id| !id.is_empty()) else {
+                    continue;
+                };
+                let meta = &item["metadata"];
+                let asset = |kind: &str| {
+                    meta["assets"]
+                        .as_array()
+                        .and_then(|a| a.iter().find(|x| x["type"] == kind))
+                        .and_then(|x| x["url"].as_str())
+                        .filter(|u| u.starts_with("https://"))
+                        .unwrap_or_default()
+                        .to_string()
+                };
+                let still = asset("base");
+                let moving = asset("mainAnimation");
+                all.insert(
+                    id.to_string(),
+                    json!({
+                        "picture": if moving.is_empty() { still.clone() } else { moving },
+                        "still": still,
+                        "from": meta["gradientStart"].as_str().unwrap_or_default(),
+                        "to": meta["gradientEnd"].as_str().unwrap_or_default(),
+                    }),
+                );
+            }
+        }
+        let out = Value::Object(all);
+        // Nothing is kept when VRChat answered none of the lists, so the next profile asks again.
+        if answered {
+            *self.cosmetics.lock().unwrap() = Some((Instant::now(), out.clone()));
+        }
+        Ok(out)
+    }
+
+    /// Brings VRCX's history for this account over. See `Store::import_vrcx`.
     pub fn import_vrcx(&self, other: &std::path::Path, backups: &std::path::Path, settings_json: &str, by_itself: bool, since: Option<&str>) -> AppResult<Value> {
         let me = self.me().ok_or(AppError::NotSignedIn)?;
         if !other.is_file() {

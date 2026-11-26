@@ -51,7 +51,8 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
   const wearing = list?.[0]?.avatarId ?? "";
   const shown = order === "worn" && list ? [...list].sort((a, b) => b.secondsInGame - a.secondsInGame) : (list ?? []);
   const total = (list ?? []).reduce((sum, a) => sum + a.secondsInGame, 0);
-  const most = (list ?? []).reduce((top, a) => Math.max(top, a.secondsInGame), 0);
+  // Each bar is that avatar's share of all the time spent in worlds, so the bars add up to one.
+  const all = (list ?? []).reduce((sum, a) => sum + a.secondsInGame, 0);
 
   if (list === null) return <p className="empty">Reading your avatar history</p>;
   if (list.length === 0) {
@@ -108,9 +109,14 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
                     <b>{a.lastInGame ? `${dayLabel(a.lastInGame)}, ${clock(a.lastInGame)}` : "Not in a world yet"}</b>
                   </span>
                 </span>
-                <span className="wear-bar" aria-hidden="true">
-                  <span style={{ width: `${most > 0 ? Math.max(1, Math.round((a.secondsInGame / most) * 100)) : 0}%` }} />
-                </span>
+                {(list?.length ?? 0) > 1 && all > 0 && (
+                  <span className="wear-share" title="This avatar's share of all the time you spent in worlds">
+                    <span className="wear-bar" aria-hidden="true">
+                      <span style={{ width: `${Math.max(1, Math.round((a.secondsInGame / all) * 100))}%` }} />
+                    </span>
+                    <small>{Math.round((a.secondsInGame / all) * 100)}% of your time</small>
+                  </span>
+                )}
               </span>
             </button>
             <span className="row-actions">

@@ -34,6 +34,10 @@ pub struct Notice {
     pub world_name: String,
     pub image: String,
     pub replies: Vec<Reply>,
+    /// Where a newer notice points (`group:grp_...`), with whatever ids came along in its
+    /// data. The window reads the group out of it to open from the row.
+    #[serde(default)]
+    pub link: String,
     /// The untouched v2 object, kept so later partial updates can be merged in.
     #[serde(skip)]
     raw: Value,
@@ -79,6 +83,7 @@ impl Notice {
             world_name: text(&d, "worldName"),
             image: text(&d, "imageUrl"),
             replies: Vec::new(),
+            link: String::new(),
             raw: Value::Null,
         })
     }
@@ -116,6 +121,10 @@ impl Notice {
             world_name: String::new(),
             image: text(v, "imageUrl"),
             replies,
+            link: {
+                let data = v.get("data").filter(|d| !d.is_null()).map(Value::to_string).unwrap_or_default();
+                format!("{} {data}", text(v, "link")).trim().chars().take(600).collect()
+            },
             raw: v.clone(),
         })
     }

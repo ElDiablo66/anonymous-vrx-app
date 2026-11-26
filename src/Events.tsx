@@ -8,8 +8,8 @@ import { live } from "./settings";
 type Which = "discover" | "mine" | "following" | "featured";
 
 const lists: Array<[Which, string]> = [
-  ["discover", "All of VRChat"],
   ["mine", "My groups"],
+  ["discover", "All of VRChat"],
   ["following", "Following"],
   ["featured", "Featured"],
 ];
@@ -116,7 +116,7 @@ function EventPicture({ url }: { url: string }) {
 
 /** Group events by month: the ones of my groups, the ones I follow, and VRChat's featured ones. */
 export function Events({ onDone }: { onDone: (message: string) => void }) {
-  const [which, setWhich] = useState<Which>("discover");
+  const [which, setWhich] = useState<Which>("mine");
   // What is on across VRChat has no months: it is the ones on now, then the ones coming up.
   const byMonth = which !== "discover";
   const [month, setMonth] = useState(() => monthOf(new Date()));

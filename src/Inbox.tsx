@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { openThing } from "./Detail";
+import { openProfile } from "./Profile";
 import { backend, errorText, type Friend, type Handled, type Notice } from "./backend";
 import { Avatar, accessName, clock, dayLabel, tidy } from "./bits";
 import { joinLink, parsePlace } from "./place";
@@ -46,6 +48,49 @@ function groupOf(n: Notice): string {
   if (n.kind === "requestInvite") return "requests";
   if (n.kind === "friendRequest") return "friends";
   return "groups";
+}
+
+/** The group or person a notice is about, to open from the row. */
+function noticeTarget(n: Notice): { kind: "group" | "person"; id: string } | null {
+  const texts = [n.link, n.senderId, ...n.replies.map((r) => r.data), n.message, n.title];
+  for (const text of texts) {
+    const group = /grp_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/.exec(text ?? "");
+    if (group) return { kind: "group", id: group[0] };
+  }
+  return n.senderId.startsWith("usr_") ? { kind: "person", id: n.senderId } : null;
+}
+
+/** The picture and title of a notice. Pressing either opens the group or the person behind it. */
+function NoticeHead({ n, title, image, children }: { n: Notice; title: string; image: string; children: ReactNode }) {
+  const target = noticeTarget(n);
+  const open = () => {
+    if (target?.kind === "group") openThing("group", target.id);
+    else if (target) openProfile(target.id);
+  };
+  const hint = target?.kind === "group" ? "Open the group" : "Open the profile";
+  return (
+    <>
+      {target ? (
+        <button className="notice-pic" onClick={open} title={hint} aria-label={hint}>
+          <Avatar name={n.senderName || title} image={image} />
+        </button>
+      ) : (
+        <Avatar name={n.senderName || title} image={image} />
+      )}
+      <div className="notice-text">
+        <p className="notice-title">
+          {target ? (
+            <button className="name-link" onClick={open} title={hint}>
+              {title}
+            </button>
+          ) : (
+            title
+          )}
+        </p>
+        {children}
+      </div>
+    </>
+  );
 }
 
 function outcomeWords(h: Handled): string {
@@ -183,12 +228,10 @@ export function Inbox({
               return [
                 header,
                 <li className="notice notice-done" key={h.id}>
-                  <Avatar name={h.notice.senderName || title} image={friends.get(h.notice.senderId)?.image || h.notice.image} />
-                  <div className="notice-text">
-                    <p className="notice-title">{title}</p>
+                  <NoticeHead n={h.notice} title={title} image={friends.get(h.notice.senderId)?.image || h.notice.image}>
                     {detail && <p className="notice-detail">{detail}</p>}
                     <time dateTime={h.at}>{clock(h.at)}</time>
-                  </div>
+                  </NoticeHead>
                   <span className={`outcome outcome-${outcomeTone(h)}`}>{outcomeWords(h)}</span>
                 </li>,
               ];
@@ -231,12 +274,10 @@ export function Inbox({
           return [
             header,
             <li className={`notice${n.seen ? "" : " notice-new"}`} key={n.id}>
-              <Avatar name={n.senderName || title} image={friends.get(n.senderId)?.image || n.image} />
-              <div className="notice-text">
-                <p className="notice-title">{title}</p>
+              <NoticeHead n={n} title={title} image={friends.get(n.senderId)?.image || n.image}>
                 {detail && <p className="notice-detail">{detail}</p>}
                 {n.at && <time dateTime={n.at}>{clock(n.at)}</time>}
-              </div>
+              </NoticeHead>
               <div className="notice-actions">
                 {n.kind === "friendRequest" && (
                   <>

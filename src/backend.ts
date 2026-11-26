@@ -159,6 +159,17 @@ export interface HereNow {
 }
 
 /** One event on a group's calendar. */
+/** One icon frame, profile effect or nameplate effect VRChat offers. */
+export interface Cosmetic {
+  /** The moving picture, or the still one when there is no other. */
+  picture: string;
+  /** The still picture. */
+  still: string;
+  /** Two colours ("aabbcc") a nameplate effect blends between; empty for the others. */
+  from: string;
+  to: string;
+}
+
 export interface GameCache {
   path: string;
   found: boolean;
@@ -226,6 +237,8 @@ export interface Notice {
   worldName: string;
   image: string;
   replies: Array<{ kind: string; data: string; text: string }>;
+  /** Where a newer notice points, such as `group:grp_...`. Missing on ones kept by an older version. */
+  link?: string;
 }
 
 /** A notification you already dealt with. */
@@ -497,6 +510,8 @@ export interface Backend {
   /** Whether VRCX's history file is on this PC. */
   vrcxFound(): Promise<boolean>;
   /** Brings VRCX's history for my account into this app, after making a backup. Safe to run again. */
+  /** Every icon frame, profile effect and nameplate effect, by the id a profile names. Asked for once a day. */
+  cosmetics(): Promise<Record<string, Cosmetic>>;
   /** Changes whenever VRCX has written to its history. Empty when VRCX is not on this PC. */
   vrcxStamp(): Promise<string>;
   /** Draw without the graphics card, from the next start on. */
@@ -679,6 +694,7 @@ const desktop: Backend = {
   vrcxFound: () => invoke("vrcx_found"),
   importVrcx: (settings, byItself, since) => invoke("import_vrcx", { settings, byItself: byItself ?? false, since: since ?? null }),
   vrcxStamp: () => invoke("vrcx_stamp"),
+  cosmetics: () => invoke("get_cosmetics"),
   getNoGpu: () => invoke("get_no_gpu"),
   setNoGpu: (on) => invoke("set_no_gpu", { on }),
   restartApp: () => invoke("restart_app"),

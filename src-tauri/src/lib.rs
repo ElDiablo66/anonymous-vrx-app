@@ -213,6 +213,12 @@ async fn get_moderations(hub: State<'_, Arc<Hub>>, fresh: bool) -> AppResult<ser
     hub.moderations(fresh).await
 }
 
+/// Every icon frame and profile effect by id, for dressing a profile the way its owner did.
+#[tauri::command]
+async fn get_cosmetics(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
+    hub.cosmetics().await
+}
+
 /// One month of events: `which` is `mine`, `following` or `featured`; `month` is `YYYY-MM`.
 #[tauri::command]
 async fn get_calendar(hub: State<'_, Arc<Hub>>, which: String, month: String, fresh: bool) -> AppResult<serde_json::Value> {
@@ -1329,6 +1335,7 @@ pub fn run() {
             vrcx_found,
             import_vrcx,
             vrcx_stamp,
+            get_cosmetics,
             get_no_gpu,
             set_no_gpu,
             restart_app,

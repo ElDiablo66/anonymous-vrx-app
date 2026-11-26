@@ -43,7 +43,7 @@ type View = "around" | "here" | "history" | "everyone" | "favourites" | "events"
 const tabTitles: Partial<Record<View, Record<string, string>>> = {
   history: { Worlds: "World history", Photos: "Photos", Avatars: "Avatar history", "Friend activity": "Friend activity" },
   everyone: { "Friend list": "Everyone", "Friend log": "Friend log", "Blocked and muted": "Blocked and muted" },
-  events: { "All of VRChat": "Events", "My groups": "Events of your groups", Following: "Events you follow", Featured: "Featured events" },
+  events: { "My groups": "Events of your groups", "All of VRChat": "Events across VRChat", Following: "Events you follow", Featured: "Featured events" },
   favourites: { Avatars: "Favourite avatars", Worlds: "Favourite worlds", Friends: "Favourite friends", "Group names": "Favourite group names" },
   uploads: { Avatars: "My avatars", Worlds: "My worlds" },
   inbox: { Waiting: "Inbox", Done: "Inbox, done" },

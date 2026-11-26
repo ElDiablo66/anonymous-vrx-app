@@ -304,6 +304,15 @@ export const demoBackend: Backend = {
   async vrcxFound() {
     return true;
   },
+  async cosmetics() {
+    const frame = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd166"/><stop offset="1" stop-color="#ef476f"/></linearGradient></defs><circle cx="50" cy="50" r="39" fill="none" stroke="url(#g)" stroke-width="5"/><circle cx="50" cy="50" r="45" fill="none" stroke="#ffd166" stroke-opacity=".45" stroke-width="1.5" stroke-dasharray="3 5"/></svg>')}`;
+    const embers = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 150" preserveAspectRatio="none"><defs><linearGradient id="f" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff5a1f" stop-opacity=".85"/><stop offset=".55" stop-color="#ffb347" stop-opacity=".25"/><stop offset="1" stop-color="#ffb347" stop-opacity="0"/></linearGradient></defs><path d="M0 150V95q20-30 40-5t40-20 40 25 40-35 40 30 40-20 40 25 40-15v70z" fill="url(#f)"/></svg>')}`;
+    return {
+      demo_frame: { picture: frame, still: frame, from: "", to: "" },
+      demo_effect: { picture: embers, still: embers, from: "", to: "" },
+      demo_plate: { picture: "", still: "", from: "7a1010", to: "f97316" },
+    };
+  },
   async vrcxStamp() {
     return "";
   },
@@ -362,7 +371,10 @@ export const demoBackend: Backend = {
         tags: ["system_trust_trusted", "language_eng", "language_spa", "system_supporter"],
         ageVerificationStatus: "18+",
         bannerColor: "#c2410c",
-        iconFrame: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd166"/><stop offset="1" stop-color="#ef476f"/></linearGradient></defs><circle cx="50" cy="50" r="39" fill="none" stroke="url(#g)" stroke-width="5"/><circle cx="50" cy="50" r="45" fill="none" stroke="#ffd166" stroke-opacity=".45" stroke-width="1.5" stroke-dasharray="3 5"/></svg>')}`,
+        bannerType: "avatarBanner",
+        iconFrame: "demo_frame",
+        profileEffect: "demo_effect",
+        nameplateEffect: "demo_plate",
         last_activity: ago(33),
         currentAvatar: "avtr_demo_worn",
         currentAvatarName: "Sunset Fox",

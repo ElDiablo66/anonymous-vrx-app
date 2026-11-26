@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useState, type ReactNode } from "react";
-import { backend, errorText, type Friend, type Profile, type World } from "./backend";
+import { backend, errorText, type Cosmetic, type Friend, type Profile, type World } from "./backend";
 import { Avatar, accessName, clock, dateText, dayLabel, deviceLine, statusTone, statusWords, tidy } from "./bits";
 import { WayBack } from "./History";
 import { openThing } from "./Detail";
@@ -14,15 +14,26 @@ export function openProfile(userId: string) {
 }
 
 type Json = Record<string, unknown>;
-/**
- * The picture behind an icon frame or a profile effect. VRChat sends an address, or the id of
- * a file it keeps; anything else is left out.
- */
-function cosmeticPicture(value: unknown): string {
-  const text = typeof value === "string" ? value.trim() : "";
-  if (/^(https:\/\/|data:image\/)/.test(text)) return text;
-  if (/^file_[0-9a-f-]{36}$/.test(text)) return `https://api.vrchat.cloud/api/1/file/${text}/1/file`;
-  return "";
+/** Every frame and effect VRChat offers, asked for once while the app runs. */
+let dressKept: Promise<Record<string, Cosmetic>> | null = null;
+
+/** The frames and effects by id, or nothing while they load or when they are switched off. */
+function useDress(on: boolean): Record<string, Cosmetic> {
+  const [dress, setDress] = useState<Record<string, Cosmetic>>({});
+  useEffect(() => {
+    if (!on) return;
+    dressKept ??= backend.cosmetics().catch(() => {
+      // Asked again the next time a profile opens.
+      dressKept = null;
+      return {};
+    });
+    let alive = true;
+    void dressKept.then((all) => alive && setDress(all));
+    return () => {
+      alive = false;
+    };
+  }, [on]);
+  return on ? dress : {};
 }
 
 /** A banner colour as CSS can use it: "#aabbcc" from "#aabbcc" or "aabbcc"; empty for anything else. */
@@ -360,11 +371,17 @@ export function ProfilePanel({
   const adult = str(raw.ageVerificationStatus) === "18+";
   // What the person picked in VRChat to dress their profile: a frame around the picture, an
   // effect over the banner, and a banner colour.
-  const dressed = live().profileCosmetics;
-  const frame = usePic(dressed ? cosmeticPicture(raw.iconFrame) : "");
-  const effect = usePic(dressed ? cosmeticPicture(raw.profileEffect) : "");
+  const dress = useDress(live().profileCosmetics);
+  const frame = usePic(dress[str(raw.iconFrame)]?.picture ?? "");
+  const effect = usePic(dress[str(raw.profileEffect)]?.picture ?? "");
+  const plate = dress[str(raw.nameplateEffect)];
+  const platePicture = usePic(plate?.picture ?? "");
+  const plateColours = plate && colourOf(plate.from) && colourOf(plate.to) ? `linear-gradient(90deg, ${colourOf(plate.from)}, ${colourOf(plate.to)})` : "";
+  // A banner can be a plain colour the person picked in place of a picture.
+  const bannerColour = colourOf(raw.bannerColor);
+  const plainBanner = str(raw.bannerType) === "color" && !!bannerColour;
   const tintOn = live().profileBackdrop;
-  const tintColour = tintOn ? colourOf(raw.bannerColor) : "";
+  const tintColour = tintOn ? bannerColour : "";
   const tintPicture = usePic(tintOn && !tintColour ? banner : "");
   const tinted = !!(tintColour || tintPicture);
   const vrcPlus = raw.hasVrcPlus === true || tags.includes("system_supporter");
@@ -488,15 +505,19 @@ export function ProfilePanel({
         onClick={(e) => e.stopPropagation()}
       >
         <aside className="profile-side">
-          <div className="banner-pic" style={banner ? { backgroundImage: `url("${banner}")` } : undefined}>
-            {banner && <button className="pic-open" onClick={() => openPicture(banner, `${name} banner`, true)} title="Show the banner full size" aria-label="Show the banner full size" />}
+          <div className="banner-pic" style={plainBanner ? { background: bannerColour } : banner ? { backgroundImage: `url("${banner}")` } : undefined}>
+            {banner && !plainBanner && <button className="pic-open" onClick={() => openPicture(banner, `${name} banner`, true)} title="Show the banner full size" aria-label="Show the banner full size" />}
             <button className="icon-open" disabled={!icon} onClick={() => openPicture(icon, `${name} picture`, true)} title="Show the profile picture full size" aria-label="Show the profile picture full size">
               <Avatar name={name} image={icon} tone={friend ? statusTone(friend) : undefined} size={104} />
               {frame && <span className="icon-frame" style={{ backgroundImage: `url("${frame}")` }} aria-hidden="true" />}
             </button>
             {effect && <span className="profile-effect" style={{ backgroundImage: `url("${effect}")` }} aria-hidden="true" />}
           </div>
-          <div className="name-wrap" tabIndex={formerly.length ? 0 : undefined}>
+          <div
+            className={`name-wrap${plateColours || platePicture ? " name-plate" : ""}`}
+            style={plateColours || platePicture ? { backgroundImage: [platePicture && `url("${platePicture}")`, plateColours].filter(Boolean).join(", ") } : undefined}
+            tabIndex={formerly.length ? 0 : undefined}
+          >
             <h2 className="hide-me">
               {name}
               {formerly.length > 0 && <span className="past-mark" aria-hidden="true">▾</span>}
