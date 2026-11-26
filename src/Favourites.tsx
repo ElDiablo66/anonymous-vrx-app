@@ -122,6 +122,12 @@ export function Favourites({
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [tick, setTick] = useState(0);
+  // Something was added or removed from a world's or an avatar's own window: read the list again.
+  useEffect(() => {
+    const again = () => setTick((n) => n + 1);
+    window.addEventListener("favourites:changed", again);
+    return () => window.removeEventListener("favourites:changed", again);
+  }, []);
   const [check, setCheck] = useState<FavouriteCheck | "busy" | null>(null);
   const [local, setLocal] = useState<LocalFavorite[]>([]);
 

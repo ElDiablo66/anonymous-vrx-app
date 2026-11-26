@@ -259,38 +259,31 @@ export function FriendMap({
 
   if (rooms.length + hidden.length + moving.length + away.length === 0 && !alone) return <p className="empty">Nobody is around right now. Friends show up here as bubbles once they are in VRChat.</p>;
   const inGame = rooms.reduce((n, r) => n + r.people.length, 0) + hidden.length + moving.length;
+  const names = new Map([...rooms.flatMap((r) => r.people), ...hidden, ...moving].map((f) => [f.id, f.displayName]));
+  const together = pairs.slice(0, 6).map((p) => ({ ...p, names: [names.get(p.a) ?? "A friend", names.get(p.b) ?? "a friend"] }));
   let order = 0;
   return (
     <div className="map-wrap">
-      <div className="map-top">
-        <p className="map-count">
-          <b>{inGame}</b> {inGame === 1 ? "friend" : "friends"} in VRChat
-          {rooms.length > 0 && (
-            <>
-              , in <b>{rooms.length}</b> {rooms.length === 1 ? "instance" : "instances"} you can see
-            </>
-          )}
-        </p>
-        <ul className="map-legend" aria-label="What the ring colours mean">
-          {legend.map(([tone, words]) => (
-            <li key={tone} className={`map-${tone}`}>
-              <i aria-hidden="true" />
-              {words}
-            </li>
-          ))}
-          <li>
-            <span className="map-star" aria-hidden="true">
-              ★
-            </span>
-            A favourite
-          </li>
-        </ul>
-        <label className="tool map-lines-switch" title="A line joins two friends you saw in the same instance at least three times, thicker the more often. From your own world history; point at a face to see only its lines">
-          <input type="checkbox" checked={linesOn} onChange={toggleLines} />
-          Lines between friends often together
-        </label>
-      </div>
+      <dl className="town-facts">
+        <div>
+          <dt>Friends in VRChat</dt>
+          <dd>{inGame}</dd>
+        </div>
+        <div>
+          <dt>Instances you can see</dt>
+          <dd>{rooms.length}</dd>
+        </div>
+        <div>
+          <dt>In private worlds</dt>
+          <dd>{hidden.length}</dd>
+        </div>
+        <div>
+          <dt>Biggest gathering</dt>
+          <dd className="town-fact-name hide-me">{rooms[0] ? `${tidy(worlds.get(rooms[0].worldId)?.name ?? "") || "A world"}, ${rooms[0].people.length}` : "Nobody together"}</dd>
+        </div>
+      </dl>
 
+      <div className="town-layout">
       <div className="map-stage" ref={wrap}>
       {lines.length > 0 && (
         <svg className={`map-lines${focus ? " map-focused" : ""}`} aria-hidden="true">
@@ -322,7 +315,6 @@ export function FriendMap({
           const everyone = instance?.users ?? 0;
           const place = parsePlace(room.location);
           const name = tidy(world?.name ?? "") || "A world";
-          const ask = askFirst.has(place.access ?? "");
           const facts = [accessName(place), regionName(place), everyone > 0 ? `${room.people.length} of ${everyone} here are friends` : ""].filter(Boolean);
           return (
             <Bubble
@@ -340,16 +332,6 @@ export function FriendMap({
                 <b>{name}</b>
                 <span>{facts.join(", ")}</span>
               </button>
-              {here?.location !== room.location && (
-              <button
-                className={ask ? "plain map-go" : "plain go map-go"}
-                disabled={busy === room.location || (!ask && instance?.full === true)}
-                title={ask ? `Asks ${room.people[0].displayName} for an invite` : instance?.full ? "This instance is full" : "Starts VRChat in this instance, or moves you there"}
-                onClick={() => void go(room, ask)}
-              >
-                {ask ? "Ask to join" : instance?.full ? "Full" : "Join"}
-              </button>
-              )}
             </Bubble>
           );
         })}
@@ -381,11 +363,98 @@ export function FriendMap({
         )}
       </ul>
       </div>
-      {away.length > 0 && (
-        <button className="fold map-away" aria-expanded={showAway} onClick={() => setShowAway((v) => !v)}>
-          {showAway ? "Hide" : "Show"} the {away.length} on the website or phone
-        </button>
-      )}
+
+      <aside className="town-rail" aria-label="Instances and key">
+        {rooms.length > 0 && (
+          <section className="town-card">
+            <h3>Instances</h3>
+            <ul className="map-rooms">
+              {rooms.map((room) => {
+                const instance = instances.get(room.location);
+                const place = parsePlace(room.location);
+                const ask = askFirst.has(place.access ?? "");
+                const mine = here?.location === room.location;
+                return (
+                  <li key={room.location} className={`map-${place.access || "public"}`}>
+                    <button className="map-room-name" onClick={() => openThing("instance", room.location)} title="Open this instance">
+                      <i aria-hidden="true" />
+                      <span>
+                        <b className="hide-me">{tidy(worlds.get(room.worldId)?.name ?? "") || "A world"}</b>
+                        <small>
+                          {accessName(place)}, {room.people.length} {room.people.length === 1 ? "friend" : "friends"}
+                          {instance?.users ? ` of ${instance.users}` : ""}
+                        </small>
+                      </span>
+                    </button>
+                    {mine ? (
+                      <span className="mark mark-live">You</span>
+                    ) : (
+                      <button
+                        className={ask ? "plain" : "plain go"}
+                        disabled={busy === room.location || (!ask && instance?.full === true)}
+                        title={ask ? `Asks ${room.people[0].displayName} for an invite` : instance?.full ? "This instance is full" : "Starts VRChat in this instance, or moves you there"}
+                        onClick={() => void go(room, ask)}
+                      >
+                        {ask ? "Ask" : instance?.full ? "Full" : "Join"}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        {together.length > 0 && (
+          <section className="town-card">
+            <h3>Often together</h3>
+            <p className="town-note">Friends on the map now whom you saw in the same instance most often.</p>
+            <ul className="map-pairs">
+              {together.map((p) => (
+                <li key={`${p.a}:${p.b}`} onPointerEnter={() => setFocus(p.a)} onPointerLeave={() => setFocus("")}>
+                  <span className="hide-me">
+                    {p.names[0]} and {p.names[1]}
+                  </span>
+                  <small>{p.times} times</small>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        <section className="town-card">
+          <h3>Key</h3>
+          <ul className="map-legend" aria-label="What the ring colours mean">
+            {legend.map(([tone, words]) => (
+              <li key={tone} className={`map-${tone}`}>
+                <i aria-hidden="true" />
+                {words}
+              </li>
+            ))}
+            <li>
+              <span className="map-star" aria-hidden="true">
+                ★
+              </span>
+              A favourite
+            </li>
+          </ul>
+          <label className="setting map-switch" title="A line joins two friends you saw in the same instance at least three times, thicker the more often. From your own world history">
+            <span>
+              <span className="setting-name">Lines between friends often together</span>
+            </span>
+            <input type="checkbox" role="switch" checked={linesOn} onChange={toggleLines} />
+          </label>
+          {away.length > 0 && (
+            <label className="setting map-switch">
+              <span>
+                <span className="setting-name">Show the {away.length} on the website or phone</span>
+              </span>
+              <input type="checkbox" role="switch" checked={showAway} onChange={(e) => setShowAway(e.target.checked)} />
+            </label>
+          )}
+        </section>
+      </aside>
+      </div>
     </div>
   );
 }

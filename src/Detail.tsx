@@ -75,6 +75,34 @@ export function DetailPanel({
   const [gallery, setGallery] = useState("");
   const [group, setGroup] = useState("");
   const [busy, setBusy] = useState(false);
+  /** The favourite group this world or avatar is in, when it is in one. */
+  const [fav, setFav] = useState<{ entryId: string; label: string } | null>(null);
+  // Whether it is a favourite already is read from the last answer as soon as the window
+  // opens, so the section says so without a press.
+  useEffect(() => {
+    setFav(null);
+    if (kind === "group") return;
+    let alive = true;
+    void backend
+      .favoritesCached(kind)
+      .then((got) => {
+        const all = (got ?? {}) as Json;
+        const mine = list(all.entries).find((e) => str(e.favoriteId) === id);
+        if (!alive || !mine) return;
+        const group = list(all.groups).find((g) => str(g.name) === str((mine.tags as unknown[])?.[0]));
+        setFav({ entryId: str(mine.id), label: prettyGroup(str(group?.displayName) || str((mine.tags as unknown[])?.[0])) });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, id]);
+  /** After adding or removing: the groups and counts are read again and other screens are told. */
+  async function favouritesChanged() {
+    await showFavouriteGroups(true);
+    window.dispatchEvent(new Event("favourites:changed"));
+  }
   const [note, setNote] = useState("");
   const [savedNote, setSavedNote] = useState("");
 
@@ -139,12 +167,19 @@ export function DetailPanel({
     }
   }
 
-  async function showFavouriteGroups() {
-    if (groups.length) return;
+  /**
+   * Reads my favourites of this kind: the groups with how full they are, and whether this
+   * world or avatar is in one already. `fresh` asks VRChat; otherwise the answer from last
+   * time is used when there is one, which is instant.
+   */
+  async function showFavouriteGroups(fresh = false) {
+    if (groups.length && !fresh) return;
     let found: Array<{ name: string; label: string; full: boolean }> = [];
     try {
-      // The answer from last time is enough to list the groups, and it is instant.
-      const all = ((await backend.favoritesCached(kind)) ?? (await backend.favoritesOf(kind))) as Json;
+      const all = ((fresh ? null : await backend.favoritesCached(kind)) ?? (await backend.favoritesOf(kind))) as Json;
+      const mine = list(all.entries).find((e) => str(e.favoriteId) === id);
+      const group = mine ? list(all.groups).find((g) => str(g.name) === str((mine.tags as unknown[])?.[0])) : undefined;
+      setFav(mine ? { entryId: str(mine.id), label: prettyGroup(str(group?.displayName) || str((mine.tags as unknown[])?.[0])) } : null);
       const capacity = num(all.capacity);
       const used = new Map<string, number>();
       for (const e of list(all.entries)) {
@@ -370,7 +405,23 @@ export function DetailPanel({
           {kind !== "group" && (
             <section>
               <h3>Favourite</h3>
-              {groups.length === 0 ? (
+              {fav ? (
+                <div className="fav-now">
+                  <span className="fav-in">In {fav.label}</span>
+                  <button
+                    className="plain"
+                    disabled={busy || !fav.entryId}
+                    onClick={() =>
+                      void act(async () => {
+                        await backend.removeFavorites([fav.entryId]);
+                        await favouritesChanged();
+                      }, `${name} is no longer a favourite.`)
+                    }
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : groups.length === 0 ? (
                 <div className="wayback">
                   <button disabled={!data} onClick={() => void showFavouriteGroups()}>
                     Add to favourites
@@ -386,7 +437,15 @@ export function DetailPanel({
                       </option>
                     ))}
                   </select>
-                  <button className="plain go" disabled={busy || !group} onClick={() => void act(() => backend.addFavorite(kind, id, group), `Added ${name} to your favourites.`)}>
+                  <button className="plain go" disabled={busy || !group} onClick={() =>
+                      void act(async () => {
+                        await backend.addFavorite(kind, id, group);
+                        // Shown as a favourite at once; the fresh list from VRChat then confirms the group and the counts.
+                        setFav({ entryId: "", label: groups.find((g) => g.name === group)?.label.replace(/ \(\d+\/\d+\)$/, "") ?? "your favourites" });
+                        await favouritesChanged();
+                      }, `Added ${name} to your favourites.`)
+                    }
+                  >
                     Add
                   </button>
                 </div>

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { backend, errorText, type Friend } from "./backend";
-import { daysAgo } from "./bits";
+import { Avatar, daysAgo, statusTone } from "./bits";
 import { openProfile } from "./Profile";
 
 interface Known {
@@ -11,15 +11,20 @@ interface Known {
   running: boolean;
 }
 
-interface Spot {
-  id: string;
+/** A circle of friends who mostly know each other, drawn as one district. */
+interface District {
+  index: number;
+  name: string;
+  colour: string;
+  members: string[];
   x: number;
   y: number;
-  links: number;
-  circle: number;
+  r: number;
 }
 
-const colours = ["#ff8a4c", "#8fd45f", "#5b8cff", "#f0596b", "#b18cff", "#2de2e6", "#ffd166", "#ff7ac8"];
+const FACE = 42;
+const RING = 58;
+const colours = ["#ff4fa3", "#2de2e6", "#ff9a3c", "#b18cff", "#5fe3a1", "#4fb8ff", "#ffd166", "#ff7a5c"];
 
 /**
  * Finds circles of friends: everyone starts alone, then keeps taking the circle most of
@@ -53,70 +58,96 @@ function circles(ids: string[], near: Map<string, string[]>): Map<string, number
   return new Map(ids.map((id) => [id, order.indexOf(of.get(id)!)]));
 }
 
+/** How many faces fit on ring `n` of a district; ring 0 is the middle. */
+const ringHolds = (n: number) => (n === 0 ? 1 : Math.floor((2 * Math.PI * n * RING) / (FACE + 14)));
+
+/** Seats for a district's members, best connected in the middle, and how big that makes it. */
+function seatsFor(count: number): { seats: Array<{ x: number; y: number }>; r: number } {
+  if (count === 2) return { seats: [{ x: -RING / 2, y: 0 }, { x: RING / 2, y: 0 }], r: RING / 2 + 46 };
+  const seats: Array<{ x: number; y: number }> = [];
+  let ring = 0;
+  while (seats.length < count) {
+    const here = Math.min(ringHolds(ring), count - seats.length);
+    for (let i = 0; i < here; i++) {
+      const angle = -Math.PI / 2 + (i / here) * 2 * Math.PI + ring * 0.35;
+      seats.push({ x: Math.cos(angle) * ring * RING, y: Math.sin(angle) * ring * RING });
+    }
+    ring++;
+  }
+  return { seats, r: (ring - 1) * RING + 48 };
+}
+
 /**
- * Lays friends out so that friends of each other end up close: every two push each other
- * away, a friendship pulls its two ends together, and everything leans towards the middle.
- * The same friends always land in the same place.
+ * Everything the picture needs: the districts with their place on the board, each friend's
+ * seat, and how many friendships cross from one district to another.
  */
-function layOut(ids: string[], pairs: Array<[string, string]>): Spot[] {
-  const index = new Map(ids.map((id, i) => [id, i]));
+function plan(friends: Friend[], pairs: Array<[string, string]>) {
+  const byId = new Map(friends.map((f) => [f.id, f]));
+  const ids = friends.map((f) => f.id).sort();
   const near = new Map<string, string[]>(ids.map((id) => [id, []]));
-  const links: Array<[number, number]> = [];
+  const links: Array<[string, string]> = [];
   for (const [a, b] of pairs) {
-    const [i, j] = [index.get(a), index.get(b)];
-    if (i === undefined || j === undefined) continue;
-    links.push([i, j]);
+    if (!near.has(a) || !near.has(b) || a === b) continue;
     near.get(a)!.push(b);
     near.get(b)!.push(a);
+    links.push([a, b]);
   }
-  const n = ids.length;
-  const spread = 60 * Math.sqrt(n);
-  const x = ids.map((_, i) => Math.cos(i * 2.399963) * spread * Math.sqrt((i + 1) / n));
-  const y = ids.map((_, i) => Math.sin(i * 2.399963) * spread * Math.sqrt((i + 1) / n));
-  const rounds = n > 600 ? 90 : n > 250 ? 180 : 320;
-  const ideal = 70;
-  for (let round = 0; round < rounds; round++) {
-    const heat = 34 * (1 - round / rounds) + 1;
-    const dx = new Float64Array(n);
-    const dy = new Float64Array(n);
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        let ux = x[i] - x[j];
-        let uy = y[i] - y[j];
-        let d2 = ux * ux + uy * uy;
-        if (d2 < 0.01) {
-          ux = 0.1 * (i - j);
-          uy = 0.1;
-          d2 = ux * ux + uy * uy;
-        }
-        const push = (ideal * ideal) / d2;
-        dx[i] += ux * push;
-        dy[i] += uy * push;
-        dx[j] -= ux * push;
-        dy[j] -= uy * push;
-      }
+  const linked = ids.filter((id) => near.get(id)!.length > 0);
+  const circle = circles(linked, near);
+  const groups = new Map<number, string[]>();
+  for (const id of linked) groups.set(circle.get(id)!, [...(groups.get(circle.get(id)!) ?? []), id]);
+
+  const districts: District[] = [...groups.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, members], index) => {
+      members.sort((a, b) => near.get(b)!.length - near.get(a)!.length || (byId.get(a)?.displayName ?? "").localeCompare(byId.get(b)?.displayName ?? ""));
+      const lead = byId.get(members[0])?.displayName ?? "A friend";
+      const name = members.length === 2 ? `${lead} and ${byId.get(members[1])?.displayName ?? "a friend"}` : `${lead}'s circle`;
+      return { index, name, colour: colours[index % colours.length], members, x: 0, y: 0, r: seatsFor(members.length).r };
+    });
+
+  // Districts stand in rows, biggest first, like blocks on a street map.
+  const gap = 70;
+  const widest = Math.max(1000, Math.sqrt(districts.reduce((sum, d) => sum + (2 * d.r + gap) ** 2, 0)) * 1.35);
+  let x = gap;
+  let y = gap;
+  let row = 0;
+  for (const d of districts) {
+    if (x + 2 * d.r + gap > widest && x > gap) {
+      x = gap;
+      y += row + gap;
+      row = 0;
     }
-    for (const [i, j] of links) {
-      const ux = x[i] - x[j];
-      const uy = y[i] - y[j];
-      const pull = Math.sqrt(ux * ux + uy * uy) / ideal;
-      dx[i] -= ux * pull;
-      dy[i] -= uy * pull;
-      dx[j] += ux * pull;
-      dy[j] += uy * pull;
-    }
-    for (let i = 0; i < n; i++) {
-      // Friends with nobody in common drift to the edge instead of flying off.
-      dx[i] -= x[i] * 0.45;
-      dy[i] -= y[i] * 0.45;
-      const length = Math.hypot(dx[i], dy[i]) || 1;
-      const step = Math.min(length, heat);
-      x[i] += (dx[i] / length) * step;
-      y[i] += (dy[i] / length) * step;
-    }
+    d.x = x + d.r;
+    d.y = y + d.r;
+    x += 2 * d.r + gap;
+    row = Math.max(row, 2 * d.r);
   }
-  const circle = circles(ids, near);
-  return ids.map((id, i) => ({ id, x: x[i], y: y[i], links: near.get(id)!.length, circle: near.get(id)!.length ? circle.get(id)! : -1 }));
+  // Rows are centred on the tallest block in them.
+  const rows = new Map<number, District[]>();
+  for (const d of districts) rows.set(d.y - d.r, [...(rows.get(d.y - d.r) ?? []), d]);
+  for (const [top, inRow] of rows) {
+    const tall = Math.max(...inRow.map((d) => d.r));
+    for (const d of inRow) d.y = top + tall;
+  }
+  const width = Math.max(...districts.map((d) => d.x + d.r), 600) + gap;
+  const height = Math.max(...districts.map((d) => d.y + d.r), 300) + gap;
+
+  const seat = new Map<string, { x: number; y: number; district: number }>();
+  for (const d of districts) {
+    const { seats } = seatsFor(d.members.length);
+    d.members.forEach((id, i) => seat.set(id, { x: d.x + seats[i].x, y: d.y + seats[i].y, district: d.index }));
+  }
+  const bridges = new Map<string, number>();
+  for (const [a, b] of links) {
+    const [p, q] = [seat.get(a)!.district, seat.get(b)!.district];
+    if (p !== q) bridges.set(`${Math.min(p, q)}-${Math.max(p, q)}`, (bridges.get(`${Math.min(p, q)}-${Math.max(p, q)}`) ?? 0) + 1);
+  }
+  // Someone with friends in other districts holds the web together.
+  const reach = new Map<string, number>();
+  for (const id of linked) reach.set(id, new Set(near.get(id)!.map((o) => seat.get(o)!.district).filter((d) => d !== seat.get(id)!.district)).size);
+  const loners = ids.filter((id) => near.get(id)!.length === 0);
+  return { byId, near, links, districts, seat, bridges, reach, loners, width, height };
 }
 
 const endWords: Record<string, string> = {
@@ -128,8 +159,9 @@ const endWords: Record<string, string> = {
 };
 
 /**
- * Which of my friends are friends with each other, as a web: a dot per friend, a line per
- * friendship between two of them, circles of friends in one colour.
+ * Which of my friends are friends with each other, drawn as a town: every circle of friends
+ * is a district with its people in it, and friendships that cross between two districts
+ * are a bridge. A rail beside it lists the districts and says who holds them together.
  */
 export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (message: string) => void }) {
   const [known, setKnown] = useState<Known | null>(null);
@@ -137,8 +169,10 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
   const [busy, setBusy] = useState(false);
   const [hover, setHover] = useState("");
   const [picked, setPicked] = useState("");
-  const [view, setView] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const svg = useRef<SVGSVGElement>(null);
+  const [zone, setZone] = useState(-1);
+  const [find, setFind] = useState("");
+  const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  const stage = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
 
   const load = () =>
@@ -160,7 +194,7 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
     };
   }, []);
 
-  async function fetchAll() {
+  async function ask() {
     setBusy(true);
     setProgress({ done: 0, total: friends.length });
     try {
@@ -175,99 +209,96 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
     }
   }
 
-  const byId = useMemo(() => new Map(friends.map((f) => [f.id, f])), [friends]);
   const idList = useMemo(() => friends.map((f) => f.id).sort().join(","), [friends]);
-  const spots = useMemo(() => {
-    if (!known || known.pairs.length === 0) return [];
-    return layOut(idList ? idList.split(",") : [], known.pairs);
-  }, [known, idList]);
-  const at = useMemo(() => new Map(spots.map((s) => [s.id, s])), [spots]);
-  const lines = useMemo(() => (known?.pairs ?? []).filter(([a, b]) => at.has(a) && at.has(b)), [known, at]);
-  const whole = useMemo(() => {
-    if (spots.length === 0) return { x: -300, y: -200, w: 600, h: 400 };
-    // The picture opens on the friends who know someone; the rest sit around them, a scroll away.
-    const shown = spots.some((s) => s.links > 0) ? spots.filter((s) => s.links > 0) : spots;
-    const xs = shown.map((s) => s.x);
-    const ys = shown.map((s) => s.y);
-    const [x0, x1, y0, y1] = [Math.min(...xs) - 90, Math.max(...xs) + 160, Math.min(...ys) - 60, Math.max(...ys) + 60];
-    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-  }, [spots]);
-  useEffect(() => setView(null), [whole]);
-  const box = view ?? whole;
-  // Dots and names keep their size on screen however far the picture is zoomed.
-  const unit = box.w / 1000;
+  const town = useMemo(() => plan(friends, known?.pairs ?? []), [known, idList]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { byId, near, districts, seat, bridges, reach, loners } = town;
 
-  // Names are written for the best connected, and for whoever is pointed at or picked.
-  const named = useMemo(() => new Set([...spots].sort((a, b) => b.links - a.links).slice(0, 10).filter((s) => s.links > 0).map((s) => s.id)), [spots]);
-  const focus = hover || picked;
-  const nextTo = useMemo(() => {
-    const out = new Set<string>();
-    if (focus) for (const [a, b] of lines) if (a === focus || b === focus) out.add(a === focus ? b : a);
-    return out;
-  }, [focus, lines]);
-
-  function zoom(e: React.WheelEvent) {
-    const el = svg.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const factor = e.deltaY > 0 ? 1.18 : 1 / 1.18;
-    const w = Math.min(whole.w * 3, Math.max(120, box.w * factor));
-    const h = (w / box.w) * box.h;
-    const px = box.x + ((e.clientX - r.left) / r.width) * box.w;
-    const py = box.y + ((e.clientY - r.top) / r.height) * box.h;
-    setView({ x: px - ((e.clientX - r.left) / r.width) * w, y: py - ((e.clientY - r.top) / r.height) * h, w, h });
-  }
+  // The whole town, fitted into the stage.
+  const fit = () => {
+    const el = stage.current;
+    if (!el || districts.length === 0) return;
+    const k = Math.min(el.clientWidth / town.width, el.clientHeight / town.height, 1.15);
+    setView({ k, x: (el.clientWidth - town.width * k) / 2, y: (el.clientHeight - town.height * k) / 2 });
+  };
+  useLayoutEffect(fit, [town.width, town.height, districts.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function goTo(id: string) {
+    const s = seat.get(id);
+    const el = stage.current;
     setPicked(id);
-    const s = at.get(id);
-    if (s) setView({ x: s.x - 260, y: s.y - 170, w: 520, h: 340 });
+    setFind("");
+    if (!s || !el) return;
+    setZone(-1);
+    const k = Math.max(view.k, 1);
+    setView({ k, x: el.clientWidth / 2 - s.x * k, y: el.clientHeight / 2 - s.y * k });
   }
 
-  const linked = spots.filter((s) => s.links > 0).length;
-  const sorted = useMemo(() => [...friends].sort((a, b) => a.displayName.localeCompare(b.displayName)), [friends]);
+  function showDistrict(d: District) {
+    const el = stage.current;
+    setZone(zone === d.index ? -1 : d.index);
+    setPicked("");
+    if (!el || zone === d.index) return;
+    const k = Math.min(el.clientWidth / (2 * d.r + 160), el.clientHeight / (2 * d.r + 160), 1.4);
+    setView({ k, x: el.clientWidth / 2 - d.x * k, y: el.clientHeight / 2 - d.y * k });
+  }
+
+  function wheel(e: React.WheelEvent) {
+    const el = stage.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const k = Math.min(2.4, Math.max(0.25, view.k * (e.deltaY > 0 ? 1 / 1.15 : 1.15)));
+    const [px, py] = [e.clientX - r.left, e.clientY - r.top];
+    setView({ k, x: px - ((px - view.x) / view.k) * k, y: py - ((py - view.y) / view.k) * k });
+  }
+
+  const focus = hover || picked;
+  const knows = useMemo(() => new Set(focus ? near.get(focus) ?? [] : []), [focus, near]);
+  const friendships = town.links.length;
+  const top = districts[0]?.members[0];
+  const holders = useMemo(() => [...reach.entries()].filter(([, n]) => n > 0).sort(([a, x], [b, y]) => y - x || near.get(b)!.length - near.get(a)!.length).slice(0, 6), [reach, near]);
+  const matches = find.trim() ? friends.filter((f) => f.displayName.toLowerCase().includes(find.trim().toLowerCase())).slice(0, 7) : [];
+  const chosen = picked ? byId.get(picked) : undefined;
+  const nameOf = (id: string) => byId.get(id)?.displayName ?? "A friend";
+  const asked = !!known && known.asked > 0;
 
   return (
-    <div className="web-wrap">
-      <div className="web-top">
-        <div className="web-facts">
-          {known && known.asked > 0 ? (
-            <p>
-              <b>{linked}</b> of your <b>{friends.length}</b> friends know at least one other friend of yours. <b>{lines.length}</b> friendships between them.
-              {known.at && ` Asked ${daysAgo(known.at)}.`}
-              {known.hidden.length > 0 && ` ${known.hidden.length} keep their friends hidden.`}
-            </p>
-          ) : (
-            <p>
-              This draws which of your friends are friends with each other. The app has to ask VRChat about each friend, one at a time with a pause in
-              between, so {friends.length} friends take about {Math.max(1, Math.round((friends.length * 1.5) / 60))} min. It only happens when you press the
-              button, and the answer is kept on this PC.
-            </p>
-          )}
-        </div>
-        <div className="web-actions">
-          {spots.length > 0 && (
-            <select value={picked} onChange={(e) => (e.target.value ? goTo(e.target.value) : (setPicked(""), setView(null)))} aria-label="Go to a friend">
-              <option value="">Go to a friend</option>
-              {sorted.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.displayName}
-                </option>
-              ))}
-            </select>
-          )}
-          {view && (
-            <button className="plain" onClick={() => setView(null)}>
-              Show all
-            </button>
-          )}
+    <div className="town-wrap">
+      <div className="town-head">
+        {asked ? (
+          <dl className="town-facts">
+            <div>
+              <dt>Circles</dt>
+              <dd>{districts.length}</dd>
+            </div>
+            <div>
+              <dt>Friendships among your friends</dt>
+              <dd>{friendships.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Knows the most of them</dt>
+              <dd className="town-fact-name hide-me">{top ? nameOf(top) : "Nobody yet"}</dd>
+            </div>
+            <div>
+              <dt>Know none of the others</dt>
+              <dd>{loners.length}</dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="town-intro">
+            This draws which of your friends are friends with each other. The app has to ask VRChat about each friend, one at a time with a pause in
+            between, so {friends.length} friends take about {Math.max(1, Math.round((friends.length * 1.5) / 60))} min. It only happens when you press the
+            button, and the answer stays on this PC.
+          </p>
+        )}
+        <div className="town-actions">
+          {asked && known?.at && <span className="town-when">Asked {daysAgo(known.at)}</span>}
           {busy ? (
             <button className="plain" onClick={() => void backend.stopMutuals()}>
               Stop
             </button>
           ) : (
-            <button className={known && known.asked > 0 ? "plain" : "plain go"} disabled={friends.length < 2} onClick={() => void fetchAll()}>
-              {known && known.asked > 0 ? "Ask again" : "Ask VRChat"}
+            <button className={asked ? "plain" : "plain go"} disabled={friends.length < 2} onClick={() => void ask()}>
+              {asked ? "Ask again" : "Ask VRChat"}
             </button>
           )}
         </div>
@@ -282,69 +313,216 @@ export function FriendWeb({ friends, onDone }: { friends: Friend[]; onDone: (mes
         </div>
       )}
 
-      {known && known.asked > 0 && spots.length === 0 && !busy && <p className="empty">None of your friends are friends with each other, as far as VRChat lets the app see.</p>}
+      {asked && districts.length === 0 && !busy && <p className="empty">None of your friends are friends with each other, as far as VRChat lets the app see.</p>}
 
-      {spots.length > 0 && (
-        <svg
-          ref={svg}
-          className={`web${focus ? " web-focused" : ""}`}
-          viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
-          role="img"
-          aria-label="Your friends, joined by a line where two of them are friends with each other"
-          onWheel={zoom}
-          onPointerDown={(e) => {
-            drag.current = { x: e.clientX, y: e.clientY, moved: false };
-          }}
-          onPointerMove={(e) => {
-            const d = drag.current;
-            const el = svg.current;
-            if (!d || !el || e.buttons !== 1) return;
-            const r = el.getBoundingClientRect();
-            const [mx, my] = [e.clientX - d.x, e.clientY - d.y];
-            if (Math.abs(mx) + Math.abs(my) < 3 && !d.moved) return;
-            drag.current = { x: e.clientX, y: e.clientY, moved: true };
-            setView({ ...box, x: box.x - (mx / r.width) * box.w, y: box.y - (my / r.height) * box.h });
-          }}
-          onPointerUp={() => {
-            window.setTimeout(() => (drag.current = null), 0);
-          }}
-        >
-          <g className="web-lines">
-            {lines.map(([a, b]) => {
-              const [p, q] = [at.get(a)!, at.get(b)!];
-              return <line key={`${a}:${b}`} x1={p.x} y1={p.y} x2={q.x} y2={q.y} className={focus && (a === focus || b === focus) ? "on" : ""} />;
-            })}
-          </g>
-          {spots.map((s) => {
-            const f = byId.get(s.id);
-            const name = f?.displayName ?? "A friend";
-            const size = (s.links === 0 ? 3 : 5 + Math.sqrt(s.links) * 2.4) * unit;
-            const lit = s.id === focus || nextTo.has(s.id);
-            const label = named.has(s.id) || lit;
-            return (
-              <g
-                key={s.id}
-                className={`web-dot${lit ? " on" : ""}${s.links === 0 ? " web-alone" : ""}`}
-                transform={`translate(${s.x} ${s.y})`}
-                onPointerEnter={() => setHover(s.id)}
-                onPointerLeave={() => setHover("")}
+      {districts.length > 0 && (
+        <div className="town-layout">
+          <div
+            className={`town-stage${focus ? " town-focused" : ""}${zone >= 0 ? " town-zoned" : ""}`}
+            ref={stage}
+            onWheel={wheel}
+            onPointerDown={(e) => {
+              drag.current = { x: e.clientX, y: e.clientY, moved: false };
+            }}
+            onPointerMove={(e) => {
+              const d = drag.current;
+              if (!d || e.buttons !== 1) return;
+              const [mx, my] = [e.clientX - d.x, e.clientY - d.y];
+              if (!d.moved && Math.abs(mx) + Math.abs(my) < 4) return;
+              drag.current = { x: e.clientX, y: e.clientY, moved: true };
+              setView((v) => ({ ...v, x: v.x + mx, y: v.y + my }));
+            }}
+            onPointerUp={() => window.setTimeout(() => (drag.current = null), 0)}
+          >
+            <div className="town-world" style={{ width: town.width, height: town.height, transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
+              <svg className="town-lines" width={town.width} height={town.height} aria-hidden="true">
+                {[...bridges.entries()].map(([key, count]) => {
+                  const [a, b] = key.split("-").map((n) => districts[Number(n)]);
+                  const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+                  const [ux, uy] = [(b.x - a.x) / length, (b.y - a.y) / length];
+                  const [x1, y1, x2, y2] = [a.x + ux * a.r, a.y + uy * a.r, b.x - ux * b.r, b.y - uy * b.r];
+                  // The bridge bows a little, so two bridges between neighbours do not lie on each other.
+                  const [mx, my] = [(x1 + x2) / 2 - uy * 34, (y1 + y2) / 2 + ux * 34];
+                  return (
+                    <g key={key} className={`town-bridge${zone >= 0 && (a.index === zone || b.index === zone) ? " on" : ""}`}>
+                      <path d={`M${x1} ${y1} Q${mx} ${my} ${x2} ${y2}`} strokeWidth={2 + Math.min(8, count * 1.2)} />
+                      <text x={(x1 + 2 * mx + x2) / 4} y={(y1 + 2 * my + y2) / 4 + 4}>
+                        {count}
+                      </text>
+                    </g>
+                  );
+                })}
+                {town.links.map(([a, b]) => {
+                  const [p, q] = [seat.get(a)!, seat.get(b)!];
+                  const lit = !!focus && (a === focus || b === focus);
+                  // Friendships inside a district are always drawn; ones that cross only for the friend looked at.
+                  if (p.district !== q.district && !lit) return null;
+                  return <line key={`${a}:${b}`} x1={p.x} y1={p.y} x2={q.x} y2={q.y} className={lit ? "on" : ""} style={{ stroke: lit ? undefined : districts[p.district].colour }} />;
+                })}
+              </svg>
+
+              {districts.map((d) => (
+                <div
+                  key={d.index}
+                  className={`town-district${zone === d.index ? " on" : ""}`}
+                  style={{ left: d.x - d.r, top: d.y - d.r, width: 2 * d.r, height: 2 * d.r, "--c": d.colour } as CSSProperties}
+                >
+                  <button className="town-plate hide-me" onClick={() => !drag.current?.moved && showDistrict(d)} title="Look at this circle">
+                    {d.name}
+                    <i>{d.members.length}</i>
+                  </button>
+                </div>
+              ))}
+
+              {districts.flatMap((d) =>
+                d.members.map((id) => {
+                  const f = byId.get(id);
+                  const s = seat.get(id)!;
+                  const lit = id === focus || knows.has(id);
+                  return (
+                    <button
+                      key={id}
+                      className={`town-face${lit ? " on" : ""}${id === picked ? " picked" : ""}${zone >= 0 && s.district !== zone ? " off" : ""}${(reach.get(id) ?? 0) > 0 ? " town-holder" : ""}`}
+                      style={{ left: s.x, top: s.y, "--c": d.colour } as CSSProperties}
+                      title={`${nameOf(id)}: friends with ${near.get(id)!.length} of your friends`}
+                      onPointerEnter={() => setHover(id)}
+                      onPointerLeave={() => setHover("")}
+                      onFocus={() => setHover(id)}
+                      onBlur={() => setHover("")}
+                      onClick={() => !drag.current?.moved && setPicked(picked === id ? "" : id)}
+                    >
+                      <Avatar name={nameOf(id)} image={f?.image ?? ""} tone={f ? statusTone(f) : undefined} size={FACE} />
+                      <span className="town-name hide-me">{nameOf(id)}</span>
+                    </button>
+                  );
+                }),
+              )}
+            </div>
+
+            <div className="town-zoom">
+              <button className="plain" onClick={() => setView((v) => ({ ...v, k: Math.min(2.4, v.k * 1.2) }))} aria-label="Closer" title="Closer">
+                +
+              </button>
+              <button className="plain" onClick={() => setView((v) => ({ ...v, k: Math.max(0.25, v.k / 1.2) }))} aria-label="Further away" title="Further away">
+                −
+              </button>
+              <button
+                className="plain"
                 onClick={() => {
-                  if (!drag.current?.moved) openProfile(s.id);
+                  setZone(-1);
+                  fit();
                 }}
               >
-                <title>{`${name}: friends with ${s.links} of your friends`}</title>
-                <circle r={size} fill={s.circle < 0 ? "currentColor" : colours[s.circle % colours.length]} />
-                {label && (
-                  <text x={size + 5 * unit} y={4 * unit} fontSize={12 * unit} className="hide-me">
-                    {name}
-                  </text>
+                Whole town
+              </button>
+            </div>
+          </div>
+
+          <aside className="town-rail" aria-label="Circles and people">
+            <div className="town-find">
+              <input type="search" value={find} placeholder="Find a friend" aria-label="Find a friend" onChange={(e) => setFind(e.target.value)} />
+              {matches.length > 0 && (
+                <ul>
+                  {matches.map((f) => (
+                    <li key={f.id}>
+                      <button onClick={() => goTo(f.id)}>
+                        <Avatar name={f.displayName} image={f.image} size={26} />
+                        <span className="hide-me">{f.displayName}</span>
+                        {!seat.has(f.id) && <small>knows none of the others</small>}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {chosen && (
+              <section className="town-card town-person">
+                <header>
+                  <Avatar name={chosen.displayName} image={chosen.image} tone={statusTone(chosen)} size={48} />
+                  <div>
+                    <b className="hide-me">{chosen.displayName}</b>
+                    <span>
+                      {seat.has(chosen.id)
+                        ? `Friends with ${near.get(chosen.id)!.length} of your friends, in ${districts[seat.get(chosen.id)!.district].name}`
+                        : "Knows none of your other friends"}
+                    </span>
+                  </div>
+                </header>
+                {(near.get(chosen.id)?.length ?? 0) > 0 && (
+                  <ul className="town-people">
+                    {[...near.get(chosen.id)!].sort((a, b) => nameOf(a).localeCompare(nameOf(b))).map((id) => (
+                      <li key={id}>
+                        <button onClick={() => goTo(id)} style={{ "--c": districts[seat.get(id)!.district].colour } as CSSProperties}>
+                          <i aria-hidden="true" />
+                          <span className="hide-me">{nameOf(id)}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
                 )}
-              </g>
-            );
-          })}
-        </svg>
+                <div className="town-card-actions">
+                  <button className="plain go" onClick={() => openProfile(chosen.id)}>
+                    Open profile
+                  </button>
+                  <button className="plain" onClick={() => setPicked("")}>
+                    Done
+                  </button>
+                </div>
+              </section>
+            )}
+
+            <section className="town-card">
+              <h3>Circles</h3>
+              <ul className="town-list">
+                {districts.map((d) => (
+                  <li key={d.index}>
+                    <button className={zone === d.index ? "on" : ""} onClick={() => showDistrict(d)} style={{ "--c": d.colour } as CSSProperties}>
+                      <i aria-hidden="true" />
+                      <span className="hide-me">{d.name}</span>
+                      <small>{d.members.length}</small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            {holders.length > 0 && (
+              <section className="town-card">
+                <h3>Hold circles together</h3>
+                <p className="town-note">Friends who know people in more than one circle. They wear a white ring on the map.</p>
+                <ul className="town-list">
+                  {holders.map(([id, n]) => (
+                    <li key={id}>
+                      <button onClick={() => goTo(id)} style={{ "--c": districts[seat.get(id)!.district].colour } as CSSProperties}>
+                        <i aria-hidden="true" />
+                        <span className="hide-me">{nameOf(id)}</span>
+                        <small>{n + 1} circles</small>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {(loners.length > 0 || (known?.hidden.length ?? 0) > 0) && (
+              <section className="town-card">
+                <h3>Not on the map</h3>
+                <p className="town-note">
+                  {loners.length > 0 && `${loners.length} ${loners.length === 1 ? "friend knows" : "friends know"} none of your other friends. `}
+                  {(known?.hidden.length ?? 0) > 0 && `${known!.hidden.length} keep their friends hidden, so only what others said about them shows.`}
+                </p>
+              </section>
+            )}
+          </aside>
+        </div>
       )}
-      {spots.length > 0 && <p className="setting-hint web-hint">Drag to move, scroll to zoom, point at a friend to see who they know, press to open the profile. A colour is a circle of friends who mostly know each other.</p>}
+      {districts.length > 0 && (
+        <p className="setting-hint town-hint">
+          Drag to move, scroll to zoom. Point at a friend to light up who they know; press them for the list. A number on a bridge counts the friendships
+          between two circles.
+        </p>
+      )}
     </div>
   );
 }
