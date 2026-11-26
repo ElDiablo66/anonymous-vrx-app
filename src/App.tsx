@@ -253,6 +253,11 @@ export function App() {
   useEffect(() => {
     void backend.setOwnFeed(settings.feedMine).catch(() => {});
   }, [settings.feedMine, me]);
+  // Lists kept outside this screen's state are told when the account changes.
+  const meIdNow = me?.id ?? "";
+  useEffect(() => {
+    window.dispatchEvent(new Event("account:changed"));
+  }, [meIdNow]);
   useEffect(() => {
     const minutes = (text: string) => {
       const [h, m] = text.split(":").map(Number);

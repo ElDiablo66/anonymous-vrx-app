@@ -9,6 +9,10 @@ export interface WorldMarks {
 }
 
 let known: WorldMarks | null = null;
+// Another account signed in: the stars and visits read so far belong to the one before.
+window.addEventListener("account:changed", () => {
+  known = null;
+});
 const CHANGED = "marks:changed";
 
 async function read(): Promise<WorldMarks> {

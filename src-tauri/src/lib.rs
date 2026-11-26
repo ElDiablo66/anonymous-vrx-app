@@ -744,7 +744,10 @@ fn watch_game(app: AppHandle) {
             std::thread::sleep(QUIT_GRACE);
             // A clean exit closes the stay in the history. One still open means no goodbye.
             let open = app.state::<Arc<Hub>>().here().ok().flatten().map(|(visit, _)| visit);
-            if let Some(visit) = open.filter(|v| vrchat::model::launch_link(&v.location).is_some()) {
+            // The log itself is asked too: a goodbye line there means a normal exit, even if
+            // the history missed it.
+            let goodbye = gamelog::default_dir().is_some_and(|dir| gamelog::said_goodbye(&dir));
+            if let Some(visit) = open.filter(|v| !goodbye && vrchat::model::launch_link(&v.location).is_some()) {
                 if !is_running("VRChat.exe") {
                     crashed(&app, &watch, &visit, &mut last_rejoin);
                 }

@@ -181,8 +181,15 @@ export function ProfilePanel({
         setBlockState({ block: mine.some((m) => m.kind === "block"), mute: mine.some((m) => m.kind === "mute") });
       })
       .catch(() => alive && setBlockState({ block: false, mute: false }));
+    // The same person may be unblocked or unmuted from the list behind this profile.
+    const changed = (e: Event) => {
+      const what = (e as CustomEvent<{ userId: string; kind: "block" | "mute"; on: boolean }>).detail;
+      if (what?.userId === userId) setBlockState((old) => (old ? { ...old, [what.kind]: what.on } : old));
+    };
+    window.addEventListener("moderation:changed", changed);
     return () => {
       alive = false;
+      window.removeEventListener("moderation:changed", changed);
     };
   }, [userId, meId]);
   const [problem, setProblem] = useState("");

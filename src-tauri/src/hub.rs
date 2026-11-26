@@ -83,7 +83,7 @@ pub struct Hub {
     /// The people I blocked or muted, with the account the list belongs to.
     blocked: Mutex<Option<(String, Value)>>,
     /// Picture, rank and status of people looked up for a list, kept while the app runs.
-    briefs: Mutex<HashMap<String, Value>>,
+    briefs: Mutex<HashMap<String, (Instant, Value)>>,
     /// Put my own world, avatar and status changes into the feed too.
     own_feed: std::sync::atomic::AtomicBool,
 }
@@ -324,12 +324,25 @@ impl Hub {
         self.api
             .update_me(&me.id, json!({ "status": status, "statusDescription": text }))
             .await?;
+        // VRChat's own update for my account may land before or after this line. Whichever
+        // comes first finds the old value and writes the feed entry; the other finds nothing changed.
+        let (mut was_status, mut was_text) = (None, None);
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(m) = inner.me.as_mut() {
-                m.status = status.to_string();
-                m.status_description = text.to_string();
+                if m.status != status {
+                    was_status = Some(std::mem::replace(&mut m.status, status.to_string()));
+                }
+                if m.status_description != text {
+                    was_text = Some(std::mem::replace(&mut m.status_description, text.to_string()));
+                }
             }
+        }
+        if let Some(before) = was_status {
+            self.own_entry("status", status, &before, "");
+        }
+        if let Some(before) = was_text {
+            self.own_entry("statusText", text, &before, "");
         }
         Ok(())
     }
@@ -885,13 +898,16 @@ impl Hub {
         if self.me().is_none() {
             return Err(AppError::NotSignedIn);
         }
-        if let Some(known) = self.briefs.lock().unwrap().get(user_id) {
-            return Ok(known.clone());
+        // Kept for ten minutes, so a status shown in a list is never much older than that.
+        if let Some((at, known)) = self.briefs.lock().unwrap().get(user_id) {
+            if at.elapsed() < Duration::from_secs(600) {
+                return Ok(known.clone());
+            }
         }
         let user = self.api.user(user_id).await?;
         let state = user["state"].as_str().unwrap_or("offline").to_string();
         let brief = Friend::from_user(&user, &state).map(|f| json!(f)).ok_or_else(|| AppError::Parse("that user had no id".into()))?;
-        self.briefs.lock().unwrap().insert(user_id.to_string(), brief.clone());
+        self.briefs.lock().unwrap().insert(user_id.to_string(), (Instant::now(), brief.clone()));
         Ok(brief)
     }
 

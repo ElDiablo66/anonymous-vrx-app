@@ -87,6 +87,23 @@ pub fn parse_line(line: &str) -> Option<(NaiveDateTime, LogEvent)> {
     None
 }
 
+/// True when the newest log file ends with VRChat's goodbye line. Read straight from the
+/// file, so it holds even when the history could not be brought up to date.
+pub fn said_goodbye(dir: &Path) -> bool {
+    let Some((_, path)) = log_files(dir).into_iter().max_by(|a, b| a.0.cmp(&b.0)) else {
+        return false;
+    };
+    let Ok(size) = fs::metadata(&path).map(|m| m.len()) else {
+        return false;
+    };
+    let tail = 64 * 1024;
+    let Ok(bytes) = read_range(&path, size.saturating_sub(tail), tail.min(size)) else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    text.contains("VRCApplication: HandleApplicationQuit") || text.contains("VRCApplication: OnApplicationQuit")
+}
+
 /// The log uses the PC's local time with no zone. History is stored in UTC.
 pub fn to_utc(at: NaiveDateTime) -> String {
     let utc = match Local.from_local_datetime(&at).earliest() {

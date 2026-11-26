@@ -21,6 +21,10 @@ interface Row {
 
 /** What was shown last time, so opening the tab again is instant. */
 let lastRows: Record<Kind, Row[]> | null = null;
+// Another account signed in: these were the groups of the one before.
+window.addEventListener("account:changed", () => {
+  lastRows = null;
+});
 
 /** VRChat's own names like `avatars2` read better as "Avatars 2". */
 function plain(key: string): string {

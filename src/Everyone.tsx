@@ -77,6 +77,8 @@ function FriendLog({ friends, tick }: { friends: Map<string, Friend>; tick: numb
 
 /** What was looked up about people on the blocked list, so a row is asked for once. */
 const briefs = new Map<string, Friend>();
+// Another account signed in: what was looked up belongs to the one before.
+window.addEventListener("account:changed", () => briefs.clear());
 
 /** One blocked or muted person. Their picture, rank and status are looked up when the row
  *  has been on screen for a moment, so a long list does not ask for everyone at once. */
@@ -174,6 +176,8 @@ function Blocked({ friends, onDone }: { friends: Map<string, Friend>; onDone: (m
     try {
       await backend.setModeration(m.userId, m.kind, false);
       setRows((old) => (old ? old.filter((r) => r.kind + r.userId !== id) : old));
+      // A profile of theirs may be open on top of this list.
+      window.dispatchEvent(new CustomEvent("moderation:changed", { detail: { userId: m.userId, kind: m.kind, on: false } }));
       onDone(`${m.name} is no longer ${m.kind === "block" ? "blocked" : "muted"}.`);
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
