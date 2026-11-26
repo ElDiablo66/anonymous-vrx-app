@@ -152,7 +152,7 @@ export function Search({ onDone }: { onDone: (message: string) => void }) {
                 <button className="go" disabled={wearing === a.id} onClick={() => void wear(a)} title="Switches your VRChat avatar to this one">
                   Wear
                 </button>
-                <button onClick={() => void backend.openLink(`https://vrchat.com/home/avatar/${a.id}`).catch((err) => onDone(errorText(err)))}>Website</button>
+                <button onClick={() => void backend.openLink(`https://vrchat.com/home/avatar/${a.id}`).catch((err) => onDone(`That did not work: ${errorText(err)}`))}>Website</button>
                 <button
                   onClick={() => {
                     void navigator.clipboard.writeText(a.id).then(
@@ -193,7 +193,7 @@ export function Search({ onDone }: { onDone: (message: string) => void }) {
                 </span>
                 {w.tags.length > 0 && <span className="result-note">{w.tags.slice(0, 6).join(", ")}</span>}
                 <div className="wayback">
-                  <button onClick={() => void backend.openLink(`https://vrchat.com/home/world/${w.id}`).catch((err) => onDone(errorText(err)))} title="Opens the world's page on VRChat's website, where you can start an instance">
+                  <button onClick={() => void backend.openLink(`https://vrchat.com/home/world/${w.id}`).catch((err) => onDone(`That did not work: ${errorText(err)}`))} title="Opens the world's page on VRChat's website, where you can start an instance">
                     Open on the website
                   </button>
                   <button

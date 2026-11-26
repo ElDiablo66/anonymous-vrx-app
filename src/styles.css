@@ -4650,3 +4650,269 @@ button.pinned-away:hover {
 :root[data-hide="on"] body .person-window .link-chips * {
   pointer-events: none;
 }
+
+/* Hide names and pictures: a covered picture stays covered when opened full size, and the
+   tags I wrote myself are covered like names */
+:root[data-hide="on"] body .viewer-personal img {
+  visibility: hidden;
+}
+
+:root[data-hide="on"] body .viewer-personal .viewer-name,
+:root[data-hide="on"] body .my-tag:not(.mark-hidden) {
+  color: transparent !important;
+  background-image: linear-gradient(color-mix(in srgb, var(--text) 16%, transparent), color-mix(in srgb, var(--text) 16%, transparent)) !important;
+  background-size: 100% 72% !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
+
+:root[data-hide="on"] body .viewer-personal::before {
+  content: "Covered by Hide names and pictures";
+  color: var(--soft, #cbbfe6);
+  font-size: 15px;
+}
+
+/* ---------- Profile, Info tab: a wide column for the person, a rail for what I do with them ---------- */
+.info-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-top: 14px;
+}
+
+.info-main,
+.info-rail {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* The rail stays in view while a long bio or note scrolls past. */
+.info-rail {
+  position: sticky;
+  top: 0;
+}
+
+.profile-body .info-grid section {
+  margin-top: 0;
+  padding: 16px 18px 18px;
+  border-radius: 14px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.profile-body .info-grid section h3 {
+  margin: 0 0 12px;
+  font-size: 17px;
+  letter-spacing: 0.01em;
+}
+
+.info-main .profile-bio {
+  max-width: 68ch;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+/* A long bio shows its first lines and fades out. */
+.profile-bio.bio-clamp {
+  max-height: 14.2em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 62%, transparent);
+  mask-image: linear-gradient(#000 62%, transparent);
+}
+
+.clamp-toggle {
+  margin: 2px 0 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--teal);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.clamp-toggle:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Facts as rows: what it is on the left, the value on the right. */
+.fact-rows {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.fact-rows div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.fact-rows dt {
+  color: var(--text-soft);
+  font-size: 13.5px;
+}
+
+.fact-rows dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* The numbers about the two of us: two by two, the value carrying the weight. */
+.info-rail .facts {
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+}
+
+.info-rail .facts dd {
+  font-size: 15.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Three choices as one control. */
+.segments {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 3px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.segments button {
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-soft);
+  font-size: 13.5px;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.segments button.on {
+  background: var(--panel-high, var(--panel));
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--teal);
+}
+
+/* Small actions that should not shout: copy, and the ones that change how I stand with someone. */
+.quiet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quiet-actions button {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: none;
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.quiet-actions button.danger {
+  border-color: var(--busy);
+  background: color-mix(in srgb, var(--busy) 18%, transparent);
+  color: var(--busy);
+  font-weight: 600;
+}
+
+.quiet-actions button:disabled {
+  opacity: 0.5;
+}
+
+.quiet-actions-apart {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.info-main .wayback {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+.profile-body .info-grid :is(button, select, textarea):focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+/* A narrow window stacks the rail under the person. */
+@media (max-width: 1100px) {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+  .info-rail {
+    position: static;
+  }
+}
+
+/* The numbers about the two of us read as rows, like the account facts under them. */
+.info-rail .facts {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.info-rail .facts div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.info-rail .facts dt {
+  font-size: 13.5px;
+}
+
+.info-rail .facts dd {
+  margin: 0;
+  font-size: inherit;
+  text-align: right;
+}
+
+/* ---------- Small things every screen shares ---------- */
+
+/* Keyboard focus is always visible, in the app's own teal. */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+/* A pressed button gives a little. */
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+/* Headings break into even lines; counts and times line up digit under digit. */
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+time,
+.num,
+.chip-count,
+.fav-count {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

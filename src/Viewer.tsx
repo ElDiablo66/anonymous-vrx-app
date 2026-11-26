@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { backend, errorText } from "./backend";
 import { SafeImg } from "./Pic";
 
-/** Any part of the window can show a picture full size this way. */
-export function openPicture(url: string, name: string) {
-  if (url) window.dispatchEvent(new CustomEvent("open-picture", { detail: { url, name } }));
+/** Any part of the window can show a picture full size this way. `personal` marks a picture
+ *  the hide switch covers (a person, something of mine), so it stays covered full size too. */
+export function openPicture(url: string, name: string, personal = false) {
+  if (url) window.dispatchEvent(new CustomEvent("open-picture", { detail: { url, name, personal } }));
 }
 
 export function PictureViewer({ onDone }: { onDone: (message: string) => void }) {
-  const [shown, setShown] = useState<{ url: string; name: string } | null>(null);
+  const [shown, setShown] = useState<{ url: string; name: string; personal?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -45,14 +46,14 @@ export function PictureViewer({ onDone }: { onDone: (message: string) => void })
   }
 
   return (
-    <div className="viewer" role="dialog" aria-modal="true" aria-label={shown.name} onClick={() => setShown(null)}>
+    <div className={shown.personal ? "viewer viewer-personal" : "viewer"} role="dialog" aria-modal="true" aria-label={shown.personal ? "Picture" : shown.name} onClick={() => setShown(null)}>
       <SafeImg src={shown.url} alt={shown.name} onClick={(e) => e.stopPropagation()} />
       <div className="viewer-bar" onClick={(e) => e.stopPropagation()}>
         <span className="viewer-name">{shown.name}</span>
         <button className="go" disabled={busy} onClick={() => void save()}>
           {busy ? "Saving" : "Save picture"}
         </button>
-        <button onClick={() => void backend.openPicturesFolder().catch((err) => onDone(errorText(err)))}>Open saved pictures</button>
+        <button onClick={() => void backend.openPicturesFolder().catch((err) => onDone(`That did not work: ${errorText(err)}`))}>Open saved pictures</button>
         <button onClick={() => setShown(null)}>Close</button>
       </div>
     </div>

@@ -119,7 +119,7 @@ export function GroupNames({ onDone, onRenamed }: { onDone: (message: string) =>
   return (
     <div className="group-names">
       <p className="tile-note">
-        Names are kept by VRChat, so they show in the game and on the website too. Up to 24 characters. Type a new name and press Save.
+        VRChat keeps these names, so they show in the game and on the website too. Up to 24 characters. Type a new name and press Save.
       </p>
       <div className="group-names-cols">
         {kinds.map(([kind, title]) => (

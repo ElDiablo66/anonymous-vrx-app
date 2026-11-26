@@ -249,7 +249,7 @@ export function Favourites({
 
       {kind === "friend" &&
         (favorites.groups.length === 0 ? (
-          <p className="empty">No favourite friends yet. Add them in VRChat and they are pinned on the Around screen.</p>
+          <p className="empty">No favourite friends yet. Add one in VRChat or from their profile here, and they are pinned on Around.</p>
         ) : (
           favorites.groups.map((g) => {
             const members = Object.entries(favorites.friends)
@@ -286,8 +286,8 @@ export function Favourites({
               <>
                 <b>Clean up</b>
                 <p>
-                  Checks each favourite {kind} VRChat did not list with VRChat itself. Only ones it says were deleted,
-                  or made private by their author, are offered for removal.
+                  Asks VRChat about each favourite {kind} it did not list. Only ones it says were deleted, or made
+                  private by their author, are offered for removal.
                 </p>
               </>
             )}
@@ -313,7 +313,7 @@ export function Favourites({
           ) : dead.length === 0 ? null : confirm ? (
             <span className="cleanup-ask">
               Remove all {dead.length}?
-              <button className="plain go" disabled={busy} onClick={() => void remove(dead.map((e) => str(e.id)), `Removed ${dead.length} dead favourites.`)}>
+              <button className="plain go" disabled={busy} onClick={() => void remove(dead.map((e) => str(e.id)), `Removed ${dead.length} gone ${dead.length === 1 ? "favourite" : "favourites"}.`)}>
                 {busy ? "Removing" : "Yes, remove them"}
               </button>
               <button className="plain" disabled={busy} onClick={() => setConfirm(false)}>
@@ -356,7 +356,7 @@ export function Favourites({
                         onDone("Removed from this PC.");
                         setTick((n) => n + 1);
                       })
-                      .catch((err) => onDone(errorText(err)))
+                      .catch((err) => onDone(`That did not work: ${errorText(err)}`))
                   }
                 >
                   Remove

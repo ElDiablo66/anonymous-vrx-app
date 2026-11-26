@@ -132,7 +132,7 @@ export function TagChips({ id, tags }: { id: string; tags: Record<string, string
   return (
     <span className="my-marks">
       {mine.map((t) => (
-        <span key={t} className={`mark${t.toLowerCase() === HIDDEN ? " mark-hidden" : ""}`}>
+        <span key={t} className={`mark my-tag${t.toLowerCase() === HIDDEN ? " mark-hidden" : ""}`}>
           {t}
         </span>
       ))}
@@ -152,7 +152,7 @@ export function TagEditor({ id, tags, onDone }: { id: string; tags: Record<strin
       <span className="my-marks">
         {mine.length === 0 && <span className="tile-note">No tags yet.</span>}
         {mine.map((t) => (
-          <span key={t} className={`mark tag-on${t.toLowerCase() === HIDDEN ? " mark-hidden" : ""}`}>
+          <span key={t} className={`mark my-tag tag-on${t.toLowerCase() === HIDDEN ? " mark-hidden" : ""}`}>
             {t}
             <button aria-label={`Remove the tag ${t}`} title="Remove this tag" onClick={() => void saveTags(id, mine.filter((m) => m !== t), onDone)}>
               ×
@@ -229,16 +229,16 @@ export function TagFilter({ ids, tags, value, set }: { ids: string[]; tags: Reco
   }
   if (counts.size === 0 && hidden === 0) return null;
   const names = [...counts.keys()].sort((a, b) => a.localeCompare(b));
-  const pill = (id: string, label: string, n?: number) => (
+  const pill = (id: string, label: string, n?: number, mine = false) => (
     <button key={id} className={value === id ? "on" : ""} aria-pressed={value === id} onClick={() => set(id)}>
-      {label}
+      {mine ? <span className="my-tag">{label}</span> : label}
       {n !== undefined && <span className="chip-count">{n}</span>}
     </button>
   );
   return (
     <div className="filters filters-flat" role="group" aria-label="My tags">
       {pill(ALL_TAGS, "Everything")}
-      {names.map((t) => pill(t, t, counts.get(t)))}
+      {names.map((t) => pill(t, t, counts.get(t), true))}
       {untagged > 0 && pill(UNTAGGED, "No tag", untagged)}
       {hidden > 0 && pill(HIDDEN, "Hidden", hidden)}
     </div>

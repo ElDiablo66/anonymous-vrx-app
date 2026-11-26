@@ -69,8 +69,7 @@ export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
         {methods === null ? (
           <form onSubmit={signIn}>
             <p className="lede">
-              Sign in with your VRChat account. Your password goes straight to VRChat and is not saved on this
-              computer.
+              Sign in with your VRChat account. Your password goes straight to VRChat and is not saved on this PC.
             </p>
             <label>
               Username or email

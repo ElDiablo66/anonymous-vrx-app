@@ -243,7 +243,7 @@ export function DetailPanel({
             style={image ? { backgroundImage: `url("${imageShown}")` } : undefined}
             disabled={!image}
             title="Show the picture full size"
-            onClick={() => openPicture(image, name)}
+            onClick={() => openPicture(image, name, mine)}
             aria-label="Show the picture full size"
           />
           {icon && (
@@ -380,7 +380,7 @@ export function DetailPanel({
               <div className="wayback">
                 <button
                   disabled={!data || busy}
-                  title="Keeps it in Favourites, On this PC. No limit, and nobody else sees it."
+                  title="Keeps it in Favourites, under On this PC. There is no limit, and nobody else sees it."
                   onClick={() =>
                     void act(
                       () =>
@@ -476,7 +476,7 @@ export function DetailPanel({
                     <h3>Mine</h3>
                     <p className="my-rating">
                       <Stars id={id} onDone={onDone} />
-                      <span className="tile-note">My own rating. It stays on this PC.</span>
+                      <span className="tile-note">My rating. It stays on this PC.</span>
                     </p>
                     <p className="tile-note">{beenWords(marks.visits[id])}</p>
                   </section>

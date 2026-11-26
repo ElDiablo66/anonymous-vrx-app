@@ -127,7 +127,7 @@ export function Activity({
       {rows.length === 0 ? (
         <p className="empty">
           {everything.length === 0
-            ? "Nothing yet. Changes show up here as friends come online, move between worlds or update their status, and they stay saved on this computer."
+            ? "Nothing yet. Changes show up here as friends come online, move between worlds or update their status, and they stay saved on this PC."
             : "Nothing of this kind yet."}
         </p>
       ) : (

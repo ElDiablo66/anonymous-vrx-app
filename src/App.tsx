@@ -146,7 +146,11 @@ export function App() {
   const [logTick, setLogTick] = useState(0);
   const [toast, setToast] = useState("");
   /** Open windows, newest last. Only the newest shows; Back goes to the one before it. */
-  const [windows, setWindows] = useState<Array<{ kind: ThingKind | "profile"; id: string }>>([]);
+  const [windows, setWindows] = useState<Array<{ kind: ThingKind | "profile"; id: string }>>(() => {
+    // The browser demo can start with someone's profile open: "?open=<user id>".
+    const asked = backend.demo ? new URLSearchParams(location.search).get("open") : null;
+    return asked ? [{ kind: "profile", id: asked }] : [];
+  });
   const top = windows[windows.length - 1];
 
   useEffect(() => {

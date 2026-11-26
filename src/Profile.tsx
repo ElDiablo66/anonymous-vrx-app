@@ -27,6 +27,7 @@ const tabNames: Array<[Tab, string]> = [
   ["json", "JSON"],
 ];
 
+const NL_CHAR = String.fromCharCode(10);
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 const list = (v: unknown): Json[] => (Array.isArray(v) ? (v.filter((x) => x && typeof x === "object") as Json[]) : []);
@@ -130,7 +131,7 @@ function Thumb({ url }: { url: string }) {
 
 function PicButton({ url, name }: { url: string; name: string }) {
   return url ? (
-    <button className="pic-button" onClick={() => openPicture(url, name)} title="Show full size" aria-label={`Show ${name} full size`}>
+    <button className="pic-button" onClick={() => openPicture(url, name, true)} title="Show full size" aria-label={`Show ${name} full size`}>
       <Thumb url={url} />
     </button>
   ) : (
@@ -167,6 +168,8 @@ export function ProfilePanel({
   onDone: (message: string) => void;
 }) {
   const [profile, setProfile] = useState<Profile | null>(null);
+  // A long bio is cut short until asked for, so it does not push everything else away.
+  const [bioOpen, setBioOpen] = useState(false);
   // Whether I blocked or muted this person. Asked from the list the app already holds.
   const [blockState, setBlockState] = useState<BlockState | null>(null);
   useEffect(() => {
@@ -292,6 +295,7 @@ export function ProfilePanel({
   const person = profile?.person;
   const raw = (profile?.raw ?? {}) as Json;
   const name = person?.displayName ?? friend?.displayName ?? "Profile";
+  const longBio = (person?.bio ?? "").length > 420 || (person?.bio ?? "").split(NL_CHAR).length > 9;
   const inRoom = friend?.state === "online" && friend.place.kind === "world";
   const standing = isMe
     ? "This is you"
@@ -440,8 +444,8 @@ export function ProfilePanel({
       <div className="profile person-window" role="dialog" aria-modal="true" aria-label={`${name}, profile`} onClick={(e) => e.stopPropagation()}>
         <aside className="profile-side">
           <div className="banner-pic" style={banner ? { backgroundImage: `url("${banner}")` } : undefined}>
-            {banner && <button className="pic-open" onClick={() => openPicture(banner, `${name} banner`)} title="Show the banner full size" aria-label="Show the banner full size" />}
-            <button className="icon-open" disabled={!icon} onClick={() => openPicture(icon, `${name} picture`)} title="Show the profile picture full size" aria-label="Show the profile picture full size">
+            {banner && <button className="pic-open" onClick={() => openPicture(banner, `${name} banner`, true)} title="Show the banner full size" aria-label="Show the banner full size" />}
+            <button className="icon-open" disabled={!icon} onClick={() => openPicture(icon, `${name} picture`, true)} title="Show the profile picture full size" aria-label="Show the profile picture full size">
               <Avatar name={name} image={icon} tone={friend ? statusTone(friend) : undefined} size={104} />
             </button>
           </div>
@@ -581,128 +585,110 @@ export function ProfilePanel({
 
             {tab === "info" && profile && person && (
               <>
-                <section>
-                  <h3>Where they are</h3>
-                  {friend && inRoom ? (
-                    <>
-                      <p className="profile-where">
-                        <b>{tidy(worlds.get(friend.place.worldId ?? "")?.name ?? "A world")}</b>
-                        <span className={`access access-${friend.place.access}`}>{accessName(friend.place)}</span>
-                        {friend.place.instance && <span>#{friend.place.instance}</span>}
-                      </p>
-                      <WayBack location={friend.location} onDone={onDone} />
-                    </>
-                  ) : (
-                    <Empty>
-                      {friend?.state === "online"
-                        ? friend.place.kind === "traveling"
-                          ? "On the way somewhere"
-                          : "In a private world"
-                        : friend?.state === "active"
-                          ? deviceLine(friend.platform)
-                          : isMe
-                            ? "See the Here screen for where you are."
-                            : "Offline, or not on your friend list"}
-                    </Empty>
-                  )}
-                  {!isMe && blockState?.block && (
-                    <div className="wayback blocked-line">
-                      <span className="tile-note">You blocked {name}. You and they do not see or hear each other in VRChat.</span>
-                      <BlockMute userId={userId} name={name} state={blockState} setState={setBlockState} only="unblock" onDone={onDone} />
-                    </div>
-                  )}
-                  {!friend && !isMe && !blockState?.block && <AddFriend userId={userId} name={name} onDone={onDone} />}
-                  {friend && !isMe && (
-                    <div className="wayback">
-                      <button
-                        disabled={busy || friend.state !== "online"}
-                        title={friend.state === "online" ? "Asks them to invite you to where they are" : "They are not in VRChat right now"}
-                        onClick={() => void act(() => backend.requestInvite(userId), `Asked ${name} for an invite. Their answer arrives in your Inbox.`)}
-                      >
-                        Ask for an invite
-                      </button>
-                      <button
-                        disabled={busy || !inWorld}
-                        title={inWorld ? "Invites them to the world you are in" : "You are not in a world right now"}
-                        onClick={() => void act(() => backend.inviteHere(userId), `Invited ${name} to where you are.`)}
-                      >
-                        Invite to my world
-                      </button>
-                      <button disabled={busy} title="Sends them a boop" onClick={() => void act(() => backend.boop(userId), `Booped ${name}.`)}>
-                        Boop
-                      </button>
-                    </div>
-                  )}
-                </section>
-
-                <div className="profile-pair">
-                  <section>
-                    <h3>Bio</h3>
-                    {person.bio ? <p className="profile-bio">{person.bio}</p> : <Empty>No bio.</Empty>}
-                    {person.bioLinks.length > 0 && (
-                      <ul className="link-chips" aria-label="Links">
-                        {person.bioLinks.map((link) => (
-                          <li key={link}>
-                            <button onClick={() => web(link)} title={`${link}\nOpens in your browser`}>
-                              {siteName(link)}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </section>
-
-                  <div>
+                <div className="info-grid">
+                  <div className="info-main">
                     <section>
-                      <h3>Account</h3>
-                      <dl className="facts">
-                        {str(raw.last_activity) && (
-                          <div>
-                            <dt>Last activity</dt>
-                            <dd>{ago(str(raw.last_activity))}</dd>
-                          </div>
-                        )}
-                        {person.joined && (
-                          <div>
-                            <dt>On VRChat since</dt>
-                            <dd>{day(person.joined)}</dd>
-                          </div>
-                        )}
-                        {person.lastLogin && (
-                          <div>
-                            <dt>Last sign-in</dt>
-                            <dd>{day(person.lastLogin)}</dd>
-                          </div>
-                        )}
-                      </dl>
-                      <div className="wayback">
-                        <button onClick={() => copy(person.id, "User ID copied.")}>Copy user ID</button>
-                        <button onClick={() => copy(`https://vrchat.com/home/user/${person.id}`, "Profile link copied.")}>Copy link</button>
-                        {friend && !isMe && <Unfriend userId={userId} name={name} onDone={onDone} />}
-                        {!isMe && <BlockMute userId={userId} name={name} state={blockState} setState={setBlockState} onDone={onDone} />}
-                      </div>
-                    </section>
-                    {friend && !isMe && <FriendFavourite userId={userId} name={name} onDone={onDone} />}
-                    {friend && !isMe && (
-                      <section>
-                        <h3>Notifications</h3>
-                        <div className="choices choices-left" role="radiogroup" aria-label={`Notifications about ${name}`}>
-                          {(
-                            [
-                              [null, "Like their favourite group"],
-                              ["always", "Always tell me"],
-                              ["never", "Never tell me"],
-                            ] as const
-                          ).map(([rule, label]) => (
-                            <button key={label} role="radio" aria-checked={(alertRule ?? null) === rule} className={(alertRule ?? null) === rule ? "on" : ""} onClick={() => setAlertRule(rule, name)}>
-                              {label}
-                            </button>
-                          ))}
+                      <h3>Where they are</h3>
+                      {friend && inRoom ? (
+                        <>
+                          <p className="profile-where">
+                            <b>{tidy(worlds.get(friend.place.worldId ?? "")?.name ?? "A world")}</b>
+                            <span className={`access access-${friend.place.access}`}>{accessName(friend.place)}</span>
+                            {friend.place.instance && <span>#{friend.place.instance}</span>}
+                          </p>
+                          <WayBack location={friend.location} onDone={onDone} />
+                        </>
+                      ) : (
+                        <Empty>
+                          {friend?.state === "online"
+                            ? friend.place.kind === "traveling"
+                              ? "On the way somewhere"
+                              : "In a private world"
+                            : friend?.state === "active"
+                              ? deviceLine(friend.platform)
+                              : isMe
+                                ? "See the Here screen for where you are."
+                                : "Offline, or not on your friend list"}
+                        </Empty>
+                      )}
+                      {!isMe && blockState?.block && (
+                        <div className="wayback blocked-line">
+                          <span className="tile-note">You blocked {name}. You and they do not see or hear each other in VRChat.</span>
+                          <BlockMute userId={userId} name={name} state={blockState} setState={setBlockState} only="unblock" onDone={onDone} />
                         </div>
-                        <p className="tile-note">For the two favourite notifications in Settings: comes online, and leaves a private world.</p>
+                      )}
+                      {!friend && !isMe && !blockState?.block && <AddFriend userId={userId} name={name} onDone={onDone} />}
+                      {friend && !isMe && (
+                        <div className="wayback">
+                          <button
+                            disabled={busy || friend.state !== "online"}
+                            title={friend.state === "online" ? "Asks them to invite you to where they are" : "They are not in VRChat right now"}
+                            onClick={() => void act(() => backend.requestInvite(userId), `Asked ${name} for an invite. Their answer arrives in your Inbox.`)}
+                          >
+                            Ask for an invite
+                          </button>
+                          <button
+                            disabled={busy || !inWorld}
+                            title={inWorld ? "Invites them to the world you are in" : "You are not in a world right now"}
+                            onClick={() => void act(() => backend.inviteHere(userId), `Invited ${name} to where you are.`)}
+                          >
+                            Invite to my world
+                          </button>
+                          <button disabled={busy} title="Sends them a boop" onClick={() => void act(() => backend.boop(userId), `Booped ${name}.`)}>
+                            Boop
+                          </button>
+                        </div>
+                      )}
+                    </section>
+
+                    <section>
+                      <h3>Bio</h3>
+                      {person.bio ? (
+                        <>
+                          <p className={`profile-bio${longBio && !bioOpen ? " bio-clamp" : ""}`}>{person.bio}</p>
+                          {longBio && (
+                            <button className="clamp-toggle" aria-expanded={bioOpen} onClick={() => setBioOpen(!bioOpen)}>
+                              {bioOpen ? "Show less" : "Show all of it"}
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        <Empty>No bio.</Empty>
+                      )}
+                      {person.bioLinks.length > 0 && (
+                        <ul className="link-chips" aria-label="Links">
+                          {person.bioLinks.map((link) => (
+                            <li key={link}>
+                              <button onClick={() => web(link)} title={`${link}\nOpens in your browser`}>
+                                {siteName(link)}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+
+                    {!isMe && (
+                      <section>
+                        <h3>My note</h3>
+                        <textarea
+                          value={note}
+                          onChange={(e) => setNote(e.target.value)}
+                          placeholder="How you met, what they like, anything worth remembering. Only you see this; it stays on this PC."
+                          rows={3}
+                          maxLength={2000}
+                        />
+                        <div className="wayback">
+                          <button className="go" disabled={note === saved} onClick={() => void saveNote()}>
+                            Save note
+                          </button>
+                        </div>
+                        {person.vrchatNote && <p className="profile-fine">Note kept on VRChat's side: {person.vrchatNote}</p>}
                       </section>
                     )}
+                  </div>
 
+                  <aside className="info-rail">
                     {!isMe && (
                       <section>
                         <h3>You and <span className="hide-me">{name}</span></h3>
@@ -728,6 +714,62 @@ export function ProfilePanel({
                       </section>
                     )}
 
+                    {friend && !isMe && <FriendFavourite userId={userId} name={name} onDone={onDone} />}
+
+                    {friend && !isMe && (
+                      <section>
+                        <h3>Notifications</h3>
+                        <div className="segments" role="radiogroup" aria-label={`Notifications about ${name}`}>
+                          {(
+                            [
+                              [null, "Like their group"],
+                              ["always", "Always"],
+                              ["never", "Never"],
+                            ] as const
+                          ).map(([rule, label]) => (
+                            <button key={label} role="radio" aria-checked={(alertRule ?? null) === rule} className={(alertRule ?? null) === rule ? "on" : ""} onClick={() => setAlertRule(rule, name)}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="profile-fine">When they come online or leave a private world.</p>
+                      </section>
+                    )}
+
+                    <section>
+                      <h3>Account</h3>
+                      <dl className="fact-rows">
+                        {str(raw.last_activity) && (
+                          <div>
+                            <dt>Last activity</dt>
+                            <dd>{ago(str(raw.last_activity))}</dd>
+                          </div>
+                        )}
+                        {person.joined && (
+                          <div>
+                            <dt>On VRChat since</dt>
+                            <dd>{day(person.joined)}</dd>
+                          </div>
+                        )}
+                        {person.lastLogin && (
+                          <div>
+                            <dt>Last sign-in</dt>
+                            <dd>{day(person.lastLogin)}</dd>
+                          </div>
+                        )}
+                      </dl>
+                      <div className="quiet-actions">
+                        <button onClick={() => copy(person.id, "User ID copied.")}>Copy user ID</button>
+                        <button onClick={() => copy(`https://vrchat.com/home/user/${person.id}`, "Profile link copied.")}>Copy link</button>
+                      </div>
+                      {!isMe && (
+                        <div className="quiet-actions quiet-actions-apart">
+                          {friend && <Unfriend userId={userId} name={name} onDone={onDone} />}
+                          <BlockMute userId={userId} name={name} state={blockState} setState={setBlockState} onDone={onDone} />
+                        </div>
+                      )}
+                    </section>
+
                     {isMe && (
                       <section>
                         <h3>My settings on VRChat</h3>
@@ -744,27 +786,8 @@ export function ProfilePanel({
                         <p className="profile-fine">Read only. Change these in VRChat.</p>
                       </section>
                     )}
-                  </div>
+                  </aside>
                 </div>
-
-                {!isMe && (
-                  <section>
-                    <h3>My note</h3>
-                    <textarea
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                      placeholder="How you met, what they like, anything worth remembering. Only you see this; it stays on this PC."
-                      rows={3}
-                      maxLength={2000}
-                    />
-                    <div className="wayback">
-                      <button className="go" disabled={note === saved} onClick={() => void saveNote()}>
-                        Save note
-                      </button>
-                    </div>
-                    {person.vrchatNote && <p className="profile-fine">Note kept on VRChat's side: {person.vrchatNote}</p>}
-                  </section>
-                )}
               </>
             )}
 

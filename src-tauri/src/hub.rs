@@ -437,11 +437,11 @@ impl Hub {
 
     /// Copies the history and the given window settings into a new folder under `root`.
     pub fn backup(&self, root: &std::path::Path, settings_json: &str, label: &str) -> AppResult<BackupInfo> {
-        let inner = self.inner.lock().unwrap();
-        match &inner.store {
-            Some(store) => backup::create(root, store, settings_json, label),
-            None => Err(AppError::NotSignedIn),
-        }
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        // The copy is made through a second, read-only door to the same file, so the rest of
+        // the app keeps working while a large history is copied.
+        let copy = Store::open_existing(&self.history_path(&me.id))?;
+        backup::create(root, &copy, settings_json, label)
     }
 
     /// Makes an automatic backup when the last one is older than a day, then keeps only the
@@ -1249,17 +1249,37 @@ impl Hub {
     }
 
     /// Reads new game-log lines every couple of seconds. Local files only.
+    /// Brings the history up to date with the game log. The files are read with the history
+    /// free, and it is only held for the moment each batch of lines is written, so a big
+    /// backlog does not freeze the window.
+    fn read_log(&self, dir: &std::path::Path) -> bool {
+        let plan = {
+            let inner = self.inner.lock().unwrap();
+            match &inner.store {
+                Some(store) => gamelog::plan(dir, store).ok().flatten(),
+                None => None,
+            }
+        };
+        let mut changed = false;
+        for mut pending in plan.unwrap_or_default() {
+            while let Ok(Some(chunk)) = gamelog::read_next(&mut pending) {
+                let inner = self.inner.lock().unwrap();
+                let Some(store) = &inner.store else { return changed };
+                match store.record_log(&chunk.events, chunk.fresh_file, &pending.key, chunk.offset) {
+                    Ok(true) => changed = true,
+                    Ok(false) => {}
+                    Err(_) => break,
+                }
+            }
+        }
+        changed
+    }
+
     async fn log_worker(self: Arc<Self>, dir: PathBuf) {
         // The stay I was in when the last pass ended; a different one means I moved.
         let mut stay: Option<Option<i64>> = None;
         loop {
-            let changed = {
-                let inner = self.inner.lock().unwrap();
-                match &inner.store {
-                    Some(store) => gamelog::catch_up(&dir, store).unwrap_or(false),
-                    None => false,
-                }
-            };
+            let changed = self.read_log(&dir);
             if let Ok(here) = self.here() {
                 let now = here.as_ref().map(|(visit, _)| visit.id);
                 if let (Some(before), Some((visit, _))) = (stay, here.as_ref()) {

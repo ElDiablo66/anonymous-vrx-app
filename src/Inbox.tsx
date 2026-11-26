@@ -204,7 +204,7 @@ export function Inbox({
       <div className="table-wrap">
         {tabs}
         <p className="empty">
-          Nothing waiting. Friend requests, invites, invite requests and group notifications land here the moment
+          Nothing waiting. Friend requests, invites, invite requests and group notifications arrive here as soon as
           VRChat sends them.
         </p>
       </div>

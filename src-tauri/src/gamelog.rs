@@ -132,55 +132,91 @@ fn read_range(path: &Path, from: u64, len: u64) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// Reads whatever is new in the log folder into the history database.
-/// Returns true when anything was recorded.
-pub fn catch_up(dir: &Path, store: &Store) -> AppResult<bool> {
+/// One log file and how far into it the history has already read.
+pub struct Pending {
+    pub key: String,
+    path: PathBuf,
+    offset: u64,
+}
+
+/// What the next stretch of a log file holds.
+pub struct Chunk {
+    pub events: Vec<(String, LogEvent)>,
+    /// The file was read from its first byte, so the game was started again.
+    pub fresh_file: bool,
+    /// Where the history stands once these events are recorded.
+    pub offset: u64,
+}
+
+/// Which files there are and where each one was left. The only step that needs the history,
+/// and it is quick. Nothing when the folder cannot be read right now.
+pub fn plan(dir: &Path, store: &Store) -> AppResult<Option<Vec<Pending>>> {
     let Some(files) = log_files(dir) else {
+        return Ok(None);
+    };
+    let mut out = Vec::new();
+    for (name, path) in &files {
+        let key = format!("log:{name}");
+        let offset: u64 = store.setting(&key)?.and_then(|v| v.parse().ok()).unwrap_or(0);
+        out.push(Pending { key, path: path.clone(), offset });
+    }
+    let keep: Vec<String> = out.iter().map(|p| p.key.clone()).collect();
+    store.forget_settings_with_prefix("log:", &keep)?;
+    Ok(Some(out))
+}
+
+/// Reads the next whole lines of one file, straight from disk. Nothing when there is
+/// nothing new. The history is not touched, so a long read holds nothing else up.
+pub fn read_next(pending: &mut Pending) -> AppResult<Option<Chunk>> {
+    loop {
+        let Ok(meta) = fs::metadata(&pending.path) else {
+            return Ok(None);
+        };
+        let size = meta.len();
+        if size < pending.offset {
+            pending.offset = 0;
+        }
+        if size == pending.offset {
+            return Ok(None);
+        }
+        let bytes = read_range(&pending.path, pending.offset, (size - pending.offset).min(CHUNK))
+            .map_err(|e| AppError::Storage(e.to_string()))?;
+        // Only whole lines count; a half-written last line waits for the next pass.
+        let Some(last_break) = bytes.iter().rposition(|b| *b == b'\n') else {
+            // A whole chunk with no line end is one endless line; step over it so the
+            // rest of the file is still read.
+            if bytes.len() as u64 >= CHUNK {
+                pending.offset += bytes.len() as u64;
+                continue;
+            }
+            return Ok(None);
+        };
+        let text = String::from_utf8_lossy(&bytes[..=last_break]);
+        let events: Vec<(String, LogEvent)> = text
+            .lines()
+            .filter_map(parse_line)
+            .map(|(at, event)| (to_utc(at), event))
+            .collect();
+        let fresh_file = pending.offset == 0;
+        pending.offset += last_break as u64 + 1;
+        return Ok(Some(Chunk { events, fresh_file, offset: pending.offset }));
+    }
+}
+
+/// Reads whatever is new in the log folder into the history database, in one go and with
+/// the history in hand the whole time. Returns true when anything was recorded.
+pub fn catch_up(dir: &Path, store: &Store) -> AppResult<bool> {
+    let Some(mut files) = plan(dir, store)? else {
         return Ok(false);
     };
     let mut changed = false;
-    for (name, path) in &files {
-        let key = format!("log:{name}");
-        let mut offset: u64 = store
-            .setting(&key)?
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
-        loop {
-            let Ok(meta) = fs::metadata(path) else { break };
-            let size = meta.len();
-            if size < offset {
-                offset = 0;
-            }
-            if size == offset {
-                break;
-            }
-            let bytes = read_range(path, offset, (size - offset).min(CHUNK))
-                .map_err(|e| AppError::Storage(e.to_string()))?;
-            // Only whole lines count; a half-written last line waits for the next pass.
-            let Some(last_break) = bytes.iter().rposition(|b| *b == b'\n') else {
-                // A whole chunk with no line end is one endless line; step over it so the
-                // rest of the file is still read.
-                if bytes.len() as u64 >= CHUNK {
-                    offset += bytes.len() as u64;
-                    continue;
-                }
-                break;
-            };
-            let text = String::from_utf8_lossy(&bytes[..=last_break]);
-            let events: Vec<(String, LogEvent)> = text
-                .lines()
-                .filter_map(parse_line)
-                .map(|(at, event)| (to_utc(at), event))
-                .collect();
-            let fresh_file = offset == 0;
-            offset += last_break as u64 + 1;
-            if store.record_log(&events, fresh_file, &key, offset)? {
+    for pending in &mut files {
+        while let Some(chunk) = read_next(pending)? {
+            if store.record_log(&chunk.events, chunk.fresh_file, &pending.key, chunk.offset)? {
                 changed = true;
             }
         }
     }
-    let keep: Vec<String> = files.iter().map(|(n, _)| format!("log:{n}")).collect();
-    store.forget_settings_with_prefix("log:", &keep)?;
     Ok(changed)
 }
 

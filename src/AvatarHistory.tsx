@@ -121,7 +121,7 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
               )}
               <button
                 disabled={busy === a.avatarId}
-                title="Keeps it in Favourites, On this PC. No limit."
+                title="Keeps it in Favourites, under On this PC. There is no limit, and nobody else sees it."
                 onClick={() =>
                   void act(
                     a.avatarId,
@@ -130,7 +130,7 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
                   )
                 }
               >
-                Keep
+                Keep on this PC
               </button>
             </span>
           </li>

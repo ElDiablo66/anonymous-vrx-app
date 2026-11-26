@@ -40,7 +40,7 @@ export function AddFriend({ userId, name, onDone }: { userId: string; name: stri
   return (
     <div className="wayback">
       {status.incoming ? (
-        <button className="go" disabled={busy} title="They already asked you; sending yours accepts it" onClick={() => void act("add", `You and ${name} are now friends.`)}>
+        <button className="go" disabled={busy} title="They already sent you a request, so adding them accepts it" onClick={() => void act("add", `You and ${name} are now friends.`)}>
           Accept friend request
         </button>
       ) : status.outgoing ? (
