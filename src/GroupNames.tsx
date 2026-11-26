@@ -35,7 +35,7 @@ function plain(key: string): string {
 }
 
 /** Every favourite group of mine in one place, to give each its own name. */
-export function GroupNames({ onDone }: { onDone: (message: string) => void }) {
+export function GroupNames({ onDone, onRenamed }: { onDone: (message: string) => void; onRenamed?: () => void }) {
   const [rows, setRows] = useState<Record<Kind, Row[]> | null>(lastRows);
   const [typed, setTyped] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
@@ -88,6 +88,7 @@ export function GroupNames({ onDone }: { onDone: (message: string) => void }) {
     try {
       await backend.renameFavoriteGroup(kind, row.key, name);
       onDone(`Group renamed to ${name}.`);
+      onRenamed?.();
       // The new name is shown at once; nothing has to be asked again.
       setRows((old) => {
         const next = old ? { ...old, [kind]: old[kind].map((r) => (r.key === row.key ? { ...r, saved: name } : r)) } : old;

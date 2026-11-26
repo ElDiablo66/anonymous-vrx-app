@@ -28,7 +28,8 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
         .catch(() => alive && setList([]));
     load();
     let stop: (() => void) | undefined;
-    void backend.on("avatars:changed", load).then((off) => (stop = off));
+    // The listener may only be ready after this tab is closed; then it is taken off at once.
+    void backend.on("avatars:changed", load).then((off) => (alive ? (stop = off) : off()));
     return () => {
       alive = false;
       stop?.();

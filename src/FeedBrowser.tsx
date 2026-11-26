@@ -41,9 +41,14 @@ export function FeedBrowser({ friends, worlds }: { friends: Map<string, Friend>;
   // New entries slide in at the top while nothing narrows the list.
   useEffect(() => {
     if (!plain) return;
+    let alive = true;
     let stop: (() => void) | undefined;
-    void backend.on("feed:new", (item) => setItems((old) => (old ? [item, ...old] : old))).then((off) => (stop = off));
-    return () => stop?.();
+    // The listener may only be ready after this effect ended; then it is taken off at once.
+    void backend.on("feed:new", (item) => alive && setItems((old) => (old ? [item, ...old] : old))).then((off) => (alive ? (stop = off) : off()));
+    return () => {
+      alive = false;
+      stop?.();
+    };
   }, [plain]);
 
   async function loadOlder() {

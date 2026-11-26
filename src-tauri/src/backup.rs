@@ -44,6 +44,16 @@ pub fn create(root: &Path, store: &Store, settings_json: &str, label: &str) -> A
         n += 1;
     }
     fs::create_dir_all(&folder).map_err(io)?;
+    // A backup that could not be finished is taken away again, so a full disk does not
+    // collect half-written copies.
+    let written = write_into(&folder, store, settings_json);
+    if written.is_err() {
+        let _ = fs::remove_dir_all(&folder);
+    }
+    written
+}
+
+fn write_into(folder: &Path, store: &Store, settings_json: &str) -> AppResult<BackupInfo> {
     store.copy_to(&folder.join(HISTORY_FILE))?;
     fs::write(folder.join(SETTINGS_FILE), settings_json).map_err(io)?;
     let about = "Anonymous VRX backup.\r\n\r\n\
@@ -52,7 +62,7 @@ settings.json: size, rows, notification switches, what the close button does.\r\
 The VRChat sign-in is not in here. After a restore on another PC, sign in again.\r\n\
 To restore: Settings, Your data, pick this backup, Restore.\r\n";
     fs::write(folder.join(ABOUT_FILE), about).map_err(io)?;
-    info(&folder).ok_or_else(|| AppError::Storage("the backup was not written".into()))
+    info(folder).ok_or_else(|| AppError::Storage("the backup was not written".into()))
 }
 
 /// Backups found under `root`, newest first.
@@ -94,7 +104,8 @@ fn automatic(root: &Path) -> Vec<(std::time::SystemTime, PathBuf)> {
 /// True when there is no automatic backup yet, or the newest is older than `every`.
 pub fn auto_due(root: &Path, every: std::time::Duration) -> bool {
     match automatic(root).first() {
-        Some((made, _)) => made.elapsed().map(|age| age >= every).unwrap_or(true),
+        // A backup dated in the future means the PC's clock was set back; that is not "due".
+        Some((made, _)) => made.elapsed().map(|age| age >= every).unwrap_or(false),
         None => true,
     }
 }

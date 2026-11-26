@@ -55,6 +55,13 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
     }
   }
 
+  // Something of mine was changed or deleted from its own window: read the lists again.
+  useEffect(() => {
+    const again = () => setRows({});
+    window.addEventListener("uploads:changed", again);
+    return () => window.removeEventListener("uploads:changed", again);
+  }, []);
+
   useEffect(() => {
     if (kind in rows) return;
     let alive = true;
@@ -71,7 +78,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, meId]);
+  }, [kind, meId, rows]);
 
   const all = rows[kind];
   const tag = liveTag((rows.avatars ?? []).map((r) => str(r.id)), tags, pickedTag);
@@ -211,7 +218,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
               </div>
               {deleting === id && (
                 <span className="tile-note delete-warning">
-                  This removes {name} from VRChat for everyone and cannot be undone.
+                  This removes <span className="who">{name}</span> from VRChat for everyone and cannot be undone.
                 </span>
               )}
             </li>

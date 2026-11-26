@@ -87,21 +87,16 @@ pub fn parse_line(line: &str) -> Option<(NaiveDateTime, LogEvent)> {
     None
 }
 
-/// True when the newest log file ends with VRChat's goodbye line. Read straight from the
-/// file, so it holds even when the history could not be brought up to date.
-pub fn said_goodbye(dir: &Path) -> bool {
-    let Some((_, path)) = log_files(dir).into_iter().max_by(|a, b| a.0.cmp(&b.0)) else {
-        return false;
-    };
-    let Ok(size) = fs::metadata(&path).map(|m| m.len()) else {
-        return false;
-    };
+/// Whether the newest log file ends with VRChat's goodbye line. Read straight from the
+/// file, so it holds even when the history could not be brought up to date. Nothing when
+/// the log cannot be read, so the caller does not mistake that for a crash.
+pub fn said_goodbye(dir: &Path) -> Option<bool> {
+    let (_, path) = log_files(dir)?.into_iter().max_by(|a, b| a.0.cmp(&b.0))?;
+    let size = fs::metadata(&path).ok()?.len();
     let tail = 64 * 1024;
-    let Ok(bytes) = read_range(&path, size.saturating_sub(tail), tail.min(size)) else {
-        return false;
-    };
+    let bytes = read_range(&path, size.saturating_sub(tail), tail.min(size)).ok()?;
     let text = String::from_utf8_lossy(&bytes);
-    text.contains("VRCApplication: HandleApplicationQuit") || text.contains("VRCApplication: OnApplicationQuit")
+    Some(text.contains("VRCApplication: HandleApplicationQuit") || text.contains("VRCApplication: OnApplicationQuit"))
 }
 
 /// The log uses the PC's local time with no zone. History is stored in UTC.
@@ -113,10 +108,10 @@ pub fn to_utc(at: NaiveDateTime) -> String {
     utc.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-fn log_files(dir: &Path) -> Vec<(String, PathBuf)> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
+/// The log files in the folder, or nothing when the folder cannot be read right now.
+/// "Cannot be read" must not look like "no files": the caller would forget how far it got.
+fn log_files(dir: &Path) -> Option<Vec<(String, PathBuf)>> {
+    let entries = fs::read_dir(dir).ok()?;
     let mut files: Vec<(String, PathBuf)> = entries
         .filter_map(Result::ok)
         .filter_map(|e| {
@@ -126,7 +121,7 @@ fn log_files(dir: &Path) -> Vec<(String, PathBuf)> {
         .collect();
     // The file name carries the start time, so name order is time order.
     files.sort();
-    files
+    Some(files)
 }
 
 fn read_range(path: &Path, from: u64, len: u64) -> std::io::Result<Vec<u8>> {
@@ -140,7 +135,9 @@ fn read_range(path: &Path, from: u64, len: u64) -> std::io::Result<Vec<u8>> {
 /// Reads whatever is new in the log folder into the history database.
 /// Returns true when anything was recorded.
 pub fn catch_up(dir: &Path, store: &Store) -> AppResult<bool> {
-    let files = log_files(dir);
+    let Some(files) = log_files(dir) else {
+        return Ok(false);
+    };
     let mut changed = false;
     for (name, path) in &files {
         let key = format!("log:{name}");
@@ -161,6 +158,12 @@ pub fn catch_up(dir: &Path, store: &Store) -> AppResult<bool> {
                 .map_err(|e| AppError::Storage(e.to_string()))?;
             // Only whole lines count; a half-written last line waits for the next pass.
             let Some(last_break) = bytes.iter().rposition(|b| *b == b'\n') else {
+                // A whole chunk with no line end is one endless line; step over it so the
+                // rest of the file is still read.
+                if bytes.len() as u64 >= CHUNK {
+                    offset += bytes.len() as u64;
+                    continue;
+                }
                 break;
             };
             let text = String::from_utf8_lossy(&bytes[..=last_break]);
@@ -234,7 +237,7 @@ mod tests {
         let store = Store::in_memory().unwrap();
         catch_up(&dir, &store).unwrap();
         let visits = store.visits(500, None).unwrap();
-        println!("{} log files, {} visits", log_files(&dir).len(), visits.len());
+        println!("{} log files, {} visits", log_files(&dir).unwrap().len(), visits.len());
         for v in &visits {
             println!(
                 "{} to {} people={} named={} access={:?}",

@@ -197,7 +197,8 @@ impl ApiClient {
             let resp = req.send().await?;
             let status = resp.status();
             if status == StatusCode::TOO_MANY_REQUESTS {
-                if attempt == self.timing.attempts {
+                // A sign-in carries the password, so it is sent once and never repeated here.
+                if basic.is_some() || attempt == self.timing.attempts {
                     return Err(AppError::RateLimited);
                 }
                 let asked = resp

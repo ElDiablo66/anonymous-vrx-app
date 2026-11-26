@@ -924,6 +924,12 @@ impl Store {
     }
 
     /// The instance the game is in right now, if any.
+    /// Ends the stay that is still open, for when the game is gone without saying so.
+    pub fn close_open_visits(&self, at: &str) -> AppResult<()> {
+        close_visits(&self.db, Some(at))?;
+        Ok(())
+    }
+
     pub fn open_visit(&self) -> AppResult<Option<Visit>> {
         let sql = format!(
             "SELECT {VISIT_COLUMNS} FROM visits v WHERE v.left_at IS NULL ORDER BY v.id DESC LIMIT 1"

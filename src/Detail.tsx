@@ -111,13 +111,16 @@ export function DetailPanel({
       () => onDone("Could not copy."),
     );
 
-  async function act(job: () => Promise<unknown>, done: string) {
+  /** Runs one action and says how it went. Gives back whether it worked. */
+  async function act(job: () => Promise<unknown>, done: string): Promise<boolean> {
     setBusy(true);
     try {
       await job();
       onDone(done);
+      return true;
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -310,7 +313,11 @@ export function DetailPanel({
                     void act(
                       () => backend.uploadAction(kind as "avatar" | "world", id, isPublic ? "private" : "public"),
                       `${name} is now ${isPublic ? "private" : "public"}.`,
-                    ).then(() => setReload((n) => n + 1))
+                    ).then((ok) => {
+                      setReload((n) => n + 1);
+                      // My uploads may be open behind this window.
+                      if (ok) window.dispatchEvent(new Event("uploads:changed"));
+                    })
                   }
                 >
                   {isPublic ? "Make private" : "Make public"}
@@ -325,7 +332,14 @@ export function DetailPanel({
                 <button
                   className="danger"
                   disabled={busy}
-                  onClick={() => void act(() => backend.uploadAction(kind as "avatar" | "world", id, "delete"), `${name} is deleted.`).then(onClose)}
+                  onClick={() =>
+                    void act(() => backend.uploadAction(kind as "avatar" | "world", id, "delete"), `${name} is deleted.`).then((ok) => {
+                      // The window only closes when the delete went through.
+                      if (!ok) return setDeleting(false);
+                      window.dispatchEvent(new Event("uploads:changed"));
+                      onClose();
+                    })
+                  }
                 >
                   Yes, delete for good
                 </button>

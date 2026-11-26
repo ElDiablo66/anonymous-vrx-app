@@ -4627,3 +4627,26 @@ button.pinned-away:hover {
   background: transparent;
   color: var(--text);
 }
+
+/* Hide names and pictures: a person's activity, VRChat's note about them, their links, and
+   the members of a group */
+:root[data-hide="on"] body .person-window :is(.profile-feed, .profile-fine, .link-chips),
+:root[data-hide="on"] body .person-window :is(.profile-feed, .profile-fine, .link-chips) *,
+:root[data-hide="on"] body .rows-people .tile-name {
+  color: transparent !important;
+  text-shadow: none !important;
+  background-image: linear-gradient(color-mix(in srgb, var(--text) 16%, transparent), color-mix(in srgb, var(--text) 16%, transparent)) !important;
+  background-size: 100% 72% !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  border-radius: 4px;
+}
+
+:root[data-hide="on"] body .rows-people .thumb {
+  background-image: none !important;
+  background-color: color-mix(in srgb, var(--text) 16%, transparent) !important;
+}
+
+:root[data-hide="on"] body .person-window .link-chips * {
+  pointer-events: none;
+}

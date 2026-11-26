@@ -125,7 +125,8 @@ function BlockedRow({ m, friend, busy, onUndo }: { m: Moderation; friend?: Frien
           {brief?.adult && <span className="mark" title="Age verified as 18+">18+</span>}
         </p>
         <time dateTime={m.at || undefined}>
-          {brief ? `${brief.state === "active" ? deviceLine(brief.platform) : statusWords(brief)}${brief.statusDescription ? `, ${brief.statusDescription}` : ""}` : ""}
+          {brief ? (brief.state === "active" ? deviceLine(brief.platform) : statusWords(brief)) : ""}
+          {brief?.statusDescription ? <span className="who">, {brief.statusDescription}</span> : null}
           {brief && m.at ? " · " : ""}
           {m.at ? `${m.kind === "block" ? "Blocked" : "Muted"} since ${dayLabel(m.at)}` : ""}
         </time>

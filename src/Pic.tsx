@@ -10,7 +10,8 @@ export function signedPicture(url: string): Promise<string> {
   if (!waiting) {
     waiting = backend.loadPicture(url);
     fetched.set(url, waiting);
-    waiting.catch(() => {});
+    // A fetch that failed is forgotten, so the next look at the picture tries again.
+    waiting.catch(() => fetched.delete(url));
     if (fetched.size > 300) fetched.delete(fetched.keys().next().value as string);
   }
   return waiting;

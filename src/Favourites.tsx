@@ -22,6 +22,8 @@ interface Loaded {
 }
 
 const lastSeen = new Map<Kind, Loaded>();
+// Another account signed in: these were the favourites of the one before.
+window.addEventListener("account:changed", () => lastSeen.clear());
 
 /** A group heading that can be renamed in place. */
 function GroupTitle({
@@ -236,7 +238,7 @@ export function Favourites({
           Group names
         </button>
       </div>
-      {naming && <GroupNames onDone={onDone} />}
+      {naming && <GroupNames onDone={onDone} onRenamed={() => setTick((n) => n + 1)} />}
       <div className="fav-rest" hidden={naming}>
 
       {problem && (

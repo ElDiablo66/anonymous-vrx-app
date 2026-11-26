@@ -1176,6 +1176,14 @@ impl Hub {
     }
 
     /// The instance the game is in now, with everyone seen there.
+    /// The game closed without a goodbye: the stay it left open ends now, so nothing later
+    /// acts on an instance I am no longer in.
+    pub fn game_gone(&self) {
+        if self.with_store(|s| s.close_open_visits(&now_utc())).is_ok() {
+            self.send("here:changed", Value::Null);
+        }
+    }
+
     pub fn here(&self) -> AppResult<Option<(Visit, Vec<Sighting>)>> {
         let inner = self.inner.lock().unwrap();
         let Some(store) = &inner.store else {
@@ -1373,6 +1381,10 @@ impl Hub {
     }
 
     fn forget(&self) {
+        // What was kept for the account that is leaving must not greet the next one.
+        self.fav_cache.lock().unwrap().clear();
+        *self.blocked.lock().unwrap() = None;
+        self.briefs.lock().unwrap().clear();
         let mut inner = self.inner.lock().unwrap();
         inner.me = None;
         inner.store = None;

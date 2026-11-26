@@ -156,7 +156,7 @@ export function Around({
         const up = members
           .filter((f) => f.state !== "offline" && (!q || f.displayName.toLowerCase().includes(q)))
           .sort((a, b) => Number(a.state === "active") - Number(b.state === "active") || byName(a, b));
-        const down = members.filter((f) => f.state === "offline").sort(byName);
+        const down = members.filter((f) => f.state === "offline" && (!q || f.displayName.toLowerCase().includes(q))).sort(byName);
         return { ...group, up, down, away: down.length };
       })
       .filter((g) => g.up.length + g.away > 0);

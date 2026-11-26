@@ -424,6 +424,7 @@ export function App() {
     );
     void hold(
       backend.on("session:ended", () => {
+        void backend.setDiscord(null).catch(() => {});
         setNotice("");
         setMe(null);
       }),
@@ -445,6 +446,8 @@ export function App() {
   );
 
   async function signOut() {
+    // Discord stops showing where I am the moment I sign out.
+    void backend.setDiscord(null).catch(() => {});
     await backend.logout().catch(() => {});
     setFriends(new Map());
     setFeed([]);

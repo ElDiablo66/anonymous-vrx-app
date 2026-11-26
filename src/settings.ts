@@ -167,6 +167,14 @@ function load(): Settings {
     // Settings saved before the three-way choice existed keep what they meant.
     if (stored.discordPrivateMode === undefined && stored.discordPrivate) merged.discordPrivateMode = "show";
     if (merged.size !== null && !sizes.includes(merged.size)) merged.size = null;
+    // A value this version does not know (an older or newer file, a restored backup) falls
+    // back to the default, so the window never tries to draw a look that is not there.
+    if (!(merged.background in themeColours)) merged.background = defaults.background;
+    if (!["off", "ask", "auto"].includes(merged.rejoin)) merged.rejoin = defaults.rejoin;
+    if (!["auto", "desktop", "vr"].includes(merged.launchMode)) merged.launchMode = defaults.launchMode;
+    if (!merged.alertPeople || typeof merged.alertPeople !== "object") merged.alertPeople = {};
+    if (!Array.isArray(merged.alertGroupsOff)) merged.alertGroupsOff = [];
+    if (!merged.feedHidden || typeof merged.feedHidden !== "object") merged.feedHidden = {};
     return merged;
   } catch {
     return defaults;

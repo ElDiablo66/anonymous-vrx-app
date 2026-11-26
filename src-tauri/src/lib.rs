@@ -757,11 +757,18 @@ fn watch_game(app: AppHandle) {
             // A clean exit closes the stay in the history. One still open means no goodbye.
             let open = app.state::<Arc<Hub>>().here().ok().flatten().map(|(visit, _)| visit);
             // The log itself is asked too: a goodbye line there means a normal exit, even if
-            // the history missed it.
-            let goodbye = gamelog::default_dir().is_some_and(|dir| gamelog::said_goodbye(&dir));
-            if let Some(visit) = open.filter(|v| !goodbye && vrchat::model::launch_link(&v.location).is_some()) {
+            // the history missed it. A log that cannot be read is never called a crash, and a
+            // missing goodbye gets a second look in case the last lines were still being written.
+            let look = || gamelog::default_dir().and_then(|dir| gamelog::said_goodbye(&dir));
+            let mut goodbye = look();
+            if goodbye == Some(false) {
+                std::thread::sleep(QUIT_GRACE);
+                goodbye = look();
+            }
+            if let Some(visit) = open.filter(|v| goodbye == Some(false) && vrchat::model::launch_link(&v.location).is_some()) {
                 if !is_running("VRChat.exe") {
                     crashed(&app, &watch, &visit, &mut last_rejoin);
+                    app.state::<Arc<Hub>>().game_gone();
                 }
             }
         }
@@ -785,7 +792,10 @@ fn crashed(app: &AppHandle, watch: &GameWatch, visit: &Visit, last_rejoin: &mut 
     );
     use tauri_plugin_notification::NotificationExt;
     let body = if rejoined { format!("Starting it again in {world}.") } else { format!("Open Anonymous VRX to go back to {world}.") };
-    let _ = app.notification().builder().title("VRChat closed without warning").body(body).show();
+    // The note inside the window always shows; the Windows notification keeps to the quiet times.
+    if may_notify() {
+        let _ = app.notification().builder().title("VRChat closed without warning").body(body).show();
+    }
 }
 
 /// Opens VRChat's own join page for an instance in the default browser.
