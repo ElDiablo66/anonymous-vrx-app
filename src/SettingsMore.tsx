@@ -1,13 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { backend, errorText, type GameCache } from "./backend";
 import { clock, dateText } from "./bits";
-import { drawNotice } from "./vrpanels";
 import { headingFonts, rankDefaults, rankWords, textFonts, type RankKey, type Settings } from "./settings";
 
 type Change = (patch: Partial<Settings>) => void;
 type Props = { settings: Settings; change: Change };
 
-function Switch({ label, hint, on, set }: { label: string; hint?: string; on: boolean; set: (on: boolean) => void }) {
+export function Switch({ label, hint, on, set }: { label: string; hint?: string; on: boolean; set: (on: boolean) => void }) {
   return (
     <label className="setting">
       <span>
@@ -19,7 +18,7 @@ function Switch({ label, hint, on, set }: { label: string; hint?: string; on: bo
   );
 }
 
-function Row({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
+export function Row({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
   return (
     <div className="setting">
       <span>
@@ -31,7 +30,7 @@ function Row({ label, hint, children }: { label: string; hint?: ReactNode; child
   );
 }
 
-function Choices<T extends string>({ label, value, set, options }: { label: string; value: T; set: (value: T) => void; options: Array<[T, string]> }) {
+export function Choices<T extends string>({ label, value, set, options }: { label: string; value: T; set: (value: T) => void; options: Array<[T, string]> }) {
   return (
     <div className="choices" role="radiogroup" aria-label={label}>
       {options.map(([id, words]) => (
@@ -414,39 +413,13 @@ export function GameCacheSettings() {
 export function VrNoticeSettings({ settings, change }: Props) {
   const [results, setResults] = useState<Array<{ target: string; ok: boolean; problem: string }> | null>(null);
   const [testing, setTesting] = useState(false);
-  const [status, setStatus] = useState("");
-  const panels = settings.vrOwn || settings.vrWrist !== "off";
-  const others = settings.vrXs || settings.vrOvrHud || settings.vrOvrWrist;
-  const any = settings.vrOwn || others;
-
-  // Where the app's own panels stand, asked again every few seconds while this page is open.
-  useEffect(() => {
-    if (!panels) {
-      setStatus("");
-      return;
-    }
-    const ask = () => void backend.vrOverlayStatus().then(setStatus).catch(() => {});
-    ask();
-    const again = window.setInterval(ask, 3000);
-    return () => window.clearInterval(again);
-  }, [panels]);
+  const any = settings.vrXs || settings.vrOvrHud || settings.vrOvrWrist;
 
   async function test() {
     setTesting(true);
     setResults(null);
-    const title = "Anonymous VRX";
-    const body = "This is what a notice looks like in the headset.";
     try {
-      const got = others
-        ? await backend.testVrNotice({ own: false, xs: settings.vrXs, ovrHud: settings.vrOvrHud, ovrWrist: settings.vrOvrWrist, seconds: settings.vrSeconds, opacity: settings.vrOpacity })
-        : [];
-      if (settings.vrOwn) {
-        const state = await backend.vrOverlayStatus();
-        const connected = state.startsWith("Connected");
-        if (connected) await backend.vrOverlayNotice(await drawNotice(title, body), settings.vrSeconds, settings.vrOpacity);
-        got.unshift({ target: "This app's own panel", ok: connected, problem: connected ? "" : state });
-      }
-      setResults(got);
+      setResults(await backend.testVrNotice({ own: false, xs: settings.vrXs, ovrHud: settings.vrOvrHud, ovrWrist: settings.vrOvrWrist, seconds: settings.vrSeconds, opacity: settings.vrOpacity }));
     } catch (err) {
       setResults([{ target: "The test", ok: false, problem: errorText(err) }]);
     } finally {
@@ -456,38 +429,34 @@ export function VrNoticeSettings({ settings, change }: Props) {
 
   return (
     <section data-group="vr">
-      <h2>Notifications in the headset</h2>
+      <h2>
+        Notifications in the headset <span className="mark">Beta</span>
+      </h2>
       <p className="setting-hint">
-        While VRChat runs, everything this app would tell Windows also shows up in VR. Quiet hours still hold. Which notifications are sent is
-        set under Notifications.
+        While VRChat runs, everything this app would tell Windows is also handed to an overlay program on this PC, which shows it in VR. Quiet
+        hours still hold. Which notifications are sent is set under Notifications. This part is new and has seen little testing in a headset.
       </p>
-      <Switch
-        label="This app's own panel"
-        hint="A notice in front of you, drawn by this app in SteamVR. No other program needed."
-        on={settings.vrOwn}
-        set={(vrOwn) => change({ vrOwn })}
-      />
       <Switch label="XSOverlay" hint="Shown where XSOverlay shows its own notifications." on={settings.vrXs} set={(vrXs) => change({ vrXs })} />
       <Switch label="OVR Toolkit, in view" hint="A notice in front of you." on={settings.vrOvrHud} set={(vrOvrHud) => change({ vrOvrHud })} />
       <Switch label="OVR Toolkit, on the wrist" hint="One line on the wrist overlay." on={settings.vrOvrWrist} set={(vrOvrWrist) => change({ vrOvrWrist })} />
-      {(settings.vrXs || settings.vrOwn) && (
-        <Row label="Stays up for" hint="This app's panel and XSOverlay.">
-          <div className="choices" role="radiogroup" aria-label="Seconds a notice stays up">
-            {[2, 4, 6, 10].map((n) => (
-              <button key={n} role="radio" aria-checked={settings.vrSeconds === n} className={settings.vrSeconds === n ? "on" : ""} onClick={() => change({ vrSeconds: n })}>
-                {n} s
-              </button>
-            ))}
-          </div>
-        </Row>
-      )}
-      {(settings.vrXs || panels) && (
-        <Row label="How solid it is" hint="This app's panels and XSOverlay. Lower lets the world show through.">
-          <label className="dim">
-            <input type="range" min={0.2} max={1} step={0.05} value={settings.vrOpacity} aria-label="How solid a notice is" onChange={(e) => change({ vrOpacity: Number(e.target.value) })} />
-            {Math.round(settings.vrOpacity * 100)}%
-          </label>
-        </Row>
+      {settings.vrXs && (
+        <>
+          <Row label="Stays up for" hint="XSOverlay only.">
+            <div className="choices" role="radiogroup" aria-label="Seconds a notice stays up">
+              {[2, 4, 6, 10].map((n) => (
+                <button key={n} role="radio" aria-checked={settings.vrSeconds === n} className={settings.vrSeconds === n ? "on" : ""} onClick={() => change({ vrSeconds: n })}>
+                  {n} s
+                </button>
+              ))}
+            </div>
+          </Row>
+          <Row label="How solid it is" hint="XSOverlay only. Lower lets the world show through.">
+            <label className="dim">
+              <input type="range" min={0.2} max={1} step={0.05} value={settings.vrOpacity} aria-label="How solid a notice is" onChange={(e) => change({ vrOpacity: Number(e.target.value) })} />
+              {Math.round(settings.vrOpacity * 100)}%
+            </label>
+          </Row>
+        </>
       )}
       <div className="data-actions">
         <button className="plain" disabled={!any || testing} onClick={() => void test()}>
@@ -503,49 +472,7 @@ export function VrNoticeSettings({ settings, change }: Props) {
           ))}
         </ul>
       )}
-
-      <h2 className="settings-sub">Feed on the wrist</h2>
-      <p className="setting-hint">
-        The clock, how many friends are in VRChat and the six newest feed entries, lying on the back of your hand like a watch. Drawn by this app
-        in SteamVR, in the colours and fonts picked under Look and privacy.
-      </p>
-      <Row label="Worn on" hint="The controller has to be switched on.">
-        <Choices
-          label="Wrist feed"
-          value={settings.vrWrist}
-          set={(vrWrist) => change({ vrWrist })}
-          options={[
-            ["off", "Off"],
-            ["left", "Left hand"],
-            ["right", "Right hand"],
-          ]}
-        />
-      </Row>
-      {settings.vrWrist !== "off" && (
-        <Row label="Size" hint="How wide the panel is.">
-          <div className="choices" role="radiogroup" aria-label="Size of the wrist feed">
-            {(
-              [
-                [0.12, "Small"],
-                [0.16, "Medium"],
-                [0.22, "Large"],
-              ] as Array<[number, string]>
-            ).map(([w, words]) => (
-              <button key={w} role="radio" aria-checked={settings.vrWristSize === w} className={settings.vrWristSize === w ? "on" : ""} onClick={() => change({ vrWristSize: w })}>
-                {words}
-              </button>
-            ))}
-          </div>
-        </Row>
-      )}
-      {panels && status && (
-        <p className="setting-hint" role="status">
-          This app in SteamVR: {status}
-        </p>
-      )}
-      <p className="setting-hint">
-        The panels are flat pictures handed to SteamVR, which draws them. They use no browser inside VR, so there is no graphics setting for them.
-      </p>
+      <p className="setting-hint">One of these programs has to be running. They are made by other people and are not part of this app.</p>
     </section>
   );
 }

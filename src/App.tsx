@@ -1,4 +1,3 @@
-import { drawNotice, drawWrist } from "./vrpanels";
 import { discordPresence } from "./presence";
 import type { HereNow } from "./backend";
 import { PersonMenu } from "./PersonMenu";
@@ -121,7 +120,7 @@ export function App() {
   const [favorites, setFavorites] = useState<Favorites>({ groups: [], friends: {} });
   const [notices, setNotices] = useState<Notice[]>([]);
   const [instances, setInstances] = useState<Map<string, Instance>>(new Map());
-  const [minute, setMinute] = useState(0);
+  const [, setMinute] = useState(0);
   const [inWorld, setInWorld] = useState(false);
   const [myWorld, setMyWorld] = useState("");
   const [hereNow, setHereNow] = useState<HereNow | null>(null);
@@ -269,52 +268,6 @@ export function App() {
       .catch(() => {});
   }, [settings.vrOwn, settings.vrXs, settings.vrOvrHud, settings.vrOvrWrist, settings.vrSeconds, settings.vrOpacity]);
 
-  // The app's own panels in SteamVR. It only goes into SteamVR while one of them is wanted.
-  const panelsOn = settings.vrOwn || settings.vrWrist !== "off";
-  useEffect(() => {
-    void backend.setVrOverlay(panelsOn).catch(() => {});
-  }, [panelsOn]);
-  // A notice for the headset arrives as words; the picture is drawn here and handed back.
-  useEffect(() => {
-    if (!settings.vrOwn) return;
-    let stop: (() => void) | undefined;
-    let gone = false;
-    void backend
-      .on("vr:draw", (n) => {
-        const s = settingsNow.current;
-        void drawNotice(n.title, n.body)
-          .then((png) => backend.vrOverlayNotice(png, s.vrSeconds, s.vrOpacity))
-          .catch(() => {});
-      })
-      .then((off) => (gone ? off() : (stop = off)));
-    return () => {
-      gone = true;
-      stop?.();
-    };
-  }, [settings.vrOwn]);
-  // The wrist feed is drawn again when the feed moves, and once a minute for its clock.
-  const wristFeed = settings.vrWrist === "off" ? null : feed;
-  const wristMinute = settings.vrWrist === "off" ? 0 : minute;
-  const wristOnline = settings.vrWrist === "off" ? 0 : [...friends.values()].filter((f) => f.state === "online").length;
-  useEffect(() => {
-    if (settings.vrWrist === "off" || !me) {
-      void backend.vrOverlayWrist(null, "left", 0.16, 1).catch(() => {});
-      return;
-    }
-    const hand = settings.vrWrist;
-    // A moment's wait, so a burst of feed entries makes one picture.
-    let gone = false;
-    const later = window.setTimeout(() => {
-      void drawWrist(wristFeed ?? [], wristOnline)
-        // A picture finished after the feed was switched off or changed is dropped.
-        .then((png) => (gone ? undefined : backend.vrOverlayWrist(png, hand, settings.vrWristSize, settings.vrOpacity)))
-        .catch(() => {});
-    }, 1500);
-    return () => {
-      gone = true;
-      window.clearTimeout(later);
-    };
-  }, [me, settings.vrWrist, settings.vrWristSize, settings.vrOpacity, settings.timeFormat, settings.accent, settings.background, settings.headingFont, settings.textFont, wristFeed, wristOnline, wristMinute]);
 
   // The title names the tab that is open on screens that have tabs.
   const [tabTitle, setTabTitle] = useState("");

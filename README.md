@@ -152,8 +152,7 @@ VRChat forgets most of this. The app keeps it in a file on your PC.
 | After a crash | When VRChat closes without warning while you are in a world, the app offers to take you back to the same instance, or does it by itself if you choose that |
 | Moving over from VRCX | Copies the friend activity, friend log, world visits, notes and local favourites VRCX recorded for your account into this app. VRCX's file is only read, a backup is made first, and running it again adds only what is new |
 | Keeping up with VRCX | With the switch on, the app looks at start and once an hour whether VRCX has written anything new and brings over only that, with a backup at most once a day. |
-| Notifications in the headset | While VRChat runs, notifications also show in VR: on the app's own panel in SteamVR, or through XSOverlay or OVR Toolkit when one of them is running. Nothing leaves the PC. |
-| Feed on the wrist | The clock, how many friends are in VRChat and the six newest feed entries on the back of a hand in SteamVR. The app loads SteamVR's own `openvr_api.dll` only while SteamVR runs and a panel is switched on. |
+| Notifications in the headset (beta) | While VRChat runs, notifications also show in VR through XSOverlay or OVR Toolkit when one of them is running. Nothing leaves the PC. New, with little testing in a headset: tell me what you see if it misbehaves. The app has no SteamVR overlay of its own yet. |
 | Month view of events | Events of a month as a grid of days; pressing a day shows only that day. The first day of the week can be set. |
 | VRChat's cache | Shows how full VRChat's download cache is, clears old versions or all of it while the game is closed, and sets the size limit in VRChat's `config.json`. |
 | Fonts, dates and name colours | Pick the heading and text font, a 12 or 24 hour clock, dates in words or as year-month-day, and the colour of each trust rank or one colour per person. |

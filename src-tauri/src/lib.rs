@@ -4,7 +4,6 @@ pub mod error;
 pub mod gamecache;
 pub mod gamelog;
 pub mod hub;
-pub mod overlay;
 pub mod photos;
 pub mod secrets;
 pub mod store;
@@ -735,10 +734,7 @@ fn vr_notice(app: &AppHandle, title: String, body: String) {
     if !GAME_RUNNING.load(std::sync::atomic::Ordering::Relaxed) || in_quiet_time() {
         return;
     }
-    if rules.own {
-        // The window draws the panel and hands the picture back through `vr_overlay_notice`.
-        let _ = app.emit("vr:draw", serde_json::json!({ "title": title, "body": body }));
-    }
+    let _ = app;
     tauri::async_runtime::spawn(async move {
         let _ = vr::send(rules, title, body).await;
     });
@@ -749,67 +745,6 @@ fn notify_vr(app: AppHandle, title: String, body: String) {
     vr_notice(&app, title, body);
 }
 
-// ---------- the app's own panels in SteamVR ----------
-
-fn steamvr_running() -> bool {
-    is_running("vrserver.exe")
-}
-
-/// Keeps a picture the window drew as a file SteamVR can read, and clears the one before it.
-/// Each picture gets a new name, because SteamVR does not look again at a name it knows.
-fn keep_panel_picture(kind: &str, png_base64: &str) -> AppResult<std::path::PathBuf> {
-    use base64::Engine;
-    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(png_base64.trim_start_matches("data:image/png;base64,"))
-        .map_err(|_| AppError::CannotDo("The panel's picture arrived damaged.".into()))?;
-    if bytes.len() > 8 * 1024 * 1024 || !bytes.starts_with(b"\x89PNG") {
-        return Err(AppError::CannotDo("That is not a panel picture.".into()));
-    }
-    let dir = std::env::temp_dir().join("anonymous-vrx panels");
-    std::fs::create_dir_all(&dir).map_err(|e| AppError::Storage(e.to_string()))?;
-    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if let Ok(old) = std::fs::read_dir(&dir) {
-        for entry in old.filter_map(Result::ok) {
-            let name = entry.file_name().to_string_lossy().to_string();
-            // The one before stays a moment longer: SteamVR may still be reading it.
-            if name.starts_with(&format!("{kind}-")) && name != format!("{kind}-{}-{}.png", std::process::id(), n.wrapping_sub(1)) {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-    }
-    let file = dir.join(format!("{kind}-{}-{n}.png", std::process::id()));
-    std::fs::write(&file, bytes).map_err(|e| AppError::Storage(e.to_string()))?;
-    Ok(file)
-}
-
-/// Whether the app should be in SteamVR at all (a notice panel or a wrist feed is switched on).
-#[tauri::command]
-fn set_vr_overlay(panels: State<'_, overlay::Overlay>, on: bool) {
-    panels.wanted(on);
-}
-
-/// Shows a notice the window drew, in front of the eyes, for a few seconds.
-#[tauri::command]
-fn vr_overlay_notice(panels: State<'_, overlay::Overlay>, png: String, seconds: f32, alpha: f32) -> AppResult<()> {
-    panels.notice(keep_panel_picture("notice", &png)?, seconds, alpha);
-    Ok(())
-}
-
-/// Puts the feed the window drew on a wrist, or takes it off with no picture.
-#[tauri::command]
-fn vr_overlay_wrist(panels: State<'_, overlay::Overlay>, png: Option<String>, hand: overlay::Hand, width: f32, alpha: f32) -> AppResult<()> {
-    match png {
-        Some(png) => panels.wrist(Some((keep_panel_picture("wrist", &png)?, hand, width, alpha))),
-        None => panels.wrist(None),
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn vr_overlay_status(panels: State<'_, overlay::Overlay>) -> String {
-    panels.status()
-}
 
 /// Sends a sample notice now, game running or not, and says how each overlay program took it.
 #[tauri::command]
@@ -1240,7 +1175,6 @@ pub fn run() {
                 let _ = handle.emit(name, payload);
             });
             app.manage(Hub::new(api, data_dir, emit, true, gamelog::default_dir()));
-            app.manage(overlay::Overlay::start(steamvr_running));
             add_tray(app)?;
             // Started by Windows at sign-in, the app stays in the tray until it is asked for.
             if std::env::var_os(SHOW_AFTER_RESTART).is_some() || !std::env::args().any(|a| a == TRAY_FLAG) {
@@ -1345,10 +1279,6 @@ pub fn run() {
             set_vr_notices,
             notify_vr,
             test_vr_notice,
-            set_vr_overlay,
-            vr_overlay_notice,
-            vr_overlay_wrist,
-            vr_overlay_status,
             restore_backup,
             open_backups_folder,
             photos,

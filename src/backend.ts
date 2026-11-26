@@ -528,13 +528,9 @@ export interface Backend {
   /** Which overlay programs get my notifications in the headset. */
   setVrNotices(rules: VrRules): Promise<void>;
   /** Whether the app should be in SteamVR at all: a notice panel or a wrist feed is switched on. */
-  setVrOverlay(on: boolean): Promise<void>;
   /** Shows a picture (a PNG data address) in front of the eyes for some seconds. */
-  vrOverlayNotice(png: string, seconds: number, alpha: number): Promise<void>;
   /** Puts a picture on a wrist, or takes the feed off with `null`. `width` is in metres. */
-  vrOverlayWrist(png: string | null, hand: "left" | "right", width: number, alpha: number): Promise<void>;
   /** Where the app's own panels stand, in words. */
-  vrOverlayStatus(): Promise<string>;
   /** Sends a sample notice now and says how each program took it. */
   testVrNotice(rules: VrRules): Promise<Array<{ target: string; ok: boolean; problem: string }>>;
   /** `byItself` is the quiet run the app makes when VRCX's file has changed. */
@@ -703,10 +699,6 @@ const desktop: Backend = {
   setGameCacheLimit: (gb) => invoke("set_game_cache_limit", { gb }),
   setVrNotices: (rules) => invoke("set_vr_notices", { rules }),
   testVrNotice: (rules) => invoke("test_vr_notice", { rules }),
-  setVrOverlay: (on) => invoke("set_vr_overlay", { on }),
-  vrOverlayNotice: (png, seconds, alpha) => invoke("vr_overlay_notice", { png, seconds, alpha }),
-  vrOverlayWrist: (png, hand, width, alpha) => invoke("vr_overlay_wrist", { png, hand, width, alpha }),
-  vrOverlayStatus: () => invoke("vr_overlay_status"),
   openBackupsFolder: () => invoke("open_backups_folder"),
   here: () => invoke("get_here"),
   visits: (limit, before) => invoke("get_visits", { limit, before: before ?? null }),
