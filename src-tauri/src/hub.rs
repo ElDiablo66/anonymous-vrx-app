@@ -86,6 +86,8 @@ pub struct Hub {
     briefs: Mutex<HashMap<String, (Instant, Value)>>,
     /// Calendar pages already asked for, by list and month, with when.
     calendars: Mutex<HashMap<String, (Instant, Value)>>,
+    /// Group id to its name, for lists where VRChat sends only the id.
+    group_names: Mutex<HashMap<String, String>>,
     /// Put my own world, avatar and status changes into the feed too.
     own_feed: std::sync::atomic::AtomicBool,
 }
@@ -170,6 +172,7 @@ impl Hub {
             blocked: Mutex::new(None),
             briefs: Mutex::new(HashMap::new()),
             calendars: Mutex::new(HashMap::new()),
+            group_names: Mutex::new(HashMap::new()),
             own_feed: std::sync::atomic::AtomicBool::new(false),
         })
     }
@@ -950,6 +953,30 @@ impl Hub {
             }
         }
         let answer = self.api.calendar(list, &format!("{}T12:00:00.000Z", day.format("%Y-%m-%d"))).await?;
+        // The calendar names an event's group only by id. Each group is asked for its name
+        // once, a few per look at the calendar; the rest follow on the next look.
+        let mut unnamed: Vec<String> = Vec::new();
+        for e in answer["results"].as_array().map(|a| a.as_slice()).unwrap_or_default() {
+            let id = e["ownerId"].as_str().unwrap_or_default();
+            let named = e["ownerName"].as_str().is_some_and(|n| !n.is_empty());
+            if !named && id.starts_with("grp_") && !unnamed.iter().any(|u| u == id) && !self.group_names.lock().unwrap().contains_key(id) {
+                unnamed.push(id.to_string());
+            }
+        }
+        for id in unnamed.into_iter().take(8) {
+            match self.api.read(&format!("/groups/{}", utf8(&id))).await {
+                Ok(group) => {
+                    let name = group["name"].as_str().unwrap_or_default().to_string();
+                    self.group_names.lock().unwrap().insert(id, name);
+                }
+                Err(AppError::RateLimited) => break,
+                Err(_) => {
+                    // A group that cannot be read is not asked about again this session.
+                    self.group_names.lock().unwrap().insert(id, String::new());
+                }
+            }
+        }
+        let names = self.group_names.lock().unwrap().clone();
         let events: Vec<Value> = answer["results"]
             .as_array()
             .map(|a| a.as_slice())
@@ -960,7 +987,7 @@ impl Hub {
                 json!({
                     "id": e["id"],
                     "groupId": e["ownerId"],
-                    "groupName": e["ownerName"],
+                    "groupName": e["ownerName"].as_str().filter(|n| !n.is_empty()).map(str::to_string).or_else(|| names.get(e["ownerId"].as_str().unwrap_or_default()).cloned()).unwrap_or_default(),
                     "title": e["title"],
                     "description": e["description"],
                     "category": e["category"],

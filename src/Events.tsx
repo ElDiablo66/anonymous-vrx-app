@@ -101,10 +101,12 @@ export function Events({ onDone }: { onDone: (message: string) => void }) {
   const shown = useMemo(() => {
     const now = Date.now();
     return (events ?? [])
+      // VRChat also sends the days around a month; an event belongs to the month it starts in.
+      .filter((e) => monthOf(new Date(e.startsAt)) === month)
       .filter((e) => past || Date.parse(e.endsAt || e.startsAt) >= now)
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-  }, [events, past]);
-  const hidden = (events?.length ?? 0) - shown.length;
+  }, [events, past, month]);
+  const hidden = (events ?? []).filter((e) => monthOf(new Date(e.startsAt)) === month).length - shown.length;
 
   let lastDay = "";
   return (

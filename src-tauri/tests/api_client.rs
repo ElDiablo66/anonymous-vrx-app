@@ -680,13 +680,16 @@ async fn tags_are_cleaned_and_kept_per_item() {
 async fn calendar_is_read_once_and_events_can_be_followed() {
     let server = MockServer::start().await;
     Mock::given(method("GET")).and(path("/calendar/following")).and(query_param("n", "100")).respond_with(ResponseTemplate::new(200).set_body_json(json!({
-        "hasNext": false, "totalCount": 3, "results": [
+        "hasNext": false, "totalCount": 4, "results": [
             { "id": "cal_1", "ownerId": "grp_1", "ownerName": "Night Owls", "title": "Friday meet-up", "startsAt": "2026-11-27T20:00:00.000Z", "endsAt": "2026-11-27T22:00:00.000Z",
               "accessType": "public", "category": "hangout", "interestedUserCount": 12, "userInterest": { "isFollowing": true } },
             { "id": "cal_2", "ownerId": "grp_1", "title": "A draft", "isDraft": true },
+            { "id": "cal_4", "ownerId": "grp_2", "title": "Pier walk", "startsAt": "2026-11-28T20:00:00.000Z", "endsAt": "2026-11-28T21:00:00.000Z" },
             { "id": "cal_3", "ownerId": "grp_1", "title": "Called off", "deletedAt": "2026-11-20T00:00:00.000Z" }
         ]
     }))).expect(2).mount(&server).await;
+    // An event that comes without its group's name: the group is asked once, however often the list is read.
+    Mock::given(method("GET")).and(path("/groups/grp_2")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "grp_2", "name": "Pier Regulars" }))).expect(1).mount(&server).await;
     Mock::given(method("POST")).and(path("/calendar/grp_1/cal_1/follow")).and(body_json(json!({ "isFollowing": false }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
 
     let api = Arc::new(client(&server));
@@ -699,7 +702,8 @@ async fn calendar_is_read_once_and_events_can_be_followed() {
 
     let page = hub.calendar("following", "2026-11", false).await.unwrap();
     // Drafts and deleted events are left out.
-    assert_eq!(page["events"].as_array().unwrap().len(), 1);
+    assert_eq!(page["events"].as_array().unwrap().len(), 2);
+    assert_eq!(page["events"][1]["groupName"], "Pier Regulars");
     assert_eq!(page["events"][0]["groupName"], "Night Owls");
     assert_eq!(page["events"][0]["following"], true);
     // The second look comes from memory.
