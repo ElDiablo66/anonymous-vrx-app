@@ -1,7 +1,7 @@
 // Made-up friends and worlds for looking at the layout in a browser tab.
 // Nothing here talks to VRChat.
 
-import type { AvatarWorn, Backend, Moderation, FeedItem, Friend, Handled, LiveEvents, LocalFavorite, Notice, Person, Place, Sighting, Visit, World } from "./backend";
+import type { AvatarWorn, Backend, Moderation, FeedItem, Friend, Handled, LiveEvents, LocalFavorite, Notice, Person, Place, Sighting, VideoPlay, Visit, World } from "./backend";
 
 /** A flat picture in two colours, so the demo has something where a real picture goes. */
 const swatch = (a: string, b: string) =>
@@ -123,6 +123,31 @@ const demoVisits: Visit[] = [
   visit(2, spots[3], "Mirror Room 4", 60 * 26, 60 * 24, 14),
   visit(1, spots[2], "Rainy Attic Hangout", 60 * 28, 60 * 26 + 5, 4),
 ];
+
+/** Made-up videos for the demo; the YouTube ids are invented, so their pictures fall back to the plain tile. */
+const playedAt = (visit: Visit, minutes: number, url: string, by: string, title: string, channel: string): VideoPlay => ({
+  id: Math.round(minutes * 10),
+  at: new Date(Date.parse(visit.joinedAt) + minutes * 60_000).toISOString(),
+  url,
+  youtubeId: /v=([\w-]{11})/.exec(url)?.[1] ?? "",
+  requestedBy: by,
+  visitId: visit.id,
+  worldId: visit.worldId,
+  worldName: visit.worldName,
+  location: visit.location,
+  joinedAt: visit.joinedAt,
+  title,
+  channel,
+});
+
+const demoVideos: VideoPlay[] = [
+  playedAt(demoVisits[0], 21, "https://www.youtube.com/watch?v=DemoPier001", "Pip Halloway", "Harbour lights, slow mix for the pier", "Tidewater Tapes"),
+  playedAt(demoVisits[0], 0.2, "https://www.youtube.com/watch?v=DemoPier002", "", "", ""),
+  playedAt(demoVisits[1], 30, "https://example.test/arcade-intro.mp4", "Rook", "", ""),
+  playedAt(demoVisits[1], 12, "https://www.youtube.com/watch?v=DemoArcad03", "Tamsin", "Pixel Rush high score run, no hits", "Pocket Arcade"),
+  playedAt(demoVisits[1], 11, "https://www.youtube.com/watch?v=DemoArcad03", "Tamsin", "Pixel Rush high score run, no hits", "Pocket Arcade"),
+  playedAt(demoVisits[2], 0.3, "https://www.youtube.com/watch?v=DemoMirro04", "", "", ""),
+].sort((a, b) => b.at.localeCompare(a.at));
 
 const seen = (f: Friend | string, from: number, to: number | null): Sighting => ({
   userId: typeof f === "string" ? `usr_demo_stranger_${f}` : f.id,
@@ -546,7 +571,7 @@ export const demoBackend: Backend = {
     await wait(250);
     if (kind === "groupMembers") return people.slice(0, 9).map((p) => ({ userId: p.id, user: { displayName: p.displayName } }));
     if (kind === "groupPosts") return { posts: [{ id: "post_1", title: "Friday meet-up", text: "Same pier, same time.", createdAt: ago(60 * 30) }] };
-    if (kind === "instance") return id === spots[1] ? { n_users: 40, capacity: 40, full: true } : { n_users: 6, capacity: 32 };
+    if (kind === "instance") return id === spots[1] ? { id, n_users: 40, capacity: 40, full: true, queueEnabled: true, queueSize: 7 } : { id, n_users: 6, capacity: 32, queueEnabled: true, queueSize: 0 };
     if (kind === "groupInstances") return [{ instanceId: "40211", location: spots[0], memberCount: 3, world: { id: "wrld_demo_pier", name: "Quiet Pier at Dusk" } }];
     if (kind === "groupPhotos") return [];
     if (kind === "group") return { galleries: [{ id: "ggal_demo_1", name: "Meet-ups" }], id, name: "Night Owls", description: "A late-hours hangout group.", rules: "Be kind.", shortCode: "OWLS", discriminator: "0042", memberCount: 412, onlineMemberCount: 23, joinState: "open", membershipStatus: demoMember ? "member" : "inactive", ownerId: people[0].id, createdAt: ago(60 * 24 * 400) };
@@ -884,9 +909,9 @@ export const demoBackend: Backend = {
   },
   async instances() {
     return [
-      { location: spots[0], users: 14, capacity: 32, full: false },
-      { location: spots[1], users: 40, capacity: 40, full: true },
-      { location: spots[3], users: 9, capacity: 24, full: false },
+      { location: spots[0], users: 14, capacity: 32, full: false, queueEnabled: true, queueSize: 0 },
+      { location: spots[1], users: 40, capacity: 40, full: true, queueEnabled: true, queueSize: 7 },
+      { location: spots[3], users: 9, capacity: 24, full: false, queueEnabled: false, queueSize: 0 },
     ];
   },
   async createInstance(worldId, access, region) {
@@ -920,6 +945,32 @@ export const demoBackend: Backend = {
   async visitPeople(visitId) {
     return visitId === 4 ? demoPeople : demoPeople.slice(0, 3).map((p) => ({ ...p, leftAt: ago(41) }));
   },
+  async videos(limit) {
+    await wait(150);
+    return demoVideos.slice(0, limit);
+  },
+  async visitVideos(visitId) {
+    return demoVideos.filter((v) => v.visitId === visitId).reverse();
+  },
+  async videoTitles(ids) {
+    await wait(400);
+    const known: Record<string, [string, string]> = { DemoPier002: ["Golden hour waves, three hours", "Slow Shore"], DemoMirro04: ["Mirror room playlist, volume 1", "Night Owls"] };
+    return ids.filter((id) => known[id]).map((id) => ({ id, title: known[id][0], channel: known[id][1] }));
+  },
+  async exportHistory(parts) {
+    await wait(700);
+    const names: Record<string, [string, number]> = {
+      feed: ["activity feed.csv", 4812],
+      friends: ["friend log.csv", 231],
+      visits: ["world visits.csv", 617],
+      people: ["people in worlds.csv", 9304],
+      avatars: ["avatars worn.csv", 388],
+      videos: ["videos played.csv", 46],
+    };
+    const name = `history export ${new Date().toISOString().slice(0, 19).replace("T", " ").replace(/:/g, ".")}`;
+    return { name, path: `C:\\Users\\you\\Documents\\Anonymous VRX exports\\${name}`, files: parts.filter((p) => names[p]).map((p) => ({ name: names[p][0], rows: names[p][1] })) };
+  },
+  async openExportsFolder() {},
   async on(name, handler) {
     if (!handlers.has(name)) handlers.set(name, new Set());
     handlers.get(name)!.add(handler as Handler);

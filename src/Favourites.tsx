@@ -342,13 +342,13 @@ export function Favourites({
           <ul className="fav-list">
             {local.map((f) => (
               <li key={f.itemId} className="fav-item">
-                <button className="pic-button" disabled={!f.image} onClick={() => openPicture(f.image, tidy(f.name))} title="Show the picture full size" aria-label="Show the picture full size">
-                  <span className="thumb" style={f.image ? { backgroundImage: `url("${f.image}")` } : undefined} />
+                <button className="pic-button" disabled={!f.image} onClick={() => openPicture(f.image, tidy(f.name), kind === "avatar")} title="Show the picture full size" aria-label="Show the picture full size">
+                  <span className={kind === "avatar" ? "thumb pic-cover" : "thumb"} style={f.image ? { backgroundImage: `url("${f.image}")` } : undefined} />
                 </button>
                 <button className="row-link" onClick={() => openThing(kind, f.itemId)} title="Open">
                   <span>
-                    <span className="tile-name">{tidy(f.name) || f.itemId}</span>
-                    <span className="tile-note">{f.authorName}</span>
+                    <span className={kind === "avatar" ? "tile-name hide-name" : "tile-name"}>{tidy(f.name) || f.itemId}</span>
+                    <span className="tile-note hide-name">{f.authorName}</span>
                   </span>
                 </button>
                 <button
@@ -419,17 +419,22 @@ export function Favourites({
                   const pic = item ? str(item.thumbnailImageUrl) || str(item.imageUrl) : "";
                   return (
                     <li key={str(e.id)} className={gone ? "fav-item fav-gone" : "fav-item"}>
-                      <button className="pic-button" disabled={!pic} onClick={() => openPicture(pic, tidy(str(item?.name)))} title="Show the picture full size" aria-label="Show the picture full size">
-                        <span className="thumb" style={pic ? { backgroundImage: `url("${pic}")` } : undefined} />
+                      <button className="pic-button" disabled={!pic} onClick={() => openPicture(pic, tidy(str(item?.name)), kind === "avatar")} title="Show the picture full size" aria-label="Show the picture full size">
+                        <span className={kind === "avatar" ? "thumb pic-cover" : "thumb"} style={pic ? { backgroundImage: `url("${pic}")` } : undefined} />
                       </button>
                       <button className="row-link" onClick={() => openThing(kind, str(e.favoriteId))} title="Open">
                         <span>
-                          <span className="tile-name">{item ? tidy(str(item.name)) : gone ? "Gone" : "Not listed by VRChat"}</span>
+                          <span className={kind === "avatar" && item ? "tile-name hide-name" : "tile-name"}>{item ? tidy(str(item.name)) : gone ? "Gone" : "Not listed by VRChat"}</span>
                           {kind === "world" && <MarkBadges id={str(e.favoriteId)} marks={marks} />}
                           {kind === "avatar" && <TagChips id={str(e.favoriteId)} tags={tags} />}
-                          <span className="tile-note">
-                            {item ? `${str(item.authorName)}${gone ? ", now private" : ""}` : gone ? "Deleted or made private" : "Open it to see if it still works"}
-                          </span>
+                          {item ? (
+                            <span className="tile-note">
+                              <span className="hide-name">{str(item.authorName)}</span>
+                              {gone ? ", now private" : ""}
+                            </span>
+                          ) : (
+                            <span className="tile-note">{gone ? "Deleted or made private" : "Open it to see if it still works"}</span>
+                          )}
                         </span>
                       </button>
                       <button className="fav-remove" disabled={busy} title="Remove from favourites" aria-label="Remove from favourites" onClick={() => void remove([str(e.id)], "Removed from favourites.")}>

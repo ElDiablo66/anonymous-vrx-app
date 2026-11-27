@@ -2,6 +2,7 @@ import type { Favorites, Me } from "./backend";
 import { useEffect, useRef, useState } from "react";
 import { backend, errorText, type BackupInfo } from "./backend";
 import { StatusRuleSettings } from "./RuleSettings";
+import { ExportHistory } from "./Export";
 import { Avatar } from "./bits";
 import { DEFAULT_AVATAR_PROVIDER, EXTRA_AVATAR_PROVIDERS, shrinkPicture, sizes, themeColours, type Settings } from "./settings";
 import { DateSettings, FontSettings, UpdateSettings, GameCacheSettings, InstanceSettings, PeopleColourSettings, PerformanceSettings, ProfileLookSettings, VrNoticeSettings } from "./SettingsMore";
@@ -222,7 +223,7 @@ export function SettingsPage({
         <h2>Privacy</h2>
         <Switch
           label="Hide names and pictures"
-          hint="Covers people with plain bars and blocks: their names, pictures, statuses and bios, your own included, and the names and pictures in My uploads. Nothing is blurred, so nothing can be sharpened back. Worlds stay readable, and so do the frame, effect and name plate a person picked for their profile. What you type into the history search is covered too. Ctrl+Shift+H switches it from anywhere. Windows notifications still show names."
+          hint="Covers people with plain bars and blocks: their names, pictures, statuses and bios, your own included, and the names and pictures in My uploads. Nothing is blurred, so nothing can be sharpened back. Other people's avatars are covered too: their pictures, names and makers. Worlds stay readable, though not who made them, and so do the frame, effect and name plate a person picked for their profile. What you type into the history search is covered too. Ctrl+Shift+H switches it from anywhere. Windows notifications still show names."
           on={settings.hidePeople}
           set={(on) => change({ hidePeople: on })}
         />
@@ -877,6 +878,11 @@ export function SettingsPage({
             ))}
           </ul>
         )}
+      </section>
+
+      <section data-group="data">
+        <h2>Export as spreadsheets</h2>
+        <ExportHistory />
       </section>
 
       <section data-group="data">

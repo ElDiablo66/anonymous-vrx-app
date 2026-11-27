@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useEscape } from "./escape";
 import { backend, errorText, type PhotoInfo } from "./backend";
 import { clock, dayLabel, tidy } from "./bits";
 import { openThing } from "./Detail";
@@ -78,12 +79,7 @@ export function Photos({ onDone }: { onDone: (message: string) => void }) {
     </div>
   );
 
-  useEffect(() => {
-    if (!open) return;
-    const key = (e: KeyboardEvent) => e.key === "Escape" && setOpen(null);
-    document.addEventListener("keydown", key);
-    return () => document.removeEventListener("keydown", key);
-  }, [open]);
+  useEscape(() => setOpen(null), !!open);
 
   if (problem) {
     return (

@@ -36,6 +36,7 @@ import { Events, monthOf } from "./Events";
 import { useSettings } from "./settings";
 import { QueueBar } from "./Queue";
 import { EditProfile, SendPanel } from "./Send";
+import { useEscape } from "./escape";
 import { useStatusRules } from "./statusrules";
 import logo from "./assets/logo.svg";
 
@@ -43,7 +44,7 @@ type View = "around" | "here" | "history" | "everyone" | "favourites" | "events"
 
 /** What the page is called while a tab other than the first is open. */
 const tabTitles: Partial<Record<View, Record<string, string>>> = {
-  history: { Worlds: "World history", Photos: "Photos", Avatars: "Avatar history", "Friend activity": "Friend activity" },
+  history: { Worlds: "World history", Find: "Find in your history", Photos: "Photos", Videos: "Videos played", Wardrobe: "Wardrobe", "Friend activity": "Friend activity" },
   everyone: { "Friend list": "Everyone", "Friend log": "Friend log", "Blocked and muted": "Blocked and muted" },
   events: { "My groups": "Events of your groups", "All of VRChat": "Events across VRChat", Following: "Events you follow", Featured: "Featured events" },
   favourites: { Avatars: "Favourite avatars", Worlds: "Favourite worlds", Friends: "Favourite friends", "Group names": "Favourite group names" },
@@ -192,6 +193,7 @@ export function App() {
     if (me) void loadNoted();
   }, [me]);
   const [closing, setClosing] = useState(false);
+  useEscape(() => setClosing(false), closing);
   const [always, setAlways] = useState(false);
   const { settings, change, fitted, picture, setPicture } = useSettings();
 

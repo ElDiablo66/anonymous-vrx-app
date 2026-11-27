@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as 
 import { errorText, type Me } from "./backend";
 import { Avatar } from "./bits";
 import { openProfile } from "./Profile";
-import { useEscape } from "./Send";
+import { useEscape } from "./escape";
 import { saveStatusByHand, useRuleNow } from "./statusrules";
 
 /** VRChat's four statuses: its own word, the name shown, what it means, and its colour. */

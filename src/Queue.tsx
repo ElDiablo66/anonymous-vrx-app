@@ -46,7 +46,7 @@ export async function toggleWait(location: string, worldName: string, waiting: b
 }
 
 /** In the instance window: shown while the instance is full, or while I wait for it. */
-export function QueueButton({ location, worldName, full, onDone }: { location: string; worldName: string; full: boolean; onDone: (message: string) => void }) {
+export function QueueButton({ location, worldName, full, inLine = 0, onDone }: { location: string; worldName: string; full: boolean; inLine?: number; onDone: (message: string) => void }) {
   const waiting = useWaiting().some((w) => w.location === location);
   const [busy, setBusy] = useState(false);
   if (!full && !waiting) return null;
@@ -65,6 +65,11 @@ export function QueueButton({ location, worldName, full, onDone }: { location: s
       >
         {waiting ? "Stop waiting" : "Tell me when there is room"}
       </button>
+      {inLine > 0 && (
+        <p className="queue-note">
+          VRChat's own queue here has {inLine} {inLine === 1 ? "person" : "people"} in it. They get a free place first, so it may be gone before you get there.
+        </p>
+      )}
     </div>
   );
 }

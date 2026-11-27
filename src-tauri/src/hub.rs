@@ -1980,6 +1980,114 @@ impl Hub {
         }
     }
 
+    pub fn videos(&self, limit: u32) -> AppResult<Vec<crate::store::VideoPlay>> {
+        let inner = self.inner.lock().unwrap();
+        match &inner.store {
+            Some(store) => store.videos(limit),
+            None => Err(AppError::NotSignedIn),
+        }
+    }
+
+    pub fn visit_videos(&self, visit_id: i64) -> AppResult<Vec<crate::store::VideoPlay>> {
+        let inner = self.inner.lock().unwrap();
+        match &inner.store {
+            Some(store) => store.visit_videos(visit_id),
+            None => Err(AppError::NotSignedIn),
+        }
+    }
+
+    /// Titles for YouTube videos that played around me. YouTube is asked once per video, a few
+    /// at a time with a pause, and the answer is kept; VRChat is not asked anything.
+    pub async fn video_titles(&self, ids: Vec<String>) -> AppResult<Vec<crate::store::VideoTitle>> {
+        let mut ids: Vec<String> = ids
+            .into_iter()
+            .filter(|id| id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids.truncate(60);
+        let known = {
+            let inner = self.inner.lock().unwrap();
+            let Some(store) = &inner.store else { return Err(AppError::NotSignedIn) };
+            store.video_titles(&ids)?
+        };
+        let missing: Vec<String> = ids.iter().filter(|id| !known.iter().any(|k| &k.id == *id)).take(8).cloned().collect();
+        if missing.is_empty() {
+            return Ok(known);
+        }
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(8))
+            .user_agent("Anonymous VRX")
+            .build()
+            .map_err(|e| AppError::Storage(e.to_string()))?;
+        for (n, id) in missing.iter().enumerate() {
+            if n > 0 {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+            }
+            // The id holds only letters, digits, - and _, so the address needs no other escaping.
+            let ask = format!("https://www.youtube.com/oembed?format=json&url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D{id}");
+            let answer = client.get(ask).send().await;
+            let (title, channel) = match answer {
+                Ok(r) if r.status().is_success() => match r.json::<Value>().await {
+                    Ok(v) => (
+                        v.get("title").and_then(Value::as_str).unwrap_or_default().chars().take(300).collect::<String>(),
+                        v.get("author_name").and_then(Value::as_str).unwrap_or_default().chars().take(120).collect::<String>(),
+                    ),
+                    Err(_) => continue,
+                },
+                // A removed or private video has no title to give; that answer is kept too,
+                // so YouTube is not asked about it again.
+                Ok(r) if matches!(r.status().as_u16(), 400 | 401 | 403 | 404) => (String::new(), String::new()),
+                // No answer at all: asked again another time.
+                _ => continue,
+            };
+            let inner = self.inner.lock().unwrap();
+            if let Some(store) = &inner.store {
+                let _ = store.save_video_title(id, &title, &channel);
+            }
+        }
+        let inner = self.inner.lock().unwrap();
+        let Some(store) = &inner.store else { return Err(AppError::NotSignedIn) };
+        store.video_titles(&ids)
+    }
+
+    /// Once for each history: reads the videos out of the log that was read before videos were
+    /// kept. Returns true when any was found.
+    fn read_back_videos(&self, dir: &std::path::Path) -> bool {
+        const DONE: &str = "videos:read-back";
+        let todo = {
+            let inner = self.inner.lock().unwrap();
+            let Some(store) = &inner.store else { return false };
+            if !matches!(store.setting(DONE), Ok(None)) {
+                return false;
+            }
+            gamelog::read_so_far(dir, store).unwrap_or_default()
+        };
+        let mut found = false;
+        for (path, upto) in todo {
+            let Ok(events) = gamelog::videos_in(&path, upto) else { continue };
+            if events.is_empty() {
+                continue;
+            }
+            let inner = self.inner.lock().unwrap();
+            let Some(store) = &inner.store else { return found };
+            found |= store.record_old_videos(&events).unwrap_or(false);
+        }
+        let inner = self.inner.lock().unwrap();
+        if let Some(store) = &inner.store {
+            let _ = store.set_setting(DONE, "1");
+        }
+        found
+    }
+
+    /// Writes the history out as CSV files in a new folder under `root`. The files are written
+    /// through a second, read-only door to the history, so the app keeps working meanwhile.
+    pub fn export_csv(&self, root: &std::path::Path, parts: &[String]) -> AppResult<crate::export::ExportInfo> {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        let copy = Store::open_existing(&self.history_path(&me.id))?;
+        crate::export::create(root, &copy, parts)
+    }
+
     /// Reads new game-log lines every couple of seconds. Local files only.
     /// Brings the history up to date with the game log. The files are read with the history
     /// free, and it is only held for the moment each batch of lines is written, so a big
@@ -2011,7 +2119,8 @@ impl Hub {
         // The stay I was in when the last pass ended; a different one means I moved.
         let mut stay: Option<Option<i64>> = None;
         loop {
-            let changed = self.read_log(&dir);
+            let found = self.read_back_videos(&dir);
+            let changed = self.read_log(&dir) || found;
             if let Ok(here) = self.here() {
                 let now = here.as_ref().map(|(visit, _)| visit.id);
                 if let (Some(before), Some((visit, _))) = (stay, here.as_ref()) {

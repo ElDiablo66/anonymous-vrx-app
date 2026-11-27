@@ -128,7 +128,86 @@ CREATE INDEX IF NOT EXISTS sightings_user ON sightings(user_id, id);
 CREATE INDEX IF NOT EXISTS sightings_name ON sightings(display_name, user_id);
 CREATE INDEX IF NOT EXISTS visits_world ON visits(world_id);
 CREATE INDEX IF NOT EXISTS visits_name ON visits(world_name);
+CREATE TABLE IF NOT EXISTS videos (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    visit_id     INTEGER,
+    at           TEXT NOT NULL,
+    url          TEXT NOT NULL,
+    youtube_id   TEXT NOT NULL DEFAULT '',
+    requested_by TEXT NOT NULL DEFAULT '',
+    UNIQUE (at, url)
+);
+CREATE INDEX IF NOT EXISTS videos_visit ON videos(visit_id);
+CREATE TABLE IF NOT EXISTS video_titles (
+    video_id   TEXT PRIMARY KEY,
+    title      TEXT NOT NULL DEFAULT '',
+    channel    TEXT NOT NULL DEFAULT '',
+    fetched_at TEXT NOT NULL
+);
 ";
+
+/// A video a world played while I was there, taken from the game log.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoPlay {
+    pub id: i64,
+    pub at: String,
+    pub url: String,
+    pub youtube_id: String,
+    pub requested_by: String,
+    pub visit_id: Option<i64>,
+    pub world_id: String,
+    pub world_name: String,
+    pub location: String,
+    pub joined_at: Option<String>,
+    pub title: String,
+    pub channel: String,
+}
+
+/// The title YouTube gave a video. Empty when YouTube had none to give (a removed or private video).
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoTitle {
+    pub id: String,
+    pub title: String,
+    pub channel: String,
+}
+
+const VIDEO_SELECT: &str = "SELECT p.id, p.at, p.url, p.youtube_id, p.requested_by, p.visit_id,
+    COALESCE(v.world_id, ''), COALESCE(NULLIF(v.world_name, ''), w.name, ''), COALESCE(v.location, ''), v.joined_at,
+    COALESCE(t.title, ''), COALESCE(t.channel, '')
+    FROM videos p LEFT JOIN visits v ON v.id = p.visit_id LEFT JOIN worlds w ON w.world_id = v.world_id
+    LEFT JOIN video_titles t ON t.video_id = p.youtube_id AND p.youtube_id <> ''";
+
+fn video_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<VideoPlay> {
+    Ok(VideoPlay {
+        id: r.get(0)?,
+        at: r.get(1)?,
+        url: r.get(2)?,
+        youtube_id: r.get(3)?,
+        requested_by: r.get(4)?,
+        visit_id: r.get(5)?,
+        world_id: r.get(6)?,
+        world_name: r.get(7)?,
+        location: r.get(8)?,
+        joined_at: r.get(9)?,
+        title: r.get(10)?,
+        channel: r.get(11)?,
+    })
+}
+
+/// Where the game-log reader keeps the name of whoever put a video on, until its video line is read.
+const ASKED_BY: &str = "video:asked-by";
+
+const INSERT_VIDEO: &str = "INSERT OR IGNORE INTO videos (visit_id, at, url, youtube_id, requested_by) VALUES (?1, ?2, ?3, ?4, ?5)";
+
+/// Who asked for a video, when the line just before named the same link.
+fn asked_by(pending: &mut Option<(String, String)>, url: &str) -> String {
+    match pending.take() {
+        Some((asked, name)) if asked == url => name,
+        _ => String::new(),
+    }
+}
 
 /// One stay in an instance, taken from the game log.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -1310,10 +1389,29 @@ impl Store {
             close_visits(&tx, None)?;
         }
         let mut room_name = String::new();
+        // The line naming who put a video on comes just before VRChat's own video line, and a read
+        // can end between the two, so it is kept with the reading position until its video comes.
+        let mut pending_by: Option<(String, String)> = if fresh_file {
+            None
+        } else {
+            tx.query_row("SELECT value FROM settings WHERE key = ?1", params![ASKED_BY], |r| r.get::<_, String>(0))
+                .optional()?
+                .and_then(|v| v.split_once('\u{1f}').map(|(u, n)| (u.to_string(), n.to_string())))
+        };
         for (at, event) in events {
             match event {
+                LogEvent::VideoBy { url, name } => pending_by = Some((url.clone(), name.clone())),
+                LogEvent::Video { url } => {
+                    let by = asked_by(&mut pending_by, url);
+                    let stay: Option<i64> = tx
+                        .query_row("SELECT id FROM visits WHERE left_at IS NULL ORDER BY id DESC LIMIT 1", [], |r| r.get(0))
+                        .optional()?;
+                    let done = tx.execute(INSERT_VIDEO, params![stay, at, url, crate::gamelog::youtube_id(url).unwrap_or_default(), by])?;
+                    changed |= done > 0;
+                }
                 LogEvent::Room(name) => room_name = name.clone(),
                 LogEvent::Joining(location) => {
+                    pending_by = None;
                     close_visits(&tx, Some(at))?;
                     let world_id = parse_location(location).world_id.unwrap_or_default();
                     tx.execute(
@@ -1324,6 +1422,7 @@ impl Store {
                     changed = true;
                 }
                 LogEvent::LeftRoom | LogEvent::Quit => {
+                    pending_by = None;
                     close_visits(&tx, Some(at))?;
                     changed = true;
                 }
@@ -1348,6 +1447,13 @@ impl Store {
                 }
             }
         }
+        match &pending_by {
+            Some((url, name)) => tx.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![ASKED_BY, format!("{url}\u{1f}{name}")],
+            )?,
+            None => tx.execute("DELETE FROM settings WHERE key = ?1", params![ASKED_BY])?,
+        };
         tx.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -1421,6 +1527,100 @@ impl Store {
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Videos from the part of the game log that was read before videos were kept. Each one
+    /// goes with the stay that was open at its time. Returns true when any was new.
+    pub fn record_old_videos(&self, events: &[(String, crate::gamelog::LogEvent)]) -> AppResult<bool> {
+        use crate::gamelog::LogEvent;
+        let tx = self.db.unchecked_transaction()?;
+        let mut changed = false;
+        let mut pending_by: Option<(String, String)> = None;
+        for (at, event) in events {
+            match event {
+                LogEvent::VideoBy { url, name } => pending_by = Some((url.clone(), name.clone())),
+                LogEvent::Video { url } => {
+                    let by = asked_by(&mut pending_by, url);
+                    let stay = self.visit_at(at)?.map(|v| v.id);
+                    let done = tx.execute(INSERT_VIDEO, params![stay, at, url, crate::gamelog::youtube_id(url).unwrap_or_default(), by])?;
+                    changed |= done > 0;
+                }
+                _ => {}
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
+    /// The videos played around me, newest first.
+    pub fn videos(&self, limit: u32) -> AppResult<Vec<VideoPlay>> {
+        let sql = format!("{VIDEO_SELECT} ORDER BY p.at DESC, p.id DESC LIMIT ?1");
+        let mut stmt = self.db.prepare(&sql)?;
+        let rows = stmt.query_map(params![limit.clamp(1, 2000)], video_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The videos played during one stay, in the order they played.
+    pub fn visit_videos(&self, visit_id: i64) -> AppResult<Vec<VideoPlay>> {
+        let sql = format!("{VIDEO_SELECT} WHERE p.visit_id = ?1 ORDER BY p.at, p.id");
+        let mut stmt = self.db.prepare(&sql)?;
+        let rows = stmt.query_map(params![visit_id], video_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The titles already known for these YouTube ids. An id YouTube was never asked about is left
+    /// out, and so is one YouTube gave no title for over a week ago, so it is asked again.
+    pub fn video_titles(&self, ids: &[String]) -> AppResult<Vec<VideoTitle>> {
+        let week_ago = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let mut stmt = self.db.prepare(
+            "SELECT video_id, title, channel FROM video_titles
+             WHERE video_id = ?1 AND NOT (title = '' AND channel = '' AND fetched_at < ?2)",
+        )?;
+        let mut out = Vec::new();
+        for id in ids {
+            if let Some(t) = stmt
+                .query_row(params![id, week_ago], |r| Ok(VideoTitle { id: r.get(0)?, title: r.get(1)?, channel: r.get(2)? }))
+                .optional()?
+            {
+                out.push(t);
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn save_video_title(&self, id: &str, title: &str, channel: &str) -> AppResult<()> {
+        self.db.execute(
+            "INSERT INTO video_titles (video_id, title, channel, fetched_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(video_id) DO UPDATE SET title = excluded.title, channel = excluded.channel, fetched_at = excluded.fetched_at",
+            params![id, title, channel, now()],
+        )?;
+        Ok(())
+    }
+
+    /// Runs a query and hands each row over as text, one row at a time, for an export.
+    /// Returns how many rows there were.
+    pub fn each_row(&self, sql: &str, mut each: impl FnMut(&[Option<String>]) -> AppResult<()>) -> AppResult<u64> {
+        use rusqlite::types::ValueRef;
+        let mut stmt = self.db.prepare(sql)?;
+        let n = stmt.column_count();
+        let mut rows = stmt.query([])?;
+        let mut count = 0u64;
+        let mut cells: Vec<Option<String>> = Vec::with_capacity(n);
+        while let Some(row) = rows.next()? {
+            cells.clear();
+            for i in 0..n {
+                cells.push(match row.get_ref(i)? {
+                    ValueRef::Null => None,
+                    ValueRef::Integer(v) => Some(v.to_string()),
+                    ValueRef::Real(v) => Some(v.to_string()),
+                    ValueRef::Text(t) => Some(String::from_utf8_lossy(t).into_owned()),
+                    ValueRef::Blob(_) => Some(String::new()),
+                });
+            }
+            each(&cells)?;
+            count += 1;
+        }
+        Ok(count)
     }
 
     pub fn worlds(&self) -> AppResult<Vec<World>> {
@@ -1773,6 +1973,8 @@ impl Store {
                      FROM visits v JOIN visit_order o ON o.was = v.id;
                  UPDATE sightings SET visit_id = (SELECT now FROM visit_order WHERE was = sightings.visit_id)
                      WHERE visit_id IN (SELECT was FROM visit_order);
+                 UPDATE videos SET visit_id = (SELECT now FROM visit_order WHERE was = videos.visit_id)
+                     WHERE visit_id IN (SELECT was FROM visit_order);
                  DELETE FROM visits;
                  DELETE FROM sqlite_sequence WHERE name = 'visits';
                  INSERT INTO visits (id, location, world_id, world_name, joined_at, left_at)
@@ -2015,6 +2217,70 @@ mod tests {
         s.set_note("usr_1", "   ").unwrap();
         assert_eq!(s.note("usr_1").unwrap(), "");
         assert!(s.noted().unwrap().is_empty());
+    }
+
+    #[test]
+    fn vrcx_import_keeps_videos_with_their_stay() {
+        use crate::gamelog::LogEvent;
+        let dir = std::env::temp_dir().join(format!("anonymous-vrx-vrcx-videos-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let other = dir.join("VRCX.sqlite3");
+        {
+            let old = Connection::open(&other).unwrap();
+            old.execute_batch(
+                "CREATE TABLE gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO gamelog_location (created_at, location, world_id, world_name, time) VALUES ('2025-01-02T12:00:00.000Z', 'wrld_old:1', 'wrld_old', 'Old Pier', 3600000);",
+            )
+            .unwrap();
+        }
+        let s = Store::in_memory().unwrap();
+        let at = |t: &str| format!("2026-01-05T{t}Z");
+        let events = vec![
+            (at("20:00:00"), LogEvent::Room("Movie Night".into())),
+            (at("20:00:00"), LogEvent::Joining("wrld_new:1".into())),
+            (at("20:00:12"), LogEvent::Video { url: "https://youtu.be/AbCdEfGhIjK".into() }),
+            (at("21:00:00"), LogEvent::LeftRoom),
+        ];
+        s.record_log(&events, true, "log:test", 1).unwrap();
+        assert_eq!(s.import_vrcx(&other, "usr_me-0000", false, None).unwrap().visits, 1);
+        assert_eq!(s.videos(10).unwrap()[0].world_name, "Movie Night");
+        let stay = s.visits(10, None).unwrap().into_iter().find(|v| v.world_name == "Movie Night").unwrap();
+        assert_eq!(s.visit_videos(stay.id).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn who_put_a_video_on_survives_a_split_read() {
+        use crate::gamelog::LogEvent;
+        let s = Store::in_memory().unwrap();
+        let url = "https://youtu.be/AbCdEfGhIjK".to_string();
+        s.record_log(
+            &[
+                ("2026-01-05T20:00:00Z".into(), LogEvent::Joining("wrld_a:1".into())),
+                ("2026-01-05T20:01:00Z".into(), LogEvent::VideoBy { url: url.clone(), name: "Pip".into() }),
+            ],
+            true,
+            "log:test",
+            1,
+        )
+        .unwrap();
+        s.record_log(&[("2026-01-05T20:01:00Z".into(), LogEvent::Video { url })], false, "log:test", 2).unwrap();
+        assert_eq!(s.videos(10).unwrap()[0].requested_by, "Pip");
+        assert!(s.setting("video:asked-by").unwrap().is_none());
+    }
+
+    #[test]
+    fn empty_titles_are_asked_again_after_a_week() {
+        let s = Store::in_memory().unwrap();
+        s.save_video_title("AbCdEfGhIjK", "", "").unwrap();
+        s.save_video_title("ZyXwVuTsRqP", "A title", "A channel").unwrap();
+        let ids = vec!["AbCdEfGhIjK".to_string(), "ZyXwVuTsRqP".to_string()];
+        assert_eq!(s.video_titles(&ids).unwrap().len(), 2);
+        s.db.execute("UPDATE video_titles SET fetched_at = '2020-01-01T00:00:00.000Z'", []).unwrap();
+        let left = s.video_titles(&ids).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].title, "A title");
     }
 
     #[test]

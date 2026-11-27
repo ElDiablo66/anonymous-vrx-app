@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod discord;
 pub mod error;
+pub mod export;
 pub mod gamecache;
 pub mod gamelog;
 pub mod hub;
@@ -670,6 +671,64 @@ fn get_visits(hub: State<'_, Arc<Hub>>, limit: u32, before: Option<i64>) -> AppR
 #[tauri::command]
 fn get_visit_people(hub: State<'_, Arc<Hub>>, visit_id: i64) -> AppResult<Vec<Sighting>> {
     hub.visit_people(visit_id)
+}
+
+#[tauri::command]
+fn get_videos(hub: State<'_, Arc<Hub>>, limit: u32) -> AppResult<Vec<store::VideoPlay>> {
+    hub.videos(limit)
+}
+
+#[tauri::command]
+fn get_visit_videos(hub: State<'_, Arc<Hub>>, visit_id: i64) -> AppResult<Vec<store::VideoPlay>> {
+    hub.visit_videos(visit_id)
+}
+
+#[tauri::command]
+async fn get_video_titles(hub: State<'_, Arc<Hub>>, ids: Vec<String>) -> AppResult<Vec<store::VideoTitle>> {
+    hub.video_titles(ids).await
+}
+
+/// Exports go to their own folder in Documents, next to the backups.
+fn exports_root(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .document_dir()
+        .map(|d| d.join("Anonymous VRX exports"))
+        .map_err(|e| AppError::Storage(e.to_string()))
+}
+
+/// Writes the parts of the history asked for as CSV files and says where they went.
+#[tauri::command]
+async fn export_history(app: AppHandle, hub: State<'_, Arc<Hub>>, parts: Vec<String>) -> AppResult<export::ExportInfo> {
+    let root = exports_root(&app)?;
+    let hub = hub.inner().clone();
+    // A long history takes a moment to write, so it runs aside.
+    tauri::async_runtime::spawn_blocking(move || hub.export_csv(&root, &parts))
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))?
+}
+
+/// Opens the exports folder, or one export in it.
+#[tauri::command]
+fn open_exports_folder(app: AppHandle, path: Option<String>) -> AppResult<()> {
+    let root = exports_root(&app)?;
+    std::fs::create_dir_all(&root).map_err(|e| AppError::Storage(e.to_string()))?;
+    let target = match path {
+        Some(p) => {
+            let canon_root = root.canonicalize().map_err(|e| AppError::Storage(e.to_string()))?;
+            let canon = std::path::PathBuf::from(&p).canonicalize().map_err(|e| AppError::Storage(e.to_string()))?;
+            if !canon.starts_with(&canon_root) || !canon.is_dir() {
+                return Err(AppError::CannotDo("That folder is not one of the exports.".into()));
+            }
+            // Explorer gets the path as written, not the long form Windows uses inside.
+            std::path::PathBuf::from(p.replace('/', "\\"))
+        }
+        None => root,
+    };
+    std::process::Command::new("explorer.exe")
+        .arg(&target)
+        .spawn()
+        .map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1504,6 +1563,11 @@ pub fn run() {
             get_here,
             get_visits,
             get_visit_people,
+            get_videos,
+            get_visit_videos,
+            get_video_titles,
+            export_history,
+            open_exports_folder,
             get_pipeline_status,
             hide_to_tray,
             backup_now,

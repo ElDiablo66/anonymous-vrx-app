@@ -86,7 +86,10 @@ export function Here({
             {count && (
               <div>
                 <dt>VRChat says</dt>
-                <dd>{count.capacity > 0 ? `${count.users} of ${count.capacity}` : count.users}</dd>
+                <dd>
+                  {count.capacity > 0 ? `${count.users} of ${count.capacity}` : count.users}
+                  {count.queueEnabled && count.queueSize > 0 ? `, ${count.queueSize} waiting` : ""}
+                </dd>
               </div>
             )}
           </dl>

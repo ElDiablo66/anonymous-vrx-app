@@ -1,23 +1,10 @@
+import { useEscape } from "./escape";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { backend, errorText, type Friend, type InviteMessage } from "./backend";
 import { colourOf, textureName, textures, textureUrl, useDress } from "./look";
 import { live } from "./settings";
 
-/** Escape closes the window on top and nothing behind it. */
-export function useEscape(close: () => void, on = true) {
-  const latest = useRef(close);
-  latest.current = close;
-  useEffect(() => {
-    if (!on) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.stopImmediatePropagation();
-      latest.current();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [on]); // eslint-disable-line react-hooks/exhaustive-deps
-}
+export { useEscape };
 
 /** My saved lines as VRChat sends them, with anything missing filled in so a line is never sent to the wrong slot. */
 function lines(raw: unknown): InviteMessage[] {
@@ -299,6 +286,9 @@ type Look = { iconFrame: string; profileEffect: string; nameplateEffect: string;
 
 const hex = (v: unknown, fallback: string) => (typeof v === "string" && /^[0-9a-f]{6}$/i.test(v.replace(/^#/, "")) ? v.replace(/^#/, "").toLowerCase() : fallback);
 
+/** A dusk banner for the effect thumbnails, so their edge glow has something to show against. */
+const FX_BACKDROP = "radial-gradient(120% 90% at 50% 110%, #ff7a59 0%, rgb(255 122 89 / 0) 55%), linear-gradient(170deg, #4b2380 0%, #2a1252 60%, #1a0b33 100%)";
+
 /** My own profile, changed the way VRChat's website changes it: what it says, and how it looks. */
 export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; onClose: () => void; onBack?: () => void; onDone: (message: string) => void }) {
   const [part, setPart] = useState<"about" | "look">("about");
@@ -521,12 +511,12 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
               style={backdrop ? ({ "--bg": backdrop, "--tint-strength": String(live().profileBackdropStrength) } as CSSProperties) : undefined}
               aria-label="How your profile will look"
             >
-              <div className="look-banner" style={banner ? { backgroundImage: `url("${banner}")` } : undefined}>
-                {effectPic && <span className="look-effect" style={{ backgroundImage: `url("${effectPic}")` }} />}
-              </div>
+              <div className="look-banner" style={banner ? { backgroundImage: `url("${banner}")` } : undefined} />
               <div className="look-icon" style={icon ? { backgroundImage: `url("${icon}")` } : undefined}>
                 {framePic && <span className="look-frame" style={{ backgroundImage: `url("${framePic}")` }} />}
               </div>
+              {/* Over the whole card from the top, the way VRChat shows it. */}
+              {effectPic && <span className="look-effect" style={{ backgroundImage: `url("${effectPic}")` }} />}
               <div className={`look-name${plateBg ? " look-plate" : ""}`} style={plateBg ? { backgroundImage: plateBg } : undefined}>
                 <b className="hide-name">{name || "You"}</b>
               </div>
@@ -536,7 +526,7 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
             {(
               [
                 ["iconFrame", "Icon frame", "Around your picture"],
-                ["profileEffect", "Profile effect", "Over your banner"],
+                ["profileEffect", "Profile effect", "Over your whole profile"],
                 ["nameplateEffect", "Nameplate", "Behind your name"],
               ] as const
             ).map(([kind, label, where]) => (
@@ -553,10 +543,11 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
                     return (
                       <button key={id} className={look[kind] === id ? "on" : ""} aria-pressed={look[kind] === id} title={item?.name || id} onClick={() => set({ [kind]: id })}>
                         <span
-                          className="look-thumb"
+                          // An effect is mostly see-through with a glow at its edges, so it sits on a banner of its own.
+                          className={`look-thumb${kind === "profileEffect" ? " look-thumb-fx" : ""}`}
                           style={
                             item?.still || item?.picture
-                              ? { backgroundImage: `url("${item.still || item.picture}")` }
+                              ? { backgroundImage: kind === "profileEffect" ? `url("${item.still || item.picture}"), ${FX_BACKDROP}` : `url("${item.still || item.picture}")` }
                               : item && colourOf(item.from) && colourOf(item.to)
                                 ? { backgroundImage: `linear-gradient(90deg, ${colourOf(item.from)}, ${colourOf(item.to)})` }
                                 : undefined

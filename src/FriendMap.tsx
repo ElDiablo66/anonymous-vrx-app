@@ -395,7 +395,8 @@ export function FriendMap({
           const everyone = instance?.users ?? 0;
           const place = parsePlace(room.location);
           const name = tidy(world?.name ?? "") || "A world";
-          const facts = [accessName(place), regionName(place), everyone > 0 ? `${room.people.length} of ${everyone} here are friends` : ""].filter(Boolean);
+          const waiting = instance?.queueEnabled && instance.queueSize > 0 ? `${instance.queueSize} waiting` : "";
+          const facts = [accessName(place), regionName(place), everyone > 0 ? `${room.people.length} of ${everyone} here are friends` : "", waiting].filter(Boolean);
           return (
             <Bubble
               key={room.location}
@@ -481,6 +482,7 @@ export function FriendMap({
                         <small>
                           {accessName(place)}, {room.people.length} {room.people.length === 1 ? "friend" : "friends"}
                           {instance?.users ? ` of ${instance.users}` : ""}
+                          {instance?.queueEnabled && instance.queueSize > 0 ? `, ${instance.queueSize} waiting` : ""}
                         </small>
                       </span>
                     </button>

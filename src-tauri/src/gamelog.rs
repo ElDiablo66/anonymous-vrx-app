@@ -20,6 +20,11 @@ pub enum LogEvent {
     PlayerJoined { name: String, id: String },
     PlayerLeft { name: String, id: String },
     Quit,
+    /// A video player in the world started a video. VRChat writes this line itself, whichever
+    /// player the world uses.
+    Video { url: String },
+    /// The USharpVideo player names who asked for a video, just before VRChat starts it.
+    VideoBy { url: String, name: String },
 }
 
 /// Most bytes read from one file in one pass.
@@ -79,12 +84,63 @@ pub fn parse_line(line: &str) -> Option<(NaiveDateTime, LogEvent)> {
         }
         return None;
     }
+    if let Some(rest) = body
+        .strip_prefix("[Video Playback] Attempting to resolve URL '")
+        .or_else(|| body.strip_prefix("[Video Playback] Resolving URL '"))
+    {
+        let url = rest.strip_suffix('\'')?;
+        return web_link(url).then(|| (at, LogEvent::Video { url: url.to_string() }));
+    }
+    if body.contains("USharpVideo") {
+        // "Started video load for URL: <link>, requested by <name>"
+        let (url, name) = body.split_once("] Started video load for URL: ")?.1.rsplit_once(" requested by ")?;
+        let url = url.trim_end_matches(',');
+        let name = name.trim();
+        return (web_link(url) && !name.is_empty()).then(|| (at, LogEvent::VideoBy { url: url.to_string(), name: name.to_string() }));
+    }
     if body.starts_with("VRCApplication: ")
         && (body.contains("OnApplicationQuit at") || body.contains("HandleApplicationQuit at"))
     {
         return Some((at, LogEvent::Quit));
     }
     None
+}
+
+/// A plain web address, the only kind of video link kept.
+fn web_link(url: &str) -> bool {
+    (url.starts_with("https://") || url.starts_with("http://"))
+        && url.len() <= 2000
+        && !url.chars().any(|c| c.is_control() || c.is_whitespace() || c == '\'' || c == '"')
+}
+
+/// The eleven-character id of a YouTube video link, for its title and picture. Nothing for
+/// any other link.
+pub fn youtube_id(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"))?;
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = host.split(':').next()?.to_ascii_lowercase();
+    let host = host.trim_start_matches("www.").trim_start_matches("m.").trim_start_matches("music.");
+    let id = if host == "youtu.be" {
+        path.split(['?', '#', '/']).next()?
+    } else if host == "youtube.com" || host == "youtube-nocookie.com" {
+        let (route, query) = path.split_once('?').unwrap_or((path, ""));
+        let route = route.split('#').next()?.trim_end_matches('/');
+        if route == "watch" {
+            query.split('#').next()?.split('&').find_map(|p| p.strip_prefix("v="))?
+        } else {
+            let mut parts = route.split('/');
+            match (parts.next()?, parts.next()?) {
+                // A playlist or a channel's live stream, not one video.
+                ("embed", "videoseries" | "live_stream") => return None,
+                ("shorts" | "live" | "embed" | "v", id) => id,
+                _ => return None,
+            }
+        }
+    } else {
+        return None;
+    };
+    let ok = id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    ok.then(|| id.to_string())
 }
 
 /// Whether the newest log file ends with VRChat's goodbye line. Read straight from the
@@ -203,6 +259,51 @@ pub fn read_next(pending: &mut Pending) -> AppResult<Option<Chunk>> {
     }
 }
 
+/// Each log file the history has already read a part of, and how far. Those parts were read
+/// before videos were kept, so they are read once more for their videos alone.
+pub fn read_so_far(dir: &Path, store: &Store) -> AppResult<Vec<(PathBuf, u64)>> {
+    let Some(files) = log_files(dir) else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for (name, path) in files {
+        let offset: u64 = store.setting(&format!("log:{name}"))?.and_then(|v| v.parse().ok()).unwrap_or(0);
+        if offset > 0 {
+            out.push((path, offset));
+        }
+    }
+    Ok(out)
+}
+
+/// The video lines in the first `upto` bytes of one log file.
+pub fn videos_in(path: &Path, upto: u64) -> AppResult<Vec<(String, LogEvent)>> {
+    let mut out = Vec::new();
+    let mut from = 0u64;
+    while from < upto {
+        let bytes = read_range(path, from, (upto - from).min(CHUNK)).map_err(|e| AppError::Storage(e.to_string()))?;
+        if bytes.is_empty() {
+            break;
+        }
+        let end = match bytes.iter().rposition(|b| *b == b'\n') {
+            Some(i) => i + 1,
+            None if bytes.len() as u64 >= CHUNK => {
+                from += bytes.len() as u64;
+                continue;
+            }
+            None => bytes.len(),
+        };
+        let text = String::from_utf8_lossy(&bytes[..end]);
+        out.extend(
+            text.lines()
+                .filter_map(parse_line)
+                .filter(|(_, e)| matches!(e, LogEvent::Video { .. } | LogEvent::VideoBy { .. }))
+                .map(|(at, e)| (to_utc(at), e)),
+        );
+        from += end as u64;
+    }
+    Ok(out)
+}
+
 /// Reads whatever is new in the log folder into the history database, in one go and with
 /// the history in hand the whole time. Returns true when anything was recorded.
 pub fn catch_up(dir: &Path, store: &Store) -> AppResult<bool> {
@@ -250,12 +351,53 @@ mod tests {
     }
 
     #[test]
+    fn reads_video_lines() {
+        let (_, e) = parse_line("2026.01.05 20:15:14 Debug      -  [Video Playback] Attempting to resolve URL 'https://www.youtube.com/watch?v=AbCdEfGhIjK'").unwrap();
+        assert_eq!(e, LogEvent::Video { url: "https://www.youtube.com/watch?v=AbCdEfGhIjK".into() });
+        let (_, e) = parse_line("2026.01.05 20:15:14 Debug      -  [Video Playback] Resolving URL 'http://example.test/clip.mp4'\r").unwrap();
+        assert_eq!(e, LogEvent::Video { url: "http://example.test/clip.mp4".into() });
+        let (_, e) = parse_line(
+            "2026.01.05 20:15:14 Debug      -  [<color=#9C6994>USharpVideo</color>] Started video load for URL: https://youtu.be/AbCdEfGhIjK, requested by Pip Halloway",
+        )
+        .unwrap();
+        assert_eq!(e, LogEvent::VideoBy { url: "https://youtu.be/AbCdEfGhIjK".into(), name: "Pip Halloway".into() });
+    }
+
+    #[test]
+    fn finds_youtube_ids() {
+        for (url, id) in [
+            ("https://www.youtube.com/watch?v=AbCdEfGhIjK", Some("AbCdEfGhIjK")),
+            ("https://youtube.com/watch?feature=share&v=AbCdEfGhIjK&t=30", Some("AbCdEfGhIjK")),
+            ("https://m.youtube.com/watch/?v=AbCdEfGhIjK#top", Some("AbCdEfGhIjK")),
+            ("https://music.youtube.com/watch?v=Ab-dEf_hIjK", Some("Ab-dEf_hIjK")),
+            ("https://youtu.be/AbCdEfGhIjK?si=x", Some("AbCdEfGhIjK")),
+            ("https://www.youtube.com/shorts/AbCdEfGhIjK", Some("AbCdEfGhIjK")),
+            ("https://www.youtube.com/live/AbCdEfGhIjK?feature=x", Some("AbCdEfGhIjK")),
+            ("https://www.youtube.com/watch?v=short", None),
+            ("https://www.youtube.com/playlist?list=PL1", None),
+            ("https://www.youtube.com/embed/AbCdEfGhIjK?autoplay=1", Some("AbCdEfGhIjK")),
+            ("https://www.youtube.com/embed/videoseries?list=PL1", None),
+            ("https://www.youtube.com/embed/live_stream?channel=UC1", None),
+            ("https://notyoutube.com/watch?v=AbCdEfGhIjK", None),
+            ("https://example.test/AbCdEfGhIjK", None),
+        ] {
+            assert_eq!(youtube_id(url).as_deref(), id, "{url}");
+        }
+    }
+
+    #[test]
     fn ignores_lookalikes_and_noise() {
         for line in [
             "2026.01.05 20:15:02 Debug      -  [Behaviour] Joining or Creating Room: Quiet Pier at Dusk",
             "2026.01.05 20:15:02 Debug      -  [Behaviour] Destination fetching: wrld_1111:1",
             "2026.01.05 20:15:09 Debug      -  [PlayerLog] OnPlayerJoined: Someone (VR=True)",
             "2026.01.05 20:15:09 Debug      -  [Behaviour] OnPlayerJoinComplete Pip",
+            "2026.01.05 20:15:14 Debug      -  [Image Download] Attempting to load image from URL 'https://example.test/a.png'",
+            "2026.01.05 20:15:14 Debug      -  [String Download] Attempting to load String from URL 'https://example.test/a.txt'",
+            "2026.01.05 20:15:15 Debug      -  [Video Playback] URL 'https://youtu.be/AbCdEfGhIjK' resolved to 'https://example.test/x?ip=1'",
+            "2026.01.05 20:15:15 Debug      -  [Video Playback] Attempting to resolve URL 'not a link'",
+            "2026.01.05 20:15:15 Debug      -  [<color=#9C6994>USharpVideo</color>] Started video: https://youtu.be/AbCdEfGhIjK",
+            "2026.01.05 20:15:15 Debug      -  [<color=#9C6994>USharpVideo</color>] USharpVideo v1.0 Initialized",
             "    at SomeStackFrame ()",
             "",
             "not a date at all here, just some long text without meaning",
@@ -274,6 +416,15 @@ mod tests {
         catch_up(&dir, &store).unwrap();
         let visits = store.visits(500, None).unwrap();
         println!("{} log files, {} visits", log_files(&dir).unwrap().len(), visits.len());
+        let videos = store.videos(2000).unwrap();
+        println!(
+            "{} videos, {} in a known stay, {} with a world name, {} YouTube, {} with who asked",
+            videos.len(),
+            videos.iter().filter(|v| v.visit_id.is_some()).count(),
+            videos.iter().filter(|v| !v.world_name.is_empty()).count(),
+            videos.iter().filter(|v| !v.youtube_id.is_empty()).count(),
+            videos.iter().filter(|v| !v.requested_by.is_empty()).count()
+        );
         for v in &visits {
             println!(
                 "{} to {} people={} named={} access={:?}",
@@ -349,6 +500,26 @@ mod tests {
         // Reading again from saved positions adds nothing.
         assert!(!catch_up(&dir, &store).unwrap());
         assert_eq!(store.visits(10, None).unwrap().len(), 2);
+
+        // A video played in the second session; it belongs to that stay, with who asked for it.
+        let mut f = fs::OpenOptions::new().append(true).open(&second).unwrap();
+        f.write_all(line("21:31:00", "[Behaviour] Entering Room: Movie Night").as_bytes()).unwrap();
+        f.write_all(line("21:31:01", "[Behaviour] Joining wrld_77777777-2222-3333-4444-555555555555:3~region(eu)").as_bytes()).unwrap();
+        f.write_all(line("21:31:12", "[<color=#9C6994>USharpVideo</color>] Started video load for URL: https://youtu.be/AbCdEfGhIjK, requested by Pip Halloway").as_bytes()).unwrap();
+        f.write_all(line("21:31:12", "[Video Playback] Attempting to resolve URL 'https://youtu.be/AbCdEfGhIjK'").as_bytes()).unwrap();
+        drop(f);
+        assert!(catch_up(&dir, &store).unwrap());
+        let videos = store.videos(10).unwrap();
+        assert_eq!(videos.len(), 1);
+        assert_eq!(videos[0].world_name, "Movie Night");
+        assert_eq!(videos[0].requested_by, "Pip Halloway");
+        assert_eq!(videos[0].youtube_id, "AbCdEfGhIjK");
+        // Reading the old part again for its videos adds no second copy.
+        let size = fs::metadata(&second).unwrap().len();
+        let again = videos_in(&second, size).unwrap();
+        assert_eq!(again.len(), 2);
+        store.record_old_videos(&again).unwrap();
+        assert_eq!(store.videos(10).unwrap().len(), 1);
 
         // A deleted log file has its saved position forgotten.
         fs::remove_file(&first).unwrap();

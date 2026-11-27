@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useEscape } from "./escape";
 import { backend, errorText } from "./backend";
 import { SafeImg } from "./Pic";
 
@@ -18,17 +19,8 @@ export function PictureViewer({ onDone }: { onDone: (message: string) => void })
     return () => window.removeEventListener("open-picture", open);
   }, []);
 
-  useEffect(() => {
-    if (!shown) return;
-    // Escape closes the picture first, and only the picture.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.stopImmediatePropagation();
-      setShown(null);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [shown]);
+  // Escape closes the picture first, and only the picture.
+  useEscape(() => setShown(null), shown !== null);
 
   if (!shown) return null;
 

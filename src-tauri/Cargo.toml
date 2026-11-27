@@ -1,6 +1,6 @@
 [package]
 name = "anonymous-vrx"
-version = "0.1.7"
+version = "0.1.8"
 description = "Your VRChat night on one screen: friends, worlds, history and your own avatars"
 authors = ["El Diablo 59"]
 license = "GPL-3.0-only"

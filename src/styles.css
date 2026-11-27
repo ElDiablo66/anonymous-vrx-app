@@ -3089,33 +3089,6 @@ button {
   color: var(--busy);
 }
 
-.status-choices {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 8px;
-  margin: 14px 0;
-}
-
-.status-choices button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: none;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.status-choices button.on {
-  border-color: var(--teal);
-  background: color-mix(in srgb, var(--teal) 10%, transparent);
-}
-
-.status-choices small,
 .status-text small {
   display: block;
   color: var(--text-soft);
@@ -3792,7 +3765,6 @@ button:disabled {
   .notice-title,
   .notice-detail,
   .toast,
-  .status-text,
   .settings ul li > span,
   .tiles-wide .tile-name,
   .recovery .tile-name,
@@ -3845,7 +3817,6 @@ button:disabled {
   .notice-title,
   .notice-detail,
   .toast,
-  .status-text,
   .settings ul li > span,
   .tiles-wide .tile-name,
   .recovery .tile-name,
@@ -10457,11 +10428,6 @@ body .town-face {
   color: var(--busy);
 }
 
-.pmenu .pmenu-sure {
-  background: color-mix(in srgb, var(--busy) 18%, transparent);
-  font-weight: 700;
-}
-
 .pmenu-seg {
   display: grid;
   grid-template-columns: 1fr auto auto auto;
@@ -11472,4 +11438,380 @@ body .person-window .window-nav {
   body .person-window .profile-top .tabs button {
     padding: 0 8px;
   }
+}
+
+/* ---------- 0.1.8 ---------- */
+
+/* People in VRChat's own queue for a full instance. */
+.room-waiting {
+  color: var(--ask);
+  font-weight: 600;
+}
+
+.inst-waiting {
+  display: block;
+  margin-top: 4px;
+  color: var(--ask);
+  font: 600 14px/1.2 var(--body);
+  letter-spacing: 0;
+}
+
+/* Hide mode: other people's avatar pictures become a flat block, and what I typed into my own
+   profile shows as dots while I can still edit it. */
+:root[data-hide="on"] body .pic-cover {
+  background-image: none !important;
+  background-color: color-mix(in srgb, var(--text) 16%, transparent) !important;
+}
+
+:root[data-hide="on"] body .profile-edit :is(input:not([type="color"]), textarea) {
+  -webkit-text-security: disc;
+}
+
+/* History: tabs on the left, Export on the right. */
+.history-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: var(--gap);
+}
+
+.history-top .tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+/* Export stays at the right end, also when it has to go to its own line. */
+.history-export-btn {
+  flex: none;
+  margin-left: auto;
+}
+
+.history-export-btn.on {
+  border-color: var(--lamp);
+  background: color-mix(in srgb, var(--lamp) 12%, transparent);
+}
+
+.history-export {
+  margin: 12px 0 18px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel-high) 70%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lamp) 30%, transparent);
+}
+
+.history-export h3 {
+  margin: 0 0 4px;
+}
+
+/* Export: one toggle per file, two to a row. */
+.export-parts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.export-parts button {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: rgb(0 0 0 / 0.2);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 55%, transparent);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.export-parts button:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lamp) 50%, transparent);
+}
+
+.export-parts button.on {
+  background: color-mix(in srgb, var(--lamp) 10%, rgb(0 0 0 / 0.2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lamp) 70%, transparent);
+}
+
+.export-parts i {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--text) 45%, transparent);
+}
+
+.export-parts button.on i {
+  background: var(--lamp) center / 11px no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.5l2.5 2.5L10 3.5' fill='none' stroke='%23140a28' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  box-shadow: none;
+}
+
+.export-parts b {
+  display: block;
+  font: 600 14px/1.25 var(--body);
+}
+
+.export-parts small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-soft);
+  font: 500 12.5px/1.35 var(--body);
+}
+
+.export-done p {
+  margin: 10px 0 6px;
+}
+
+.export-done ul {
+  display: grid;
+  gap: 2px;
+  max-width: 420px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.export-done li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.export-done li span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Videos played. */
+.videos-bar {
+  flex-wrap: wrap;
+}
+
+.videos-bar .plain.on {
+  border-color: var(--lamp);
+  background: color-mix(in srgb, var(--lamp) 12%, transparent);
+}
+
+.video-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.video-row {
+  display: grid;
+  grid-template-columns: 52px 128px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  transition: background-color 0.16s ease;
+}
+
+.video-row:hover {
+  background: color-mix(in srgb, var(--panel-high) 55%, transparent);
+}
+
+.video-row time {
+  color: var(--text-soft);
+  font: 600 13px/1 var(--body);
+  font-variant-numeric: tabular-nums;
+}
+
+.video-thumb {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  background: radial-gradient(120% 90% at 50% 110%, rgb(255 122 89 / 0.55) 0%, rgb(255 122 89 / 0) 60%), linear-gradient(170deg, #4b2380 0%, #2a1252 60%, #1a0b33 100%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.video-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A small play mark in the corner, so a row reads as a video at a glance. */
+.video-thumb i {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgb(10 4 24 / 0.72)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M3.4 2.3v5.4L7.8 5z' fill='%23fff'/%3E%3C/svg%3E") 55% 50% / 11px no-repeat;
+}
+
+.video-thumb-plain i {
+  right: calc(50% - 15px);
+  bottom: calc(50% - 15px);
+  width: 30px;
+  height: 30px;
+  background-size: 14px;
+}
+
+.video-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.video-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font: 600 15px/1.3 var(--body);
+}
+
+/* The title shortens itself; the repeat count next to it always shows. */
+.video-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-times {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lamp) 18%, transparent);
+  color: var(--text);
+  font: 600 11.5px/1.5 var(--body);
+  vertical-align: 2px;
+}
+
+.video-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  color: var(--text-soft);
+  font: 500 13px/1.35 var(--body);
+}
+
+.video-sub .linkish {
+  color: var(--text-soft);
+  font: inherit;
+}
+
+.video-sub .linkish:hover {
+  color: var(--text);
+}
+
+.video-tag {
+  color: color-mix(in srgb, var(--text-soft) 80%, transparent);
+  font-style: italic;
+}
+
+.video-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.video-note {
+  margin-top: 14px;
+}
+
+@media (max-width: 760px) {
+  .video-row {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+
+  .video-row time {
+    grid-column: 1 / -1;
+  }
+
+  .video-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+/* The videos of one stay, under its people. */
+.stay-videos h4 {
+  margin: 14px 0 6px;
+  font: 600 13px/1.2 var(--body);
+  color: var(--text-soft);
+}
+
+.stay-videos ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stay-videos li {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+}
+
+.stay-videos time {
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.stay-video-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stay-video-title small {
+  color: var(--text-soft);
+}
+
+.queue-ask .queue-note {
+  margin: 0;
+  color: var(--text-soft);
+  font: 500 12.5px/1.4 var(--body);
+}
+
+/* "Full" and the queue under it line up with the right edge of the meter. */
+.inst-state {
+  text-align: right;
+}
+
+/* Hide mode: what is typed into Search shows as dots, the same as the other search boxes. */
+:root[data-hide="on"] body .search-bar input.search {
+  -webkit-text-security: disc;
+}
+
+/* A profile effect lies over the whole card from the top, scaled to its width, the way VRChat
+   shows it; it used to be squeezed into the banner and cut off. */
+.profile-side {
+  position: relative;
+}
+
+.profile-side > .side-effect {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: top center / 100% auto no-repeat;
+  mix-blend-mode: normal;
+  pointer-events: none;
+}
+
+.look-preview > .look-effect {
+  z-index: 2;
+  background: top center / 100% auto no-repeat;
+  pointer-events: none;
 }

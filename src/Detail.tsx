@@ -1,3 +1,4 @@
+import { useEscape } from "./escape";
 import { NewInstance } from "./NewInstance";
 import { useEffect, useState } from "react";
 import { backend, errorText } from "./backend";
@@ -145,11 +146,7 @@ export function DetailPanel({
     };
   }, [kind, id, reload]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useEscape(onClose);
 
   const copy = (text: string, done: string) =>
     void navigator.clipboard.writeText(text).then(
@@ -326,11 +323,11 @@ export function DetailPanel({
       <div className={mine ? "profile own-window" : "profile"} role="dialog" aria-modal="true" aria-label={name} onClick={(e) => e.stopPropagation()}>
         <aside className="profile-side">
           <button
-            className={kind === "group" ? "big-pic wide" : "big-pic"}
+            className={`${kind === "group" ? "big-pic wide" : "big-pic"}${kind === "avatar" && !mine ? " pic-cover" : ""}`}
             style={image ? { backgroundImage: `url("${imageShown}")` } : undefined}
             disabled={!image}
             title="Show the picture full size"
-            onClick={() => openPicture(image, name, mine)}
+            onClick={() => openPicture(image, name, mine || kind === "avatar")}
             aria-label="Show the picture full size"
           />
           {icon && (
@@ -338,7 +335,7 @@ export function DetailPanel({
               <span className="thumb" style={{ backgroundImage: `url("${iconShown}")` }} />
             </button>
           )}
-          <h2 className="hide-me">{name}</h2>
+          <h2 className={kind === "avatar" && !mine ? "hide-me hide-name" : "hide-me"}>{name}</h2>
           {(str(d.authorName) || kind === "group") && (
             <p className="profile-status">
               {kind === "group" ? (

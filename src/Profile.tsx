@@ -1,3 +1,4 @@
+import { useEscape } from "./escape";
 import { colourOf, profileBackground, useDress } from "./look";
 import { ProfileMenu } from "./ProfileMenu";
 import { openSend } from "./Send";
@@ -281,11 +282,7 @@ export function ProfilePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useEscape(onClose);
 
   async function load(part: string, extra = "") {
     try {
@@ -577,13 +574,14 @@ export function ProfilePanel({
         onClick={(e) => e.stopPropagation()}
       >
         <aside className="profile-side">
+          {/* The effect lies over the whole card from the top, the way VRChat shows it. */}
+          {effect && <span className="profile-effect side-effect" style={{ backgroundImage: `url("${effect}")` }} aria-hidden="true" />}
           <div className="banner-pic" style={plainBanner ? { background: bannerColour } : banner ? { backgroundImage: `url("${banner}")` } : undefined}>
             {banner && !plainBanner && <button className="pic-open" onClick={() => openPicture(banner, `${name} banner`, true)} title="Show the banner full size" aria-label="Show the banner full size" />}
             <button className="icon-open" disabled={!icon} onClick={() => openPicture(icon, `${name} picture`, true)} title="Show the profile picture full size" aria-label="Show the profile picture full size">
               <Avatar name={name} image={icon} tone={friend ? statusTone(friend) : undefined} size={104} />
               {frame && <span className="icon-frame" style={{ backgroundImage: `url("${frame}")` }} aria-hidden="true" />}
             </button>
-            {effect && <span className="profile-effect" style={{ backgroundImage: `url("${effect}")` }} aria-hidden="true" />}
           </div>
           <div
             className={`name-wrap${plateColours || platePicture ? " name-plate" : ""}`}

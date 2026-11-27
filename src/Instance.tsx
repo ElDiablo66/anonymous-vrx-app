@@ -1,3 +1,4 @@
+import { useEscape } from "./escape";
 import { useEffect, useState } from "react";
 import { backend, errorText, type Friend } from "./backend";
 import { Avatar, accessName, ageGated, regionName, sinceWords, statusTone, tidy } from "./bits";
@@ -55,18 +56,17 @@ export function InstancePanel({
     };
   }, [location, worldId]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useEscape(onClose);
 
   const name = tidy(str(world?.name)) || "World";
   const image = str(world?.imageUrl) || str(world?.thumbnailImageUrl);
   const here = [...friends.values()]
     .filter((f) => f.state === "online" && f.location === location)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
-  const count = num(info?.n_users) || num(info?.userCount);
+  // VRChat sends the head count under two names and one can read 0, so the larger counts,
+  // the same as on the cards.
+  const count = Math.max(num(info?.n_users), num(info?.userCount));
+  const waiting = info?.queueEnabled === true ? Math.max(0, num(info?.queueSize)) : 0;
   const capacity = num(info?.capacity) || num(world?.capacity);
   // VRChat lists everyone only to people who are inside the instance themselves.
   const everyone = Array.isArray(info?.users) ? (info.users as Json[]).filter((u) => u && typeof u === "object") : [];
@@ -107,7 +107,7 @@ export function InstancePanel({
             {place.instance && live().showInstanceId && <li>#{place.instance}</li>}
             {ageGated(location) && <li className="chip-adult" title="Only people VRChat has verified as 18 or older get in">18+</li>}
           </ul>
-          <QueueButton location={location} worldName={name} full={full} onDone={onDone} />
+          <QueueButton location={location} worldName={name} full={full} inLine={waiting} onDone={onDone} />
           <WayBack location={location} onDone={onDone} />
         </aside>
 
@@ -127,7 +127,10 @@ export function InstancePanel({
                   {known && capacity > 0 && <span>of {capacity} people</span>}
                   {known && capacity === 0 && <span>{count === 1 ? "person" : "people"}</span>}
                 </p>
-                <p className="inst-state">{info === null ? "" : full ? "Full" : free !== null ? `${free} ${free === 1 ? "place" : "places"} free` : ""}</p>
+                <p className="inst-state">
+                  {info === null ? "" : full ? "Full" : free !== null ? `${free} ${free === 1 ? "place" : "places"} free` : ""}
+                  {waiting > 0 && <small className="inst-waiting">{waiting} waiting</small>}
+                </p>
               </div>
               {capacity > 0 && (
                 <div className="inst-meter" role="img" aria-label={known ? `${count} of ${capacity} places taken` : "Head count not known"}>
@@ -141,6 +144,7 @@ export function InstancePanel({
                   {known ? `, ${Math.max(0, count - here.length)} ${count - here.length === 1 ? "other" : "others"}` : ""}
                 </span>
                 {comfy > 0 && comfy < capacity && <span>{crowded ? `Past the ${comfy} its maker recommends` : `Comfortable up to ${comfy}`}</span>}
+                {waiting > 0 && <span>{waiting === 1 ? "1 person is" : `${waiting} people are`} in VRChat's queue and get in before anyone else</span>}
               </p>
               {problem && <p className="profile-fine">VRChat did not share the head count: {problem}</p>}
             </section>
@@ -180,7 +184,7 @@ export function InstancePanel({
                   {author && (
                     <span>
                       by{" "}
-                      <button className="name-link" disabled={!str(world?.authorId)} onClick={() => openProfile(str(world?.authorId))}>
+                      <button className="name-link who" disabled={!str(world?.authorId)} onClick={() => openProfile(str(world?.authorId))}>
                         {author}
                       </button>
                     </span>

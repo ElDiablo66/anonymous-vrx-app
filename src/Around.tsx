@@ -313,6 +313,11 @@ export function Around({
                     {count.full ? ", full" : ""}
                   </span>
                 )}
+                {count && count.queueEnabled && count.queueSize > 0 && (
+                  <span className="room-waiting" title="People in VRChat's own queue for this instance. VRChat lets them in first when a place frees up. The number can be a few minutes old.">
+                    {count.queueSize} waiting
+                  </span>
+                )}
                 {place.instance && <span title="Instance number">#{place.instance}</span>}
               </p>
               <ChipList people={room.people} cap={ROOM_CAP}>

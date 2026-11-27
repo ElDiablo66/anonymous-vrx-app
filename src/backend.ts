@@ -73,6 +73,9 @@ export interface Instance {
   users: number;
   capacity: number;
   full: boolean;
+  /** VRChat's own queue for a full instance, and how many stand in it. */
+  queueEnabled: boolean;
+  queueSize: number;
 }
 
 export interface World {
@@ -133,6 +136,35 @@ export interface Sighting {
   displayName: string;
   joinedAt: string;
   leftAt: string | null;
+}
+
+/** A video a world played while I was there, from VRChat's own log. */
+export interface VideoPlay {
+  id: number;
+  at: string;
+  url: string;
+  youtubeId: string;
+  requestedBy: string;
+  visitId: number | null;
+  worldId: string;
+  worldName: string;
+  location: string;
+  joinedAt: string | null;
+  title: string;
+  channel: string;
+}
+
+export interface VideoTitle {
+  id: string;
+  title: string;
+  channel: string;
+}
+
+/** Where an export went and how many rows each file got. */
+export interface ExportInfo {
+  name: string;
+  path: string;
+  files: Array<{ name: string; rows: number }>;
 }
 
 /** What Discord shows on my profile. Every text is decided in the window. */
@@ -693,6 +725,11 @@ export interface Backend {
   here(): Promise<HereNow | null>;
   visits(limit: number, before?: number): Promise<Visit[]>;
   visitPeople(visitId: number): Promise<Sighting[]>;
+  videos(limit: number): Promise<VideoPlay[]>;
+  visitVideos(visitId: number): Promise<VideoPlay[]>;
+  videoTitles(ids: string[]): Promise<VideoTitle[]>;
+  exportHistory(parts: string[]): Promise<ExportInfo>;
+  openExportsFolder(path?: string): Promise<void>;
   on<K extends keyof LiveEvents>(
     name: K,
     handler: (payload: LiveEvents[K]) => void,
@@ -885,6 +922,11 @@ const desktop: Backend = {
   here: () => invoke("get_here"),
   visits: (limit, before) => invoke("get_visits", { limit, before: before ?? null }),
   visitPeople: (visitId) => invoke("get_visit_people", { visitId }),
+  videos: (limit) => invoke("get_videos", { limit }),
+  visitVideos: (visitId) => invoke("get_visit_videos", { visitId }),
+  videoTitles: (ids) => invoke("get_video_titles", { ids }),
+  exportHistory: (parts) => invoke("export_history", { parts }),
+  openExportsFolder: (path) => invoke("open_exports_folder", { path: path ?? null }),
   on: (name, handler) => listen(name, (e) => handler(e.payload as never)),
 };
 

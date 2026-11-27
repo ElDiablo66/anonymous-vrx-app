@@ -10,6 +10,9 @@ import { FeedBrowser } from "./FeedBrowser";
 import { openProfile } from "./Profile";
 import { openThing } from "./Detail";
 import { usePic } from "./Pic";
+import { StayVideos, VideosPlayed } from "./Videos";
+import { ExportHistory } from "./Export";
+import type { VideoPlay } from "./backend";
 
 /** Worlds already asked for, so scrolling past a row twice asks once. */
 const askedWorlds = new Set<string>();
@@ -69,7 +72,7 @@ function StillOpen({ location }: { location: string }) {
         const i = (raw ?? {}) as Record<string, unknown>;
         const n = (v: unknown) => (typeof v === "number" ? v : 0);
         const closed = typeof i.closedAt === "string" && i.closedAt !== "";
-        setState({ open: !closed && typeof i.id === "string", users: n(i.n_users) || n(i.userCount), capacity: n(i.capacity) });
+        setState({ open: !closed && typeof i.id === "string", users: Math.max(n(i.n_users), n(i.userCount)), capacity: n(i.capacity) });
       })
       .catch(() => alive && setState({ open: false, users: 0, capacity: 0 }));
     return () => {
@@ -220,31 +223,48 @@ interface HistoryProps {
   onDone: (message: string) => void;
 }
 
-type HistoryTab = "worlds" | "find" | "avatars" | "feed" | "photos";
+type HistoryTab = "worlds" | "find" | "avatars" | "feed" | "photos" | "videos";
 const historyTabs: Array<[HistoryTab, string]> = [
   ["worlds", "Worlds"],
   ["find", "Find"],
   ["photos", "Photos"],
+  ["videos", "Videos"],
   ["avatars", "Wardrobe"],
   ["feed", "Friend activity"],
 ];
 
 export function History(props: HistoryProps) {
-  const [tab, setTab] = useState<HistoryTab>(() => (backend.demo && new URLSearchParams(location.search).get("tab") === "find" ? "find" : backend.demo && new URLSearchParams(location.search).get("tab") === "wardrobe" ? "avatars" : "worlds"));
+  const [tab, setTab] = useState<HistoryTab>(() => {
+    const asked = backend.demo ? new URLSearchParams(location.search).get("tab") : null;
+    return asked === "find" ? "find" : asked === "wardrobe" ? "avatars" : asked === "videos" ? "videos" : "worlds";
+  });
+  const [exporting, setExporting] = useState(false);
   return (
     <div className="table-wrap">
-      <div className="tabs" role="tablist" aria-label="History">
-        {historyTabs.map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>
-            {label}
-          </button>
-        ))}
+      <div className="history-top">
+        <div className="tabs" role="tablist" aria-label="History">
+          {historyTabs.map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <button className={`plain history-export-btn${exporting ? " on" : ""}`} aria-expanded={exporting} onClick={() => setExporting(!exporting)} title="Save your history as spreadsheet files">
+          Export
+        </button>
       </div>
+      {exporting && (
+        <section className="history-export" aria-label="Export your history">
+          <h3>Export as spreadsheets</h3>
+          <ExportHistory />
+        </section>
+      )}
       {tab === "worlds" && <WorldVisits {...props} />}
       {tab === "find" && <Find friends={props.friends} />}
       {tab === "photos" && <Photos onDone={props.onDone} />}
       {tab === "avatars" && <AvatarHistory onDone={props.onDone} />}
       {tab === "feed" && <FeedBrowser friends={props.friends} worlds={props.worlds} />}
+      {tab === "videos" && <VideosPlayed worlds={props.worlds} tick={props.tick} onDone={props.onDone} />}
     </div>
   );
 }
@@ -253,6 +273,7 @@ function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
   const [visits, setVisits] = useState<Visit[] | null>(null);
   const [open, setOpen] = useState<number | null>(null);
   const [people, setPeople] = useState<Sighting[]>([]);
+  const [stayVideos, setStayVideos] = useState<VideoPlay[]>([]);
   const [more, setMore] = useState(true);
 
   useEffect(() => {
@@ -274,6 +295,10 @@ function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
     if (open === null) return;
     let alive = true;
     void backend.visitPeople(open).then((list) => alive && setPeople(list));
+    void backend
+      .visitVideos(open)
+      .then((list) => alive && setStayVideos(list))
+      .catch(() => alive && setStayVideos([]));
     return () => {
       alive = false;
     };
@@ -309,7 +334,7 @@ function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
           return [
             header,
             <li className="visit" key={v.id}>
-              <button className="visit-row" aria-expanded={isOpen} onClick={() => { setPeople([]); setOpen(isOpen ? null : v.id); }}>
+              <button className="visit-row" aria-expanded={isOpen} onClick={() => { setPeople([]); setStayVideos([]); setOpen(isOpen ? null : v.id); }}>
                 <time dateTime={v.joinedAt}>{clock(v.joinedAt)}</time>
                 <WorldThumb id={v.worldId} world={worlds.get(v.worldId)} />
                 <span className="visit-main">
@@ -339,6 +364,7 @@ function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
                     )}
                   </div>
                   <PeopleList people={people} friends={friends} meId={meId} />
+                  <StayVideos list={stayVideos} onDone={onDone} />
                 </div>
               )}
             </li>,

@@ -270,7 +270,7 @@ pub fn head_count(v: &Value) -> Option<i64> {
     }
 }
 
-/// How busy one instance is.
+/// How busy one instance is, and how many people stand in VRChat's own queue to get in.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Instance {
@@ -278,6 +278,8 @@ pub struct Instance {
     pub users: i64,
     pub capacity: i64,
     pub full: bool,
+    pub queue_enabled: bool,
+    pub queue_size: i64,
 }
 
 impl Instance {
@@ -288,6 +290,8 @@ impl Instance {
             users,
             capacity: v.get("capacity").and_then(Value::as_i64).unwrap_or(0),
             full: v.get("full").and_then(Value::as_bool).unwrap_or(false),
+            queue_enabled: v.get("queueEnabled").and_then(Value::as_bool).unwrap_or(false),
+            queue_size: v.get("queueSize").and_then(Value::as_i64).unwrap_or(0).max(0),
         })
     }
 }
@@ -456,6 +460,16 @@ mod tests {
         let b = Instance::from_json("wrld_a:2", &serde_json::json!({ "userCount": 3 })).unwrap();
         assert_eq!((b.users, b.capacity), (3, 0));
         assert!(Instance::from_json("wrld_a:3", &serde_json::json!({ "error": "nope" })).is_none());
+    }
+
+    #[test]
+    fn instance_reads_vrchat_queue() {
+        let q = Instance::from_json("wrld_a:4", &serde_json::json!({ "n_users": 40, "capacity": 40, "full": true, "queueEnabled": true, "queueSize": 7 })).unwrap();
+        assert_eq!((q.queue_enabled, q.queue_size), (true, 7));
+        let none = Instance::from_json("wrld_a:5", &serde_json::json!({ "n_users": 4 })).unwrap();
+        assert_eq!((none.queue_enabled, none.queue_size), (false, 0));
+        let odd = Instance::from_json("wrld_a:6", &serde_json::json!({ "n_users": 4, "queueSize": -3 })).unwrap();
+        assert_eq!(odd.queue_size, 0);
     }
 
     #[test]

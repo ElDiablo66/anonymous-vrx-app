@@ -110,7 +110,11 @@ export function Search({ onDone }: { onDone: (message: string) => void }) {
               : "Search public avatars by name or author. This asks a community-run avatar database, not VRChat; the address is in Settings."}
         </p>
       )}
-      {answered && count === 0 && <p className="empty">Nothing found for "{asked.slice(kind.length + 1)}".</p>}
+      {answered && count === 0 && (
+        <p className="empty">
+          Nothing found for "<span className="hide-name">{asked.slice(kind.length + 1)}</span>".
+        </p>
+      )}
 
       {kind === "people" && answered && people.length > 0 && (
         <ul className="results">
@@ -139,8 +143,8 @@ export function Search({ onDone }: { onDone: (message: string) => void }) {
           {avatars.map((a) => (
             <li key={a.id} className="avatar-result">
               <button className="tile-open" onClick={() => openThing("avatar", a.id)} title="Open this avatar">
-                <div className="room-pic" style={a.image ? { backgroundImage: `url("${a.image}")` } : undefined} />
-                <span className="result-name">{tidy(a.name) || "Unnamed avatar"}</span>
+                <div className="room-pic pic-cover" style={a.image ? { backgroundImage: `url("${a.image}")` } : undefined} />
+                <span className="result-name hide-name">{tidy(a.name) || "Unnamed avatar"}</span>
               </button>
               <button className="name-link result-note who" onClick={() => a.authorId && openProfile(a.authorId)} title="Open the author's profile">
                 by {a.author || "unknown"}

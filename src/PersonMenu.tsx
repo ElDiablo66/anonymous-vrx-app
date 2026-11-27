@@ -1,5 +1,6 @@
 import { openSend } from "./Send";
 import { useEffect, useState } from "react";
+import { useEscape } from "./escape";
 import { backend, errorText } from "./backend";
 
 interface Target {
@@ -41,20 +42,18 @@ export function PersonMenu({
       setTarget({ id, name: el.dataset.personName || "them", x, y });
     };
     const close = () => setTarget(null);
-    const key = (e: KeyboardEvent) => e.key === "Escape" && close();
     document.addEventListener("contextmenu", open);
     document.addEventListener("click", close);
     document.addEventListener("scroll", close, true);
     window.addEventListener("blur", close);
-    document.addEventListener("keydown", key);
     return () => {
       document.removeEventListener("contextmenu", open);
       document.removeEventListener("click", close);
       document.removeEventListener("scroll", close, true);
       window.removeEventListener("blur", close);
-      document.removeEventListener("keydown", key);
     };
   }, []);
+  useEscape(() => setTarget(null), target !== null);
 
   if (!target) return null;
   const { id, name } = target;

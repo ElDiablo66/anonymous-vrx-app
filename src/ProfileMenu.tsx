@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import { useEscape } from "./escape";
 import { backend, errorText } from "./backend";
 import { tidy } from "./bits";
 
@@ -97,13 +98,6 @@ export function ProfileMenu({ userId, name, friend, onDone }: { userId: string; 
       const t = e.target as Node;
       if (!panel.current?.contains(t) && !button.current?.contains(t)) setOpen(false);
     };
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // Escape closes the panel and nothing behind it.
-      e.stopImmediatePropagation();
-      setOpen(false);
-      button.current?.focus();
-    };
     const move = () => measure();
     // The button sits in a column that scrolls, so the panel follows it. Scrolling inside the
     // panel itself moves nothing.
@@ -116,7 +110,6 @@ export function ProfileMenu({ userId, name, friend, onDone }: { userId: string; 
       if (!panel.current?.contains(t) && !button.current?.contains(t)) setOpen(false);
     };
     window.addEventListener("pointerdown", away, true);
-    window.addEventListener("keydown", key, true);
     window.addEventListener("resize", move);
     window.addEventListener("scroll", scrolled, true);
     window.addEventListener("focusin", left, true);
@@ -124,12 +117,17 @@ export function ProfileMenu({ userId, name, friend, onDone }: { userId: string; 
       // An answer that comes after the panel closed is not shown next time it opens.
       asked.current++;
       window.removeEventListener("pointerdown", away, true);
-      window.removeEventListener("keydown", key, true);
       window.removeEventListener("resize", move);
       window.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("focusin", left, true);
     };
   }, [open, userId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Escape closes the panel and nothing behind it, and the keyboard goes back to More.
+  useEscape(() => {
+    setOpen(false);
+    button.current?.focus();
+  }, open);
 
   // A Block that was armed and not confirmed goes back to normal after a few seconds.
   useEffect(() => {

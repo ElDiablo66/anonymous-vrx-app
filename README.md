@@ -112,6 +112,9 @@ VRChat forgets most of what happened. The app keeps it in a file on your PC: eve
 | Edit my profile | From the status window, "Edit my profile" changes your bio, pronouns, up to three links and up to three languages, and on a second tab your icon frame, profile effect, nameplate and background, with a preview. It saves the way VRChat's website does. |
 | More on a profile | At the end of a profile's buttons: how you see their avatar, mute their voice or chatbox, stop their avatar touching yours, block with a second check, invite them to one of your groups, copy their ID or profile link. |
 | Long lists on a profile | Groups, worlds, avatars and mutual friends on a profile get a search by name and an order once there are seven or more. |
+| Videos played | History has a Videos tab: the videos worlds played while you were there, read from VRChat's own log on this PC, with the world and, when the world's player writes it down, who put the video on. Each stay in the world history lists its videos too. |
+| VRChat's queue | Instance cards, the map and the instance window show how many people stand in VRChat's own queue for a full instance. |
+| Export as spreadsheets | In History or Settings: the activity feed, friend log, world visits, who was in them, avatars worn and videos played, saved as CSV files that Excel, LibreOffice or Google Sheets open. |
 
 #### History
 
@@ -180,11 +183,12 @@ VRChat forgets most of what happened. The app keeps it in a file on your PC: eve
 
 ## Privacy
 
-- "Hide names and pictures" in Settings, or Ctrl+Shift+H, covers people's names, pictures, statuses and bios with plain bars, your own included, along with the names and pictures in My uploads. Nothing is blurred, so there is nothing to sharpen back. I added it so I could take screenshots without showing my friends.
+- "Hide names and pictures" in Settings, or Ctrl+Shift+H, covers people's names, pictures, statuses and bios with plain bars, your own included, along with the names and pictures in My uploads and other people's avatars. Nothing is blurred, so there is nothing to sharpen back. I added it so I could take screenshots without showing my friends.
 - Your password goes to VRChat once, at sign-in, and the app never writes it anywhere. Two-factor works with an authenticator app, email or a recovery code.
 - The sign-in cookie is kept in the Windows credential store.
 - History, notes and settings are files on your PC. I run no server, so there is nowhere for them to be sent.
 - Avatar search asks community avatar databases and sends them the search words only.
+- For a YouTube video in Videos played, the app asks YouTube once for its title, and its picture loads from YouTube while the video is on screen. Other links are only shown.
 - Discord rich presence is off until you switch it on, and it only talks to the Discord app on your PC.
 
 | What | Where |
