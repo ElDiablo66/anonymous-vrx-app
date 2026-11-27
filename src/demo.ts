@@ -138,6 +138,7 @@ const playedAt = (visit: Visit, minutes: number, url: string, by: string, title:
   joinedAt: visit.joinedAt,
   title,
   channel,
+  leftAt: visit.leftAt,
 });
 
 const demoVideos: VideoPlay[] = [
@@ -536,6 +537,7 @@ export const demoBackend: Backend = {
       person: { ...demoPerson(f), isFriend: people.some((p) => p.id === userId) },
       note: demoNotes.get(userId) ?? "",
       pastNames: [["Moss", ago(60 * 24 * 90)]] as Array<[string, string]>,
+      friendsSince: ago(60 * 24 * 400),
       together: { times: 7, seconds: 5 * 3600 + 1260, first: ago(60 * 24 * 40), last: ago(55) },
       feed: feed.filter((i) => i.userId === userId).slice(0, 20),
       raw: {
@@ -948,6 +950,66 @@ export const demoBackend: Backend = {
   async videos(limit) {
     await wait(150);
     return demoVideos.slice(0, limit);
+  },
+  async videosPage({ query, skipArrival, before, limit }) {
+    await wait(150);
+    const q = query.trim().toLowerCase();
+    const all = demoVideos
+      .filter((v) => !q || [v.url, v.requestedBy, v.title, v.channel, v.worldName].some((s) => s.toLowerCase().includes(q)))
+      .filter((v) => !(skipArrival && !v.requestedBy && v.joinedAt && Date.parse(v.at) - Date.parse(v.joinedAt) <= 30_000))
+      .sort((a, b) => b.at.localeCompare(a.at) || b.id - a.id);
+    const after = before ? all.filter((v) => v.at < before.at || (v.at === before.at && v.id < before.id)) : all;
+    return { rows: after.slice(0, limit), total: all.length };
+  },
+  async myStats(range) {
+    await wait(300);
+    const days = range === "7d" ? 7 : range === "30d" ? 30 : range === "year" ? 365 : 520;
+    const list: Array<[string, number]> = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86_400_000);
+      // A made-up rhythm: more at weekends, a quiet day now and then.
+      const seconds = (i * 7) % 5 === 3 ? 0 : Math.round((1.2 + ((i * 37) % 11) / 4 + (d.getDay() % 6 === 0 ? 2.5 : 0)) * 3600);
+      if (seconds) list.push([`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`, seconds]);
+    }
+    const total = list.reduce((n, d) => n + d[1], 0);
+    const hours = [2, 1, 0.4, 0.1, 0, 0, 0, 0, 0, 0, 0.1, 0.2, 0.4, 0.5, 0.6, 0.8, 1, 1.4, 2, 3, 4, 4.6, 4, 3].map((h) => Math.round((h * total) / 34));
+    const weekdays = [1.4, 0.8, 0.7, 0.8, 1, 1.5, 1.8].map((w) => Math.round((w * total) / 8));
+    return {
+      from: new Date(Date.now() - (days - 1) * 86_400_000).toISOString(),
+      to: new Date().toISOString(),
+      totalSeconds: total,
+      stays: Math.round(total / 5400),
+      playDays: list.length,
+      worldsCount: 23,
+      peopleCount: 61,
+      longest: { visitId: 2, worldId: "wrld_demo_mirror", worldName: "Mirror Room 4", joinedAt: ago(60 * 26), seconds: 6 * 3600 + 40 * 60 },
+      days: list,
+      hours,
+      weekdays,
+      worlds: [
+        { worldId: "wrld_demo_pier", name: "Quiet Pier at Dusk", times: 41, seconds: Math.round(total * 0.31) },
+        { worldId: "wrld_demo_arcade", name: "Basement Arcade", times: 22, seconds: Math.round(total * 0.18) },
+        { worldId: "wrld_demo_mirror", name: "Mirror Room 4", times: 17, seconds: Math.round(total * 0.14) },
+        { worldId: "wrld_demo_attic", name: "Rainy Attic Hangout", times: 9, seconds: Math.round(total * 0.07) },
+      ],
+      people: [
+        ...people.slice(0, 6).map((p, i) => ({ userId: p.id, name: p.displayName, friend: true, times: 30 - i * 4, seconds: Math.round(total * (0.4 - i * 0.05)) })),
+        { userId: "usr_demo_stranger_1", name: "Stranger", friend: false, times: 3, seconds: 5400 },
+      ],
+      openNow: true,
+      capped: range === "all" ? 1 : 0,
+    };
+  },
+  async friendDays() {
+    await wait(100);
+    const on = (d: number) => {
+      const t = new Date(Date.now() + d * 86_400_000);
+      return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`;
+    };
+    return [
+      { userId: people[0].id, name: people[0].displayName, image: people[0].image, since: new Date(Date.now() - 365 * 86_400_000).toISOString(), years: 1, on: on(0), inDays: 0 },
+      { userId: people[3].id, name: people[3].displayName, image: people[3].image, since: new Date(Date.now() - (2 * 365 - 3) * 86_400_000).toISOString(), years: 2, on: on(3), inDays: 3 },
+    ];
   },
   async visitVideos(visitId) {
     return demoVideos.filter((v) => v.visitId === visitId).reverse();

@@ -1,4 +1,4 @@
-import { useEscape } from "./escape";
+import { useEscape, useVeil } from "./escape";
 import { NewInstance } from "./NewInstance";
 import { useEffect, useState } from "react";
 import { backend, errorText } from "./backend";
@@ -41,6 +41,11 @@ const fallbackGroups: Record<string, string[]> = {
 
 /** The tab each open window was on, so Back returns to it. */
 const openTabs = new Map<string, string>();
+
+/** Closing every window forgets which tab each world, avatar or group was on. */
+export function forgetDetailTabs() {
+  openTabs.clear();
+}
 
 export function DetailPanel({
   kind,
@@ -146,7 +151,9 @@ export function DetailPanel({
     };
   }, [kind, id, reload]);
 
-  useEscape(onClose);
+  // Escape goes back one window when there is one to go back to; Close puts them all away.
+  useEscape(() => (onBack ? onBack() : onClose()));
+  const veil = useVeil(onClose);
 
   const copy = (text: string, done: string) =>
     void navigator.clipboard.writeText(text).then(
@@ -319,7 +326,7 @@ export function DetailPanel({
           ];
 
   return (
-    <div className="veil" onClick={onClose}>
+    <div className="veil" {...veil}>
       <div className={mine ? "profile own-window" : "profile"} role="dialog" aria-modal="true" aria-label={name} onClick={(e) => e.stopPropagation()}>
         <aside className="profile-side">
           <button

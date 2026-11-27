@@ -12,6 +12,8 @@ import { openThing } from "./Detail";
 import { usePic } from "./Pic";
 import { StayVideos, VideosPlayed } from "./Videos";
 import { ExportHistory } from "./Export";
+import { MyNumbers } from "./Numbers";
+import { parsePlace } from "./place";
 import type { VideoPlay } from "./backend";
 
 /** Worlds already asked for, so scrolling past a row twice asks once. */
@@ -223,9 +225,10 @@ interface HistoryProps {
   onDone: (message: string) => void;
 }
 
-type HistoryTab = "worlds" | "find" | "avatars" | "feed" | "photos" | "videos";
+type HistoryTab = "worlds" | "numbers" | "find" | "avatars" | "feed" | "photos" | "videos";
 const historyTabs: Array<[HistoryTab, string]> = [
   ["worlds", "Worlds"],
+  ["numbers", "In numbers"],
   ["find", "Find"],
   ["photos", "Photos"],
   ["videos", "Videos"],
@@ -236,7 +239,7 @@ const historyTabs: Array<[HistoryTab, string]> = [
 export function History(props: HistoryProps) {
   const [tab, setTab] = useState<HistoryTab>(() => {
     const asked = backend.demo ? new URLSearchParams(location.search).get("tab") : null;
-    return asked === "find" ? "find" : asked === "wardrobe" ? "avatars" : asked === "videos" ? "videos" : "worlds";
+    return asked === "find" ? "find" : asked === "wardrobe" ? "avatars" : asked === "videos" ? "videos" : asked === "numbers" ? "numbers" : "worlds";
   });
   const [exporting, setExporting] = useState(false);
   return (
@@ -264,7 +267,75 @@ export function History(props: HistoryProps) {
       {tab === "photos" && <Photos onDone={props.onDone} />}
       {tab === "avatars" && <AvatarHistory onDone={props.onDone} />}
       {tab === "feed" && <FeedBrowser friends={props.friends} worlds={props.worlds} />}
-      {tab === "videos" && <VideosPlayed worlds={props.worlds} tick={props.tick} onDone={props.onDone} />}
+      {tab === "numbers" && <MyNumbers worlds={props.worlds} friends={props.friends} tick={props.tick} />}
+      {tab === "videos" && (
+        <VideosPlayed
+          worlds={props.worlds}
+          tick={props.tick}
+          onDone={props.onDone}
+          renderVisit={(v) =>
+            v.visitId !== null && (
+              <VisitMore visit={{ id: v.visitId, location: v.location, worldId: v.worldId, leftAt: v.leftAt }} friends={props.friends} meId={props.meId} tick={props.tick} onDone={props.onDone} />
+            )
+          }
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * One stay opened up: whether it is still there, the ways back, who was in it and the videos
+ * it played. Used in the world history and under a video.
+ */
+export function VisitMore({
+  visit,
+  friends,
+  meId,
+  tick,
+  onDone,
+  withVideos = false,
+}: {
+  visit: { id: number; location: string; worldId: string; leftAt: string | null };
+  friends: Map<string, Friend>;
+  meId: string;
+  tick: number;
+  onDone: (message: string) => void;
+  withVideos?: boolean;
+}) {
+  const [people, setPeople] = useState<Sighting[] | null>(null);
+  const [videos, setVideos] = useState<VideoPlay[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void backend
+      .visitPeople(visit.id)
+      .then((list) => alive && setPeople(list))
+      .catch(() => alive && setPeople([]));
+    if (withVideos) {
+      void backend
+        .visitVideos(visit.id)
+        .then((list) => alive && setVideos(list))
+        .catch(() => alive && setVideos([]));
+    }
+    return () => {
+      alive = false;
+    };
+  }, [visit.id, tick, withVideos]);
+  return (
+    <div className="visit-more">
+      {visit.leftAt && parsePlace(visit.location).kind === "world" && <StillOpen location={visit.location} />}
+      <div className="visit-actions">
+        <WayBack location={visit.location} onDone={onDone} />
+        {visit.worldId && (
+          <div className="wayback">
+            <button title="The world's own window: description, facts, open instances" onClick={() => openThing("world", visit.worldId)}>
+              Open the world
+            </button>
+          </div>
+        )}
+      </div>
+      {people === null ? <p className="tile-note">Reading who was there</p> : <PeopleList people={people} friends={friends} meId={meId} />}
+      {withVideos && <StayVideos list={videos} onDone={onDone} />}
     </div>
   );
 }
@@ -272,9 +343,8 @@ export function History(props: HistoryProps) {
 function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
   const [visits, setVisits] = useState<Visit[] | null>(null);
   const [open, setOpen] = useState<number | null>(null);
-  const [people, setPeople] = useState<Sighting[]>([]);
-  const [stayVideos, setStayVideos] = useState<VideoPlay[]>([]);
   const [more, setMore] = useState(true);
+  const [olderProblem, setOlderProblem] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -282,33 +352,36 @@ function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
       .visits(100)
       .then((list) => {
         if (!alive) return;
-        setVisits(list);
-        setMore(list.length === 100);
+        // The newest page comes again with every change; older pages already shown stay.
+        setVisits((old) => {
+          if (!old) {
+            setMore(list.length === 100);
+            return list;
+          }
+          const oldestNew = list.length ? list[list.length - 1].id : Infinity;
+          const ids = new Set(list.map((v) => v.id));
+          return [...list, ...old.filter((v) => !ids.has(v.id) && v.id < oldestNew)];
+        });
       })
-      .catch(() => alive && setVisits([]));
+      .catch(() => alive && setVisits((old) => old ?? []));
     return () => {
       alive = false;
     };
   }, [tick]);
 
-  useEffect(() => {
-    if (open === null) return;
-    let alive = true;
-    void backend.visitPeople(open).then((list) => alive && setPeople(list));
-    void backend
-      .visitVideos(open)
-      .then((list) => alive && setStayVideos(list))
-      .catch(() => alive && setStayVideos([]));
-    return () => {
-      alive = false;
-    };
-  }, [open, tick]);
-
   async function loadOlder() {
     if (!visits || visits.length === 0) return;
-    const older = await backend.visits(100, visits[visits.length - 1].id);
-    setVisits([...visits, ...older]);
-    setMore(older.length === 100);
+    setOlderProblem("");
+    try {
+      const older = await backend.visits(100, visits[visits.length - 1].id);
+      setVisits((old) => {
+        const have = new Set((old ?? []).map((v) => v.id));
+        return [...(old ?? []), ...older.filter((v) => !have.has(v.id))];
+      });
+      setMore(older.length === 100);
+    } catch (err) {
+      setOlderProblem(errorText(err));
+    }
   }
 
   if (visits === null) return <p className="empty">Reading your world history</p>;
@@ -334,7 +407,7 @@ function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
           return [
             header,
             <li className="visit" key={v.id}>
-              <button className="visit-row" aria-expanded={isOpen} onClick={() => { setPeople([]); setStayVideos([]); setOpen(isOpen ? null : v.id); }}>
+              <button className="visit-row" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : v.id)}>
                 <time dateTime={v.joinedAt}>{clock(v.joinedAt)}</time>
                 <WorldThumb id={v.worldId} world={worlds.get(v.worldId)} />
                 <span className="visit-main">
@@ -350,27 +423,16 @@ function WorldVisits({ friends, worlds, meId, tick, onDone }: HistoryProps) {
                   {Math.max(0, v.people - 1)} {v.people - 1 === 1 ? "other" : "others"}
                 </span>
               </button>
-              {isOpen && (
-                <div className="visit-more">
-                  {v.leftAt && v.place.kind === "world" && <StillOpen location={v.location} />}
-                  <div className="visit-actions">
-                    <WayBack location={v.location} onDone={onDone} />
-                    {v.worldId && (
-                      <div className="wayback">
-                        <button title="The world's own window: description, facts, open instances" onClick={() => openThing("world", v.worldId)}>
-                          Open the world
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <PeopleList people={people} friends={friends} meId={meId} />
-                  <StayVideos list={stayVideos} onDone={onDone} />
-                </div>
-              )}
+              {isOpen && <VisitMore visit={v} friends={friends} meId={meId} tick={tick} onDone={onDone} withVideos />}
             </li>,
           ];
         })}
       </ol>
+      {olderProblem && (
+        <p className="banner" role="alert">
+          Older visits could not be read: {olderProblem}
+        </p>
+      )}
       {more && (
         <button className="older" onClick={() => void loadOlder()}>
           Show older visits

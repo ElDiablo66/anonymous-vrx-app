@@ -196,9 +196,28 @@ export function ageGated(location: string): boolean {
 export function dayLabel(iso: string): string {
   const d = new Date(iso);
   const today = new Date();
-  const yesterday = new Date(today.getTime() - 86_400_000);
+  // The calendar day before, so a day of 23 or 25 hours (clock change) still reads right.
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
   if (d.toDateString() === today.toDateString()) return "Today";
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
   if (live().dateFormat === "iso") return `${isoDay(d)}, ${d.toLocaleDateString([], { weekday: "long" })}`;
-  return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+  // A day from another year says which year, so imported history does not read as this year's.
+  return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", ...(d.getFullYear() !== today.getFullYear() ? { year: "numeric" } : {}) });
+}
+
+/** The day a week starts on, as JavaScript counts days: 0 is Sunday. */
+export function firstWeekday(): number {
+  const pick = live().weekStart;
+  if (pick === "mon") return 1;
+  if (pick === "sun") return 0;
+  if (pick === "sat") return 6;
+  try {
+    const locale = new Intl.Locale(navigator.language) as Intl.Locale & { getWeekInfo?: () => { firstDay: number }; weekInfo?: { firstDay: number } };
+    const first = (locale.getWeekInfo?.() ?? locale.weekInfo)?.firstDay;
+    // Windows counts Monday as 1 and Sunday as 7.
+    if (typeof first === "number") return first % 7;
+  } catch {
+    // An unknown language setting falls back to Monday.
+  }
+  return 1;
 }

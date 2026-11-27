@@ -1,4 +1,4 @@
-import { useEscape } from "./escape";
+import { useEscape, useVeil } from "./escape";
 import { colourOf, profileBackground, useDress } from "./look";
 import { ProfileMenu } from "./ProfileMenu";
 import { openSend } from "./Send";
@@ -36,6 +36,11 @@ const tabNames: Array<[Tab, string]> = [
 const NL_CHAR = String.fromCharCode(10);
 /** The tab each open profile was on, so Back returns to it. */
 const openTabs = new Map<string, Tab>();
+
+/** Closing every window forgets which tab each profile was on. */
+export function forgetProfileTabs() {
+  openTabs.clear();
+}
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 const list = (v: unknown): Json[] => (Array.isArray(v) ? (v.filter((x) => x && typeof x === "object") as Json[]) : []);
@@ -282,7 +287,9 @@ export function ProfilePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  useEscape(onClose);
+  // Escape goes back one window when there is one to go back to; Close puts them all away.
+  useEscape(() => (onBack ? onBack() : onClose()));
+  const veil = useVeil(onClose);
 
   async function load(part: string, extra = "") {
     try {
@@ -558,7 +565,7 @@ export function ProfilePanel({
   );
 
   return (
-    <div className="veil" onClick={onClose}>
+    <div className="veil" {...veil}>
       <div
         className={`profile person-window${tinted ? " tinted" : ""}${backed ? " backed" : ""}`}
         style={
@@ -853,6 +860,12 @@ export function ProfilePanel({
                       <section>
                         <h3>You and <span className="hide-me">{name}</span></h3>
                         <dl className="facts">
+                          {profile.friendsSince && (
+                            <div>
+                              <dt>Friends since</dt>
+                              <dd>{day(profile.friendsSince)}</dd>
+                            </div>
+                          )}
                           <div>
                             <dt>Times together</dt>
                             <dd>{profile.together.times}</dd>
@@ -870,7 +883,10 @@ export function ProfilePanel({
                             <dd>{profile.together.last ? day(profile.together.last) : "Not yet"}</dd>
                           </div>
                         </dl>
-                        <p className="profile-fine">From VRChat's log files on this PC, since this app could read them.</p>
+                        <p className="profile-fine">
+                          From VRChat's log files on this PC, since this app could read them.
+                          {profile.friendsSince && " Friends since is the first time the friend log on this PC shows you as friends."}
+                        </p>
                       </section>
                     )}
 

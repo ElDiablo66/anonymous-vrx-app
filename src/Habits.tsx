@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import { backend, errorText, type Friend, type Habits as HabitData, type World } from "./backend";
-import { Avatar, statusTone, tidy } from "./bits";
+import { Avatar, firstWeekday, statusTone, tidy } from "./bits";
 import { openThing } from "./Detail";
 import { span } from "./Find";
 import { openProfile } from "./Profile";
 import { live } from "./settings";
 
-const dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/** Weekday names as JavaScript counts days: 0 is Sunday. */
+const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const dayPlural = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
 
 /** The hour as my clock setting writes it: "9pm" or "21". */
-function hourName(hour: number): string {
+export function hourName(hour: number): string {
   const pick = live().timeFormat;
   const twelve = pick === "12" || (pick === "pc" && new Intl.DateTimeFormat([], { hour: "numeric" }).resolvedOptions().hour12 === true);
   if (!twelve) return String(hour).padStart(2, "0");
@@ -32,7 +34,7 @@ function spread(points: Array<[string, number]>): { hours: number[]; days: numbe
       const untilNext = 3600 - (d.getMinutes() * 60 + d.getSeconds());
       const part = Math.min(left, untilNext);
       hours[d.getHours()] += part;
-      days[(d.getDay() + 6) % 7] += part;
+      days[d.getDay()] += part;
       left -= part;
       t += part * 1000;
     }
@@ -40,7 +42,7 @@ function spread(points: Array<[string, number]>): { hours: number[]; days: numbe
   return { hours, days };
 }
 
-function Bars({ values, names, label }: { values: number[]; names: (i: number) => string; label: string }) {
+export function Bars({ values, names, label }: { values: number[]; names: (i: number) => string; label: string }) {
   const most = Math.max(...values, 1);
   const best = values.indexOf(Math.max(...values));
   return (
@@ -59,10 +61,13 @@ function When({ points, what }: { points: Array<[string, number]>; what: string 
   if (hours.every((h) => h === 0)) return null;
   const bestHour = hours.indexOf(Math.max(...hours));
   const bestDay = days.indexOf(Math.max(...days));
+  // The week starts on the day Settings says, the same as on the Events month view.
+  const first = firstWeekday();
+  const order = [0, 1, 2, 3, 4, 5, 6].map((i) => (first + i) % 7);
   return (
     <div className="habit-when">
       <p className="habit-line">
-        {what} around {hourName(bestHour)}, most on {["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"][bestDay]}.
+        {what} around {hourName(bestHour)}, most on {dayPlural[bestDay]}.
       </p>
       <div className="habit-charts">
         <div>
@@ -74,10 +79,10 @@ function When({ points, what }: { points: Array<[string, number]>; what: string 
           </p>
         </div>
         <div>
-          <Bars values={days} names={(i) => dayNames[i]} label="By day of the week" />
+          <Bars values={order.map((d) => days[d])} names={(i) => dayNames[order[i]]} label="By day of the week" />
           <p className="habit-axis habit-axis-days">
-            {dayNames.map((d) => (
-              <span key={d}>{d}</span>
+            {order.map((d) => (
+              <span key={d}>{dayNames[d]}</span>
             ))}
           </p>
         </div>

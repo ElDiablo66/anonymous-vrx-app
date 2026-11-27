@@ -744,6 +744,12 @@ export function SettingsPage({
         <Switch label="Friend requests" on={settings.alertFriendRequests} set={(on) => change({ alertFriendRequests: on })} />
         <Switch label="Boops" on={settings.alertBoops} set={(on) => change({ alertBoops: on })} />
         <Switch
+          label="Friendship days"
+          hint="Once, on the day a friendship turns another year old. Only friendships the friend log on this PC has a date for."
+          on={settings.alertFriendDays}
+          set={(on) => change({ alertFriendDays: on })}
+        />
+        <Switch
           label="Everything else"
           hint="Group invites, announcements and replies to your invites."
           on={settings.alertEverythingElse}

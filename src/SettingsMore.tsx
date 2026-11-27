@@ -199,7 +199,7 @@ export function DateSettings({ settings, change }: Props) {
           ]}
         />
       </Row>
-      <Row label="A week starts on" hint="For the month view of Events.">
+      <Row label="A week starts on" hint="For the month view of Events and the weekday charts.">
         <Choices
           label="A week starts on"
           value={settings.weekStart}

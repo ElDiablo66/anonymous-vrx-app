@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { backend, errorText, type VideoPlay, type VideoTitle, type World } from "./backend";
 import { clock, dayLabel, tidy } from "./bits";
 import { openThing } from "./Detail";
@@ -99,7 +99,7 @@ function onArrival(v: VideoPlay): boolean {
   return !!v.joinedAt && Date.parse(v.at) - Date.parse(v.joinedAt) <= 30_000;
 }
 
-/** Plays of the same video in the same world on the same day, next to each other in the list, shown as one row. */
+/** Plays of the same video in the same stay, next to each other in the list, shown as one row. */
 interface Group {
   first: VideoPlay;
   plays: VideoPlay[];
@@ -109,58 +109,129 @@ function grouped(rows: VideoPlay[]): Group[] {
   const out: Group[] = [];
   for (const v of rows) {
     const last = out[out.length - 1];
-    if (last && last.first.url === v.url && last.first.worldId === v.worldId && dayLabel(last.first.at) === dayLabel(v.at)) last.plays.push(v);
+    if (last && last.first.url === v.url && last.first.visitId === v.visitId && dayLabel(last.first.at) === dayLabel(v.at)) last.plays.push(v);
     else out.push({ first: v, plays: [v] });
   }
   return out;
+}
+
+/** Older first in the list order: later time, then higher id. */
+function before(a: VideoPlay, b: VideoPlay): boolean {
+  return a.at < b.at || (a.at === b.at && a.id < b.id);
 }
 
 function open(url: string, onDone: (message: string) => void) {
   void backend.openLink(url).catch((err) => onDone(`Could not open it: ${errorText(err)}`));
 }
 
-/** The most rows the tab reads at once; the history keeps every play. */
-const MOST = 2000;
+/** How many videos one page brings. */
+const PAGE = 60;
 
 /** History, Videos: what the worlds played while I was there, from VRChat's own log on this PC. */
-export function VideosPlayed({ worlds, tick, onDone }: { worlds: Map<string, World>; tick: number; onDone: (message: string) => void }) {
+export function VideosPlayed({
+  worlds,
+  tick,
+  onDone,
+  renderVisit,
+}: {
+  worlds: Map<string, World>;
+  tick: number;
+  onDone: (message: string) => void;
+  /** Who was in the stay a video played in, with the ways back there. */
+  renderVisit: (v: VideoPlay) => ReactNode;
+}) {
   const [rows, setRows] = useState<VideoPlay[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [more, setMore] = useState(false);
   const [query, setQuery] = useState("");
-  const [shown, setShown] = useState(80);
+  const [asked, setAsked] = useState("");
   const [skipOn, setSkipOn] = useState(false);
+  const [problem, setProblem] = useState("");
+  const [opened, setOpened] = useState<number | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const shownFor = useRef("");
+  const latest = useRef(0);
 
+  // The search goes to the history a moment after typing stops.
   useEffect(() => {
-    let alive = true;
-    void backend
-      .videos(MOST)
-      .then((list) => alive && setRows(list))
-      .catch(() => alive && setRows([]));
-    return () => {
-      alive = false;
-    };
-  }, [tick]);
+    const t = window.setTimeout(() => setAsked(query.trim()), 250);
+    return () => window.clearTimeout(t);
+  }, [query]);
 
-  const kept = useMemo(() => (rows ?? []).filter((v) => !(skipOn && onArrival(v) && !v.requestedBy)), [rows, skipOn]);
-  // Titles are asked for the rows this filter shows, so a filtered list gets its titles too.
-  const titles = useTitles(useMemo(() => kept.slice(0, shown), [kept, shown]));
+  // The newest page: from scratch for a new search, and merged in on top when the history changes.
+  useEffect(() => {
+    const key = `${asked}\u0000${skipOn}`;
+    const fresh = key !== shownFor.current;
+    const n = ++latest.current;
+    void backend
+      .videosPage({ query: asked, skipArrival: skipOn, limit: PAGE })
+      .then(({ rows: page, total: all }) => {
+        if (n !== latest.current) return;
+        setProblem("");
+        setTotal(all);
+        if (fresh) {
+          shownFor.current = key;
+          setRows(page);
+          setMore(page.length === PAGE);
+          setOpened(null);
+          return;
+        }
+        setRows((old) => {
+          if (!old || page.length === 0) return page.length ? page : (old ?? []);
+          const ids = new Set(page.map((v) => v.id));
+          // A full page with nothing in common with the list: more came in than one page holds,
+          // so the list starts over from the top rather than leave a gap.
+          if (page.length === PAGE && !old.some((v) => ids.has(v.id))) {
+            setMore(true);
+            return page;
+          }
+          const oldest = page[page.length - 1];
+          return [...page, ...old.filter((v) => !ids.has(v.id) && before(v, oldest))];
+        });
+      })
+      .catch((err) => {
+        if (n !== latest.current) return;
+        setProblem(errorText(err));
+        setRows((old) => old ?? []);
+      });
+  }, [asked, skipOn, tick]);
+
+  async function loadOlder() {
+    if (!rows || rows.length === 0) return;
+    const key = shownFor.current;
+    const last = rows[rows.length - 1];
+    setLoadingOlder(true);
+    try {
+      const { rows: page } = await backend.videosPage({ query: asked, skipArrival: skipOn, before: { at: last.at, id: last.id }, limit: PAGE });
+      // A new search meanwhile makes this page stale.
+      if (key !== shownFor.current) return;
+      setRows((old) => {
+        const have = new Set((old ?? []).map((v) => v.id));
+        return [...(old ?? []), ...page.filter((v) => !have.has(v.id))];
+      });
+      setMore(page.length === PAGE);
+    } catch (err) {
+      onDone(`Older videos could not be read: ${errorText(err)}`);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }
+
+  const titles = useTitles(rows ?? []);
   if (rows === null) return <p className="empty">Reading the videos from your history</p>;
-  if (rows.length === 0) {
-    return (
+  if (rows.length === 0 && !asked && !skipOn) {
+    return problem ? (
+      <p className="banner" role="alert">
+        The videos could not be read: {problem}
+      </p>
+    ) : (
       <p className="empty">
         No videos yet. When a world plays a video while you are in it, VRChat writes that in its own log on this PC, and it shows up here with the world it played in.
       </p>
     );
   }
 
-  const q = query.trim().toLowerCase();
-  const matching = kept.filter((v) => {
-    if (!q) return true;
-    const { title, channel } = nameOf(v, titles);
-    const world = v.worldName || worlds.get(v.worldId)?.name || "";
-    return [title, channel, world, v.requestedBy, v.url].some((s) => s.toLowerCase().includes(q));
-  });
-  const groups = grouped(matching.slice(0, shown));
-  const all = rows.length >= MOST ? `latest ${rows.length}` : `${rows.length} in all`;
+  const groups = grouped(rows);
   let lastDay = "";
 
   return (
@@ -171,16 +242,21 @@ export function VideosPlayed({ worlds, tick, onDone }: { worlds: Map<string, Wor
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Escape" && query && (e.stopPropagation(), setQuery(""))}
-          placeholder="Search titles, worlds and who put it on"
+          placeholder="Search worlds, titles, links and who put it on"
           aria-label="Search the videos"
         />
         <button className={`plain${skipOn ? " on" : ""}`} aria-pressed={skipOn} onClick={() => setSkipOn(!skipOn)} title="Leave out videos that were already playing, or that the world started, as you arrived">
           Leave out ones already on
         </button>
-        <span className="list-count">{q || skipOn ? `${matching.length} of ${all}` : all}</span>
+        <span className="list-count">{asked || skipOn ? `${total.toLocaleString()} found` : `${total.toLocaleString()} in all`}</span>
       </div>
+      {problem && (
+        <p className="banner" role="alert">
+          The videos could not be read: {problem}
+        </p>
+      )}
       {groups.length === 0 ? (
-        <p className="empty">No video matches that.</p>
+        <p className="empty">No video matches that. A title is only found once the app has fetched it; the world, the link and who put it on always are.</p>
       ) : (
         <ol className="video-list">
           {groups.map(({ first: v, plays }) => {
@@ -194,9 +270,10 @@ export function VideosPlayed({ worlds, tick, onDone }: { worlds: Map<string, Wor
             const { title, channel } = nameOf(v, titles);
             const world = tidy(v.worldName || worlds.get(v.worldId)?.name || "");
             const putOnBy = [...new Set(plays.map((p) => p.requestedBy).filter(Boolean))];
+            const isOpen = opened === v.id;
             return [
               header,
-              <li className="video-row" key={v.id}>
+              <li className={`video-row${isOpen ? " open" : ""}`} key={v.id}>
                 <time dateTime={v.at} title={plays.length > 1 ? plays.map((p) => clock(p.at)).join(", ") : undefined}>
                   {clock(v.at)}
                 </time>
@@ -238,22 +315,28 @@ export function VideosPlayed({ worlds, tick, onDone }: { worlds: Map<string, Wor
                     className="plain"
                     onClick={() =>
                       void navigator.clipboard.writeText(v.url).then(
-                        () => onDone("Link copied."),
+                        () => onDone("Video link copied."),
                         () => onDone("Could not copy."),
                       )
                     }
                   >
-                    Copy link
+                    Copy video link
                   </button>
+                  {v.visitId !== null && (
+                    <button className={`plain${isOpen ? " on" : ""}`} aria-expanded={isOpen} onClick={() => setOpened(isOpen ? null : v.id)} title="Who was in that stay, and the ways back there">
+                      Who was there
+                    </button>
+                  )}
                 </span>
+                {isOpen && <div className="video-visit">{renderVisit(v)}</div>}
               </li>,
             ];
           })}
         </ol>
       )}
-      {matching.length > shown && (
-        <button className="older" onClick={() => setShown(shown + 80)}>
-          Show older videos
+      {more && (
+        <button className="older" disabled={loadingOlder} onClick={() => void loadOlder()}>
+          {loadingOlder ? "Reading older videos" : "Show older videos"}
         </button>
       )}
       <p className="setting-hint video-note">

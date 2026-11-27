@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorText, type CalendarEvent } from "./backend";
-import { clock, dayLabel, tidy } from "./bits";
+import { clock, dayLabel, tidy, firstWeekday } from "./bits";
 import { openThing } from "./Detail";
 import { launched } from "./History";
 import { accessName, ageGated, regionName } from "./bits";
@@ -64,23 +64,6 @@ function untilWords(iso: string): string {
   if (minutes < 90) return `in ${minutes} min`;
   if (minutes < 36 * 60) return `in ${Math.round(minutes / 60)} h`;
   return `in ${Math.round(minutes / 1440)} days`;
-}
-
-/** The day a week starts on, as JavaScript counts days: 0 is Sunday. */
-function firstWeekday(): number {
-  const pick = live().weekStart;
-  if (pick === "mon") return 1;
-  if (pick === "sun") return 0;
-  if (pick === "sat") return 6;
-  try {
-    const locale = new Intl.Locale(navigator.language) as Intl.Locale & { getWeekInfo?: () => { firstDay: number }; weekInfo?: { firstDay: number } };
-    const first = (locale.getWeekInfo?.() ?? locale.weekInfo)?.firstDay;
-    // Windows counts Monday as 1 and Sunday as 7.
-    if (typeof first === "number") return first % 7;
-  } catch {
-    // An unknown language setting falls back to Monday.
-  }
-  return 1;
 }
 
 /** "2026-11-25" for a date, in the PC's own time. */

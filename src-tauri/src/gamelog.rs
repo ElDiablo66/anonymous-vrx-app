@@ -425,6 +425,16 @@ mod tests {
             videos.iter().filter(|v| !v.youtube_id.is_empty()).count(),
             videos.iter().filter(|v| !v.requested_by.is_empty()).count()
         );
+        let first = store.first_stay().unwrap().unwrap_or_default();
+        let (stays, sights) = store.stats_rows(&first, "2100-01-01T00:00:00Z", "usr_nobody", "").unwrap();
+        let jd = |t: &str| chrono::DateTime::parse_from_rfc3339(t).map(|t| t.timestamp_millis() as f64 / 86_400_000.0 + 2_440_587.5).unwrap();
+        let now = chrono::Utc::now().timestamp_millis() as f64 / 86_400_000.0 + 2_440_587.5;
+        let s = crate::stats::work_out(jd(&first), now, &stays, &sights, false);
+        println!(
+            "stats: {} h, {} stays, {} play days, {} worlds, {} people, capped {}, hours sum ok {}",
+            s.total_seconds / 3600, s.stays, s.play_days, s.worlds_count, s.people_count, s.capped,
+            s.hours.iter().sum::<i64>() == s.total_seconds
+        );
         for v in &visits {
             println!(
                 "{} to {} people={} named={} access={:?}",

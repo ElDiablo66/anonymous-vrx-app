@@ -112,9 +112,11 @@ VRChat forgets most of what happened. The app keeps it in a file on your PC: eve
 | Edit my profile | From the status window, "Edit my profile" changes your bio, pronouns, up to three links and up to three languages, and on a second tab your icon frame, profile effect, nameplate and background, with a preview. It saves the way VRChat's website does. |
 | More on a profile | At the end of a profile's buttons: how you see their avatar, mute their voice or chatbox, stop their avatar touching yours, block with a second check, invite them to one of your groups, copy their ID or profile link. |
 | Long lists on a profile | Groups, worlds, avatars and mutual friends on a profile get a search by name and an order once there are seven or more. |
-| Videos played | History has a Videos tab: the videos worlds played while you were there, read from VRChat's own log on this PC, with the world and, when the world's player writes it down, who put the video on. Each stay in the world history lists its videos too. |
+| Videos played | History has a Videos tab: the videos worlds played while you were there, read from VRChat's own log on this PC, with the world and, when the world's player writes it down, who put the video on. Each stay in the world history lists its videos too. The search goes through every video, and each one can show who was in that stay. |
 | VRChat's queue | Instance cards, the map and the instance window show how many people stand in VRChat's own queue for a full instance. |
 | Export as spreadsheets | In History or Settings: the activity feed, friend log, world visits, who was in them, avatars worn and videos played, saved as CSV files that Excel, LibreOffice or Google Sheets open. |
+| My VRChat in numbers | In History: how long you played each day or week, the worlds you spend most time in, the friends you spend it with, and the hours and weekdays you usually play, over 7 days, 30 days, a year or all time. From the log files on your PC. |
+| Friendship days | The Activity panel shows when a friendship turns another year old, and a friend's profile says since when you have been friends, both from the friend log on your PC. A Windows notice on the day can be switched off. |
 
 #### History
 

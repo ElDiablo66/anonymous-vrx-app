@@ -152,6 +152,40 @@ export interface VideoPlay {
   joinedAt: string | null;
   title: string;
   channel: string;
+  /** When the stay it played in ended; null while it goes on. */
+  leftAt: string | null;
+}
+
+/** My own numbers over a time span, from this PC's history. */
+export interface MyStats {
+  from: string;
+  to: string;
+  totalSeconds: number;
+  stays: number;
+  playDays: number;
+  worldsCount: number;
+  peopleCount: number;
+  longest: { visitId: number; worldId: string; worldName: string; joinedAt: string; seconds: number } | null;
+  /** Local date (YYYY-MM-DD) and seconds played, oldest first; days without play are left out. */
+  days: Array<[string, number]>;
+  hours: number[];
+  /** Seconds by weekday, 0 is Sunday. */
+  weekdays: number[];
+  worlds: Array<{ worldId: string; name: string; times: number; seconds: number }>;
+  people: Array<{ userId: string; name: string; friend: boolean; times: number; seconds: number }>;
+  openNow: boolean;
+  capped: number;
+}
+
+/** A friend whose friendship day is today or coming up. */
+export interface FriendDay {
+  userId: string;
+  name: string;
+  image: string;
+  since: string;
+  years: number;
+  on: string;
+  inDays: number;
 }
 
 export interface VideoTitle {
@@ -423,6 +457,8 @@ export interface Profile {
   /** My own note, kept on this PC. */
   note: string;
   together: { times: number; seconds: number; first: string | null; last: string | null };
+  /** When the friend log first shows us as friends; null without a record. */
+  friendsSince?: string | null;
   feed: FeedItem[];
   /** Names this PC saw them use: [name, when last seen]. */
   pastNames?: Array<[string, string]>;
@@ -726,6 +762,9 @@ export interface Backend {
   visits(limit: number, before?: number): Promise<Visit[]>;
   visitPeople(visitId: number): Promise<Sighting[]>;
   videos(limit: number): Promise<VideoPlay[]>;
+  videosPage(ask: { query: string; skipArrival: boolean; before?: { at: string; id: number }; limit: number }): Promise<{ rows: VideoPlay[]; total: number }>;
+  myStats(range: string): Promise<MyStats>;
+  friendDays(ahead: number): Promise<FriendDay[]>;
   visitVideos(visitId: number): Promise<VideoPlay[]>;
   videoTitles(ids: string[]): Promise<VideoTitle[]>;
   exportHistory(parts: string[]): Promise<ExportInfo>;
@@ -923,6 +962,10 @@ const desktop: Backend = {
   visits: (limit, before) => invoke("get_visits", { limit, before: before ?? null }),
   visitPeople: (visitId) => invoke("get_visit_people", { visitId }),
   videos: (limit) => invoke("get_videos", { limit }),
+  videosPage: ({ query, skipArrival, before, limit }) =>
+    invoke("get_videos_page", { query, skipArrival, beforeAt: before?.at ?? null, beforeId: before?.id ?? null, limit }),
+  myStats: (range) => invoke("get_my_stats", { range }),
+  friendDays: (ahead) => invoke("get_friend_days", { ahead }),
   visitVideos: (visitId) => invoke("get_visit_videos", { visitId }),
   videoTitles: (ids) => invoke("get_video_titles", { ids }),
   exportHistory: (parts) => invoke("export_history", { parts }),

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as 
 import { errorText, type Me } from "./backend";
 import { Avatar } from "./bits";
 import { openProfile } from "./Profile";
-import { useEscape } from "./escape";
+import { useEscape, useVeil } from "./escape";
 import { saveStatusByHand, useRuleNow } from "./statusrules";
 
 /** VRChat's four statuses: its own word, the name shown, what it means, and its colour. */
@@ -44,7 +44,7 @@ export function MyStatus({ me, onSaved, onClose, onEdit }: { me: Me; onSaved: (m
   const rule = useRuleNow();
   const field = useRef<HTMLInputElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
-  const downOnVeil = useRef(false);
+  const veil = useVeil(onClose);
   const recent = recentTexts().filter((t) => t !== text.trim());
   const now = choices.find(([v]) => v === (me.status || "active"));
   // VRChat can report a status that is none of the four, such as offline; it is named as it is.
@@ -98,12 +98,7 @@ export function MyStatus({ me, onSaved, onClose, onEdit }: { me: Me; onSaved: (m
   }
 
   return (
-    <div
-      className="veil"
-      // Only a click that starts and ends outside closes it, so selecting text past the edge does not.
-      onMouseDown={(e) => (downOnVeil.current = e.target === e.currentTarget)}
-      onClick={(e) => downOnVeil.current && e.target === e.currentTarget && onClose()}
-    >
+    <div className="veil" {...veil}>
       <div
         ref={dialog}
         className="dialog my-status"

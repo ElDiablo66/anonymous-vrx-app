@@ -1,5 +1,5 @@
 import { discordPresence } from "./presence";
-import type { HereNow } from "./backend";
+import type { HereNow, FriendDay } from "./backend";
 import { PersonMenu } from "./PersonMenu";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -37,6 +37,8 @@ import { useSettings } from "./settings";
 import { QueueBar } from "./Queue";
 import { EditProfile, SendPanel } from "./Send";
 import { useEscape } from "./escape";
+import { forgetProfileTabs } from "./Profile";
+import { forgetDetailTabs } from "./Detail";
 import { useStatusRules } from "./statusrules";
 import logo from "./assets/logo.svg";
 
@@ -44,7 +46,7 @@ type View = "around" | "here" | "history" | "everyone" | "favourites" | "events"
 
 /** What the page is called while a tab other than the first is open. */
 const tabTitles: Partial<Record<View, Record<string, string>>> = {
-  history: { Worlds: "World history", Find: "Find in your history", Photos: "Photos", Videos: "Videos played", Wardrobe: "Wardrobe", "Friend activity": "Friend activity" },
+  history: { Worlds: "World history", "In numbers": "My VRChat in numbers", Find: "Find in your history", Photos: "Photos", Videos: "Videos played", Wardrobe: "Wardrobe", "Friend activity": "Friend activity" },
   everyone: { "Friend list": "Everyone", "Friend log": "Friend log", "Blocked and muted": "Blocked and muted" },
   events: { "My groups": "Events of your groups", "All of VRChat": "Events across VRChat", Following: "Events you follow", Featured: "Featured events" },
   favourites: { Avatars: "Favourite avatars", Worlds: "Favourite worlds", Friends: "Favourite friends", "Group names": "Favourite group names" },
@@ -179,7 +181,21 @@ export function App() {
       window.removeEventListener("open-profile", openPerson);
     };
   }, []);
-  const back = windows.length > 1 ? () => setWindows((old) => old.slice(0, -1)) : undefined;
+  const back =
+    windows.length > 1
+      ? () => {
+          // A note written on a profile shows in the lists once its window is left.
+          if (top?.kind === "profile") void loadNoted();
+          setWindows((old) => old.slice(0, -1));
+        }
+      : undefined;
+  /** Close: every window goes away, and no window remembers its tab past that. */
+  const closeAll = () => {
+    setWindows([]);
+    forgetProfileTabs();
+    forgetDetailTabs();
+    void loadNoted();
+  };
   const [noted, setNoted] = useState<Set<string>>(new Set());
   const [feedTick, setFeedTick] = useState(0);
 
@@ -511,6 +527,52 @@ export function App() {
       window.removeEventListener("events:changed", read);
     };
   }, [me?.id, settings.eventReminder]);
+  // Friendship days: read when I sign in, when the friend list changes and every half hour,
+  // so a new day shows within the half hour after midnight.
+  const [friendDays, setFriendDays] = useState<FriendDay[]>([]);
+  useEffect(() => {
+    if (!me) return;
+    let alive = true;
+    const read = () =>
+      void backend
+        .friendDays(6)
+        .then((d) => alive && setFriendDays(d))
+        .catch(() => {});
+    read();
+    const every = window.setInterval(read, 30 * 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(every);
+    };
+  }, [me?.id, feedTick]);
+  // One notice on the day itself, once per friendship and year.
+  useEffect(() => {
+    if (!settings.alertFriendDays) return;
+    const today = friendDays.filter((d) => d.inDays === 0 && !(d.userId in settings.feedHidden));
+    if (today.length === 0) return;
+    const KEY = "friend-days-told";
+    let told: string[] = [];
+    try {
+      told = JSON.parse(localStorage.getItem(KEY) ?? "[]") as string[];
+    } catch {
+      /* a broken list only means a notice may come twice */
+    }
+    const fresh = today.filter((d) => !told.includes(`${d.userId}@${d.on}`));
+    if (fresh.length === 0) return;
+    try {
+      localStorage.setItem(KEY, JSON.stringify([...told, ...fresh.map((d) => `${d.userId}@${d.on}`)].slice(-200)));
+    } catch {
+      /* not being able to save it only means a notice may come twice */
+    }
+    const years = (n: number) => (n === 1 ? "a year" : `${n} years`);
+    // With names hidden, the notice says only that there is one.
+    const body = settings.hidePeople
+      ? "A friendship turns another year old today. Activity shows who."
+      : fresh.length === 1
+        ? `You and ${fresh[0].name} became friends ${years(fresh[0].years)} ago today.`
+        : `${fresh.map((d) => d.name).slice(0, 3).join(", ")}${fresh.length > 3 ? ` and ${fresh.length - 3} more` : ""}: friendship days today.`;
+    void backend.notify("Friendship day", body);
+  }, [friendDays, settings.alertFriendDays, settings.hidePeople]); // eslint-disable-line react-hooks/exhaustive-deps
   // VRChat closed without warning: where I was, until I go back or put the note away.
   const [crash, setCrash] = useState<{ location: string; worldName: string } | null>(null);
   const asked = useRef(false);
@@ -873,6 +935,7 @@ export function App() {
           change({ feedHidden: { ...settings.feedHidden, [id]: name } });
           setToast(`${name} is left out of the feed. Bring them back in Settings.`);
         }}
+        days={friendDays}
       />
 
       {top?.kind === "profile" && (
@@ -891,18 +954,15 @@ export function App() {
             change({ alertPeople: next });
           }}
           onBack={back}
-          onClose={() => {
-            setWindows([]);
-            void loadNoted();
-          }}
+          onClose={closeAll}
           onDone={setToast}
         />
       )}
 
-      {top?.kind === "instance" && <InstancePanel key={top.id} location={top.id} friends={friends} onBack={back} onClose={() => setWindows([])} onDone={setToast} />}
+      {top?.kind === "instance" && <InstancePanel key={top.id} location={top.id} friends={friends} onBack={back} onClose={closeAll} onDone={setToast} />}
 
       {top && top.kind !== "profile" && top.kind !== "instance" && (
-        <DetailPanel key={top.kind + top.id} kind={top.kind} id={top.id} meId={me.id} onBack={back} onClose={() => setWindows([])} onDone={setToast} />
+        <DetailPanel key={top.kind + top.id} kind={top.kind} id={top.id} meId={me.id} onBack={back} onClose={closeAll} onDone={setToast} />
       )}
 
 

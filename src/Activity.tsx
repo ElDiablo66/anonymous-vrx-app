@@ -1,5 +1,6 @@
+import { openProfile } from "./Profile";
 import { useState, type ReactNode } from "react";
-import type { FeedItem, Friend, World } from "./backend";
+import type { FeedItem, Friend, World, FriendDay } from "./backend";
 import { Avatar, clock, dayLabel, tidy } from "./bits";
 
 function placeName(item: FeedItem, worlds: Map<string, World>): string {
@@ -40,6 +41,27 @@ export function sentence(item: FeedItem, worlds: Map<string, World>): ReactNode 
   }
 }
 
+/** "You and Mossy became friends a year ago today", or when that day comes. */
+function friendDayLine(d: FriendDay) {
+  const years = d.years === 1 ? "a year" : `${d.years} years`;
+  const who = <b className="who">{d.name}</b>;
+  if (d.inDays === 0) {
+    return (
+      <>
+        You and {who} became friends {years} ago today.
+      </>
+    );
+  }
+  const day = new Date(`${d.on}T12:00:00`);
+  // Past six days a weekday alone would read as today's, so the date comes with it.
+  const when = d.inDays === 1 ? "Tomorrow" : d.inDays < 7 ? `On ${day.toLocaleDateString([], { weekday: "long" })}` : `On ${day.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}`;
+  return (
+    <>
+      {when} it is {years} since you and {who} became friends.
+    </>
+  );
+}
+
 export const filters: Array<{ id: string; label: string; kinds: FeedItem["kind"][] | null }> = [
   { id: "all", label: "Everything", kinds: null },
   { id: "presence", label: "Online and offline", kinds: ["online", "offline"] },
@@ -77,7 +99,10 @@ export function Activity({
   onHide,
   open: panelOpen,
   onPutAway,
+  days = [],
 }: {
+  /** Friends whose friendship day is today or in the next few days. */
+  days?: FriendDay[];
   /** False while the panel is put away. */
   open: boolean;
   onPutAway: () => void;
@@ -119,6 +144,18 @@ export function Activity({
           </button>
         ))}
       </div>
+      {(filter === "all" || filter === "friends") && days.some((d) => !(d.userId in hidden)) && (
+        <section className="friend-days" aria-label="Friendship days">
+          {days
+            .filter((d) => !(d.userId in hidden))
+            .map((d) => (
+              <button key={d.userId} className={`friend-day${d.inDays === 0 ? " today" : ""}`} onClick={() => openProfile(d.userId)} title="Open their profile">
+                <Avatar name={d.name} image={d.image} size={36} />
+                <span>{friendDayLine(d)}</span>
+              </button>
+            ))}
+        </section>
+      )}
       {hiddenCount > 0 && (
         <p className="feed-note">
           {hiddenCount === 1 ? "1 friend is" : `${hiddenCount} friends are`} left out. Bring them back in Settings.

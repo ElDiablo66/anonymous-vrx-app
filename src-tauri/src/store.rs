@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS videos (
     UNIQUE (at, url)
 );
 CREATE INDEX IF NOT EXISTS videos_visit ON videos(visit_id);
+CREATE INDEX IF NOT EXISTS feed_friend_added ON feed(user_id, at) WHERE kind = 'friendAdded';
 CREATE TABLE IF NOT EXISTS video_titles (
     video_id   TEXT PRIMARY KEY,
     title      TEXT NOT NULL DEFAULT '',
@@ -162,6 +163,8 @@ pub struct VideoPlay {
     pub joined_at: Option<String>,
     pub title: String,
     pub channel: String,
+    /// When the stay it played in ended; empty while it goes on.
+    pub left_at: Option<String>,
 }
 
 /// The title YouTube gave a video. Empty when YouTube had none to give (a removed or private video).
@@ -175,7 +178,7 @@ pub struct VideoTitle {
 
 const VIDEO_SELECT: &str = "SELECT p.id, p.at, p.url, p.youtube_id, p.requested_by, p.visit_id,
     COALESCE(v.world_id, ''), COALESCE(NULLIF(v.world_name, ''), w.name, ''), COALESCE(v.location, ''), v.joined_at,
-    COALESCE(t.title, ''), COALESCE(t.channel, '')
+    COALESCE(t.title, ''), COALESCE(t.channel, ''), v.left_at
     FROM videos p LEFT JOIN visits v ON v.id = p.visit_id LEFT JOIN worlds w ON w.world_id = v.world_id
     LEFT JOIN video_titles t ON t.video_id = p.youtube_id AND p.youtube_id <> ''";
 
@@ -193,6 +196,7 @@ fn video_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<VideoPlay> {
         joined_at: r.get(9)?,
         title: r.get(10)?,
         channel: r.get(11)?,
+        left_at: r.get(12)?,
     })
 }
 
@@ -366,6 +370,14 @@ pub struct Habits {
     pub seen_at: Vec<String>,
 }
 
+/// `fold(text)`: the text in lower case for every alphabet, so a search finds "Über" from "über"
+/// and Cyrillic or Greek names whatever their case. SQLite's own LIKE folds only A to Z.
+fn add_fold(db: &Connection) -> rusqlite::Result<()> {
+    db.create_scalar_function("fold", 1, rusqlite::functions::FunctionFlags::SQLITE_UTF8 | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC, |c| {
+        Ok(c.get::<Option<String>>(0)?.map(|s| s.to_lowercase()))
+    })
+}
+
 fn like_pattern(text: &str) -> String {
     let escaped = text.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
     format!("%{escaped}%")
@@ -459,6 +471,7 @@ fn world_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<World> {
 impl Store {
     pub fn open(path: &Path) -> AppResult<Store> {
         let db = Connection::open(path)?;
+        add_fold(&db)?;
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.execute_batch(SCHEMA)?;
         Ok(Store { db })
@@ -467,6 +480,7 @@ impl Store {
     /// Opens a history file that must already exist, without changing it.
     pub fn open_existing(path: &Path) -> AppResult<Store> {
         let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        add_fold(&db)?;
         db.query_row("SELECT COUNT(*) FROM feed", [], |r| r.get::<_, i64>(0))?;
         Ok(Store { db })
     }
@@ -474,6 +488,7 @@ impl Store {
     #[cfg(test)]
     pub fn in_memory() -> AppResult<Store> {
         let db = Connection::open_in_memory()?;
+        add_fold(&db)?;
         db.execute_batch(SCHEMA)?;
         Ok(Store { db })
     }
@@ -573,10 +588,12 @@ impl Store {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
-    /// Time spent in the same instance as someone, from the game-log history.
+    /// Time spent in the same instance as someone, from the game-log history. Rows of the same
+    /// person that overlap (a doubled log line, an imported copy) count once.
     pub fn together(&self, user_id: &str) -> AppResult<crate::vrchat::people::Together> {
         let at = now();
-        Ok(self.db.query_row(
+        let seconds: i64 = self.spans("s.user_id = ?1", user_id, &at)?.iter().map(|s| s.2).sum();
+        let mut found: crate::vrchat::people::Together = self.db.query_row(
             "SELECT COUNT(DISTINCT s.visit_id),
                     COALESCE(SUM((julianday(COALESCE(s.left_at, v.left_at, ?2)) - julianday(s.joined_at)) * 86400), 0),
                     MIN(s.joined_at),
@@ -592,7 +609,79 @@ impl Store {
                     last: r.get(3)?,
                 })
             },
-        )?)
+        )?;
+        found.seconds = seconds;
+        Ok(found)
+    }
+
+    /// The first time each of my current friends shows up as added in the friend log: who,
+    /// and when (UTC). A friend removed and added again keeps the first date.
+    pub fn friends_since_all(&self) -> AppResult<Vec<(String, String)>> {
+        let mut stmt = self.db.prepare(
+            "SELECT fe.user_id, MIN(fe.at) FROM feed fe JOIN friends f ON f.user_id = fe.user_id
+             WHERE fe.kind = 'friendAdded' GROUP BY fe.user_id",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// The first time one person shows up as added in the friend log.
+    pub fn friends_since(&self, user_id: &str) -> AppResult<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT MIN(at) FROM feed WHERE user_id = ?1 AND kind = 'friendAdded'", params![user_id], |r| r.get(0))?)
+    }
+
+    /// My stays and the people in them between two times (UTC), for the numbers page.
+    pub fn stats_rows(&self, from: &str, to: &str, my_id: &str, my_name: &str) -> AppResult<(Vec<crate::stats::StayRow>, Vec<crate::stats::SightRow>)> {
+        let mut stmt = self.db.prepare(
+            "SELECT v.id, v.world_id, COALESCE(NULLIF(v.world_name, ''), w.name, ''), v.joined_at, julianday(v.joined_at), julianday(v.left_at),
+                    (SELECT julianday(MAX(COALESCE(s.left_at, s.joined_at))) FROM sightings s WHERE s.visit_id = v.id)
+             FROM visits v LEFT JOIN worlds w ON w.world_id = v.world_id
+             WHERE julianday(COALESCE(v.left_at, ?2)) > julianday(?1) AND julianday(v.joined_at) < julianday(?2)
+             ORDER BY julianday(v.joined_at), v.id",
+        )?;
+        let stays = stmt
+            .query_map(params![from, to], |r| {
+                Ok(crate::stats::StayRow {
+                    visit_id: r.get(0)?,
+                    world_id: r.get(1)?,
+                    world_name: r.get(2)?,
+                    joined_at: r.get(3)?,
+                    start: r.get::<_, Option<f64>>(4)?.unwrap_or(0.0),
+                    left: r.get(5)?,
+                    last_seen: r.get(6)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|s| s.start > 0.0)
+            .collect();
+        let mut stmt = self.db.prepare(
+            "SELECT CASE WHEN s.user_id <> '' THEN s.user_id ELSE ' ' || s.display_name END AS k, s.user_id, s.display_name, s.visit_id,
+                    julianday(s.joined_at), julianday(COALESCE(s.left_at, v.left_at, ?2)), f.user_id IS NOT NULL
+             FROM sightings s JOIN visits v ON v.id = s.visit_id
+             LEFT JOIN friends f ON f.user_id = s.user_id AND s.user_id <> ''
+             WHERE s.user_id <> ?3
+               -- An old log line without an id that carries one of my own names is me.
+               AND NOT (s.user_id = '' AND (s.display_name = ?4 OR s.display_name IN (SELECT display_name FROM sightings WHERE user_id = ?3 AND ?3 <> '')))
+               AND julianday(COALESCE(s.left_at, v.left_at, ?2)) > julianday(?1) AND julianday(s.joined_at) < julianday(?2)
+             ORDER BY k, julianday(s.joined_at), s.id",
+        )?;
+        let sights = stmt
+            .query_map(params![from, to, my_id, my_name], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?, r.get::<_, Option<f64>>(4)?, r.get::<_, Option<f64>>(5)?, r.get::<_, bool>(6)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter_map(|(key, user_id, name, visit_id, start, end, friend)| Some(crate::stats::SightRow { key, user_id, name, visit_id, start: start?, end: end?, friend }))
+            .collect();
+        Ok((stays, sights))
+    }
+
+    /// When the oldest stay began (UTC), for "all time".
+    pub fn first_stay(&self) -> AppResult<Option<String>> {
+        Ok(self.db.query_row("SELECT joined_at FROM visits ORDER BY julianday(joined_at) LIMIT 1", [], |r| r.get(0)).optional()?)
     }
 
     /// One person's feed entries, newest first.
@@ -1560,6 +1649,33 @@ impl Store {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// One page of the videos played around me, newest first, with how many match in all.
+    /// `query` looks in the link, who put it on, the world and the YouTube title and channel;
+    /// `skip_arrival` leaves out videos already on as I arrived; `before` is the time and id
+    /// of the last video of the page before.
+    pub fn videos_page(&self, query: &str, skip_arrival: bool, before: Option<(String, i64)>, limit: u32) -> AppResult<(Vec<VideoPlay>, i64)> {
+        let pattern = if query.trim().is_empty() { String::new() } else { like_pattern(&query.trim().to_lowercase()) };
+        let filter = "(?1 = '' OR fold(p.url) LIKE ?1 ESCAPE '\\' OR fold(p.requested_by) LIKE ?1 ESCAPE '\\' OR fold(t.title) LIKE ?1 ESCAPE '\\'
+                       OR fold(t.channel) LIKE ?1 ESCAPE '\\' OR fold(COALESCE(NULLIF(v.world_name, ''), w.name, '')) LIKE ?1 ESCAPE '\\')
+            AND NOT (?2 = 1 AND p.requested_by = '' AND v.joined_at IS NOT NULL AND (julianday(p.at) - julianday(v.joined_at)) * 86400 <= 30)";
+        let total: i64 = self.db.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM videos p LEFT JOIN visits v ON v.id = p.visit_id LEFT JOIN worlds w ON w.world_id = v.world_id
+                 LEFT JOIN video_titles t ON t.video_id = p.youtube_id AND p.youtube_id <> '' WHERE {filter}"
+            ),
+            params![pattern, skip_arrival],
+            |r| r.get(0),
+        )?;
+        let (at, id) = before.unwrap_or_else(|| (String::new(), i64::MAX));
+        let sql = format!(
+            "{VIDEO_SELECT} WHERE {filter} AND (?3 = '' OR p.at < ?3 OR (p.at = ?3 AND p.id < ?4))
+             ORDER BY p.at DESC, p.id DESC LIMIT ?5"
+        );
+        let mut stmt = self.db.prepare(&sql)?;
+        let rows = stmt.query_map(params![pattern, skip_arrival, at, id, limit.clamp(1, 200)], video_row)?;
+        Ok((rows.collect::<Result<Vec<_>, _>>()?, total))
+    }
+
     /// The videos played during one stay, in the order they played.
     pub fn visit_videos(&self, visit_id: i64) -> AppResult<Vec<VideoPlay>> {
         let sql = format!("{VIDEO_SELECT} WHERE p.visit_id = ?1 ORDER BY p.at, p.id");
@@ -2217,6 +2333,77 @@ mod tests {
         s.set_note("usr_1", "   ").unwrap();
         assert_eq!(s.note("usr_1").unwrap(), "");
         assert!(s.noted().unwrap().is_empty());
+    }
+
+    #[test]
+    fn together_counts_overlapping_rows_once() {
+        use crate::gamelog::LogEvent;
+        let s = Store::in_memory().unwrap();
+        let at = |t: &str| format!("2026-01-05T{t}Z");
+        s.record_log(
+            &[
+                (at("20:00:00"), LogEvent::Joining("wrld_a:1".into())),
+                (at("20:00:00"), LogEvent::PlayerJoined { name: "Pip".into(), id: "usr_pip".into() }),
+                (at("21:00:00"), LogEvent::LeftRoom),
+            ],
+            true,
+            "log:test",
+            1,
+        )
+        .unwrap();
+        // A second row for the same hour, as an import can leave.
+        s.db.execute(
+            "INSERT INTO sightings (visit_id, user_id, display_name, joined_at, left_at) VALUES (1, 'usr_pip', 'Pip', '2026-01-05T20:30:00.000Z', '2026-01-05T21:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(s.together("usr_pip").unwrap().seconds, 3600);
+    }
+
+    #[test]
+    fn friends_since_takes_the_first_add_of_a_current_friend() {
+        let s = Store::in_memory().unwrap();
+        s.db.execute_batch(
+            "INSERT INTO friends (user_id, data, updated_at) VALUES ('usr_a', '{}', 'x');
+             INSERT INTO feed (at, user_id, display_name, kind) VALUES
+               ('2024-03-01T10:00:00.000Z', 'usr_a', 'Ana', 'friendAdded'),
+               ('2025-01-01T10:00:00.000Z', 'usr_a', 'Ana', 'friendRemoved'),
+               ('2025-02-01T10:00:00.000Z', 'usr_a', 'Ana', 'friendAdded'),
+               ('2024-05-01T10:00:00.000Z', 'usr_gone', 'Gone', 'friendAdded');",
+        )
+        .unwrap();
+        assert_eq!(s.friends_since_all().unwrap(), vec![("usr_a".to_string(), "2024-03-01T10:00:00.000Z".to_string())]);
+        assert_eq!(s.friends_since("usr_gone").unwrap().as_deref(), Some("2024-05-01T10:00:00.000Z"));
+        assert_eq!(s.friends_since("usr_none").unwrap(), None);
+    }
+
+    #[test]
+    fn video_pages_search_and_follow_on() {
+        use crate::gamelog::LogEvent;
+        let s = Store::in_memory().unwrap();
+        let at = |t: &str| format!("2026-01-05T{t}Z");
+        let mut events = vec![(at("20:00:00"), LogEvent::Room("100% Movies".into())), (at("20:00:00"), LogEvent::Joining("wrld_a:1".into()))];
+        for n in 0..5 {
+            events.push((at(&format!("20:0{n}:30")), LogEvent::Video { url: format!("https://example.test/clip_{n}.mp4") }));
+        }
+        s.record_log(&events, true, "log:test", 1).unwrap();
+        let (first, total) = s.videos_page("", false, None, 2).unwrap();
+        assert_eq!((first.len(), total), (2, 5));
+        let last = first.last().unwrap();
+        let (next, _) = s.videos_page("", false, Some((last.at.clone(), last.id)), 10).unwrap();
+        assert_eq!(next.len(), 3);
+        assert!(next.iter().all(|v| v.at < last.at));
+        // % and _ are plain letters in a search.
+        assert_eq!(s.videos_page("100%", false, None, 10).unwrap().1, 5);
+        assert_eq!(s.videos_page("clip_3", false, None, 10).unwrap().1, 1);
+        assert_eq!(s.videos_page("clip%3", false, None, 10).unwrap().1, 0);
+        // The first one played 30 s after I arrived, with nobody named: left out when asked.
+        assert_eq!(s.videos_page("", true, None, 10).unwrap().1, 4);
+        // Case does not matter, in any alphabet.
+        s.save_video_title("AbCdEfGhIjK", "Über Ночь", "").unwrap();
+        s.db.execute("UPDATE videos SET youtube_id = 'AbCdEfGhIjK' WHERE id = 1", []).unwrap();
+        assert_eq!(s.videos_page("über ночь", false, None, 10).unwrap().1, 1);
+        assert_eq!(s.videos_page("100% MOVIES", false, None, 10).unwrap().1, 5);
     }
 
     #[test]

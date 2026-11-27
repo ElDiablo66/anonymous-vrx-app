@@ -109,6 +109,8 @@ export interface Settings {
   alertInvites: boolean;
   alertFriendRequests: boolean;
   alertBoops: boolean;
+  /** A notice on the day a friendship turns another year old. */
+  alertFriendDays: boolean;
   /** Group invites, announcements and anything else VRChat sends. */
   alertEverythingElse: boolean;
   /** What the window's close button does. */
@@ -205,6 +207,7 @@ function load(): Settings {
     alertInvites: true,
     alertFriendRequests: true,
     alertBoops: true,
+    alertFriendDays: true,
     alertEverythingElse: true,
     onClose: "ask",
     launchMode: "auto",

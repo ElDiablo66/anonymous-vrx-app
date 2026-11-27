@@ -1,4 +1,4 @@
-import { useEscape } from "./escape";
+import { useEscape, useVeil } from "./escape";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { backend, errorText, type Friend, type InviteMessage } from "./backend";
 import { colourOf, textureName, textures, textureUrl, useDress } from "./look";
@@ -374,8 +374,9 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
   useEffect(() => setLeaving(""), [bio, pronouns, links, langs, look]);
   const tryClose = () => (leaving ? setLeaving("") : dirty ? setLeaving("close") : onClose());
   const tryBack = () => (dirty ? setLeaving("back") : onBack?.());
-  useEscape(tryClose);
-  const downOnVeil = useRef(false);
+  // Escape answers the question first; then it goes back to My status when that is where this came from.
+  useEscape(() => (leaving ? setLeaving("") : onBack ? tryBack() : tryClose()));
+  const veil = useVeil(tryClose);
   // The question sits at the bottom of a long dialog, so it is scrolled into sight and gets the keyboard.
   const keepButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -428,11 +429,7 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
   const noneOwned = owned !== null && (["iconFrame", "profileEffect", "nameplateEffect"] as const).every((k) => pickable(k).length === 0);
 
   return (
-    <div
-      className="veil"
-      onMouseDown={(e) => (downOnVeil.current = e.target === e.currentTarget)}
-      onClick={(e) => downOnVeil.current && e.target === e.currentTarget && tryClose()}
-    >
+    <div className="veil" {...veil}>
       <div className="dialog send profile-edit" role="dialog" aria-modal="true" aria-labelledby="edit-title" onClick={(e) => e.stopPropagation()}>
         {onBack && (
           <button className="edit-back" onClick={tryBack}>

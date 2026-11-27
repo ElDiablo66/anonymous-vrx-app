@@ -136,6 +136,22 @@ impl Default for Alerts {
     }
 }
 
+/// A friend whose friendship day is coming up.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FriendDay {
+    pub user_id: String,
+    pub name: String,
+    pub image: String,
+    /// When the friend log first shows us as friends (UTC).
+    pub since: String,
+    pub years: i32,
+    /// The day it falls on this year, YYYY-MM-DD in the PC's own calendar.
+    pub on: String,
+    /// 0 for today.
+    pub in_days: i64,
+}
+
 /// Everything the profile panel shows about one person.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -146,6 +162,9 @@ pub struct Profile {
     /// The profile exactly as VRChat sent it.
     pub raw: Value,
     pub together: Together,
+    /// The first time the friend log shows us becoming friends; empty when it has no record
+    /// or when we are not friends.
+    pub friends_since: Option<String>,
     /// Their recent entries in my feed.
     pub feed: Vec<FeedItem>,
     /// Names this PC saw them use, each with when it was last seen.
@@ -973,6 +992,7 @@ impl Hub {
         Ok(Profile {
             note: store.note(user_id)?,
             together: store.together(user_id)?,
+            friends_since: if inner.friends.contains_key(user_id) { store.friends_since(user_id)? } else { None },
             feed: store.feed_for(user_id, 40)?,
             past_names: store.past_names(user_id).unwrap_or_default(),
             person,
@@ -1978,6 +1998,91 @@ impl Hub {
             Some(store) => store.visit_people(visit_id),
             None => Err(AppError::NotSignedIn),
         }
+    }
+
+    pub fn videos_page(&self, query: &str, skip_arrival: bool, before: Option<(String, i64)>, limit: u32) -> AppResult<(Vec<crate::store::VideoPlay>, i64)> {
+        let inner = self.inner.lock().unwrap();
+        match &inner.store {
+            Some(store) => store.videos_page(query, skip_arrival, before, limit),
+            None => Err(AppError::NotSignedIn),
+        }
+    }
+
+    /// My own numbers over a range of days, from this PC's history. `running` says whether
+    /// VRChat runs now, so a stay it never closed is not counted up to now by mistake. The only
+    /// thing VRChat may be asked is the name of a top world the app has not looked up yet.
+    pub fn my_stats(&self, range: &str, running: bool) -> AppResult<crate::stats::MyStats> {
+        use chrono::TimeZone;
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        let now = chrono::Utc::now();
+        let to = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        // A range starts at midnight, in the PC's own time.
+        let midnight = |days_back: i64| {
+            let day = chrono::Local::now().date_naive() - chrono::Duration::days(days_back);
+            let start = day.and_hms_opt(0, 0, 0).unwrap_or_default();
+            // Where the clock jumps forward at midnight, the day starts at the first hour that exists.
+            (0..4)
+                .find_map(|h| chrono::Local.from_local_datetime(&(start + chrono::Duration::hours(h))).earliest())
+                .map(|t| t.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+                .unwrap_or_else(|| to.clone())
+        };
+        let from = match range {
+            "7d" => midnight(6),
+            "30d" => midnight(29),
+            "year" => midnight(364),
+            _ => match self.with_store(|s| s.first_stay())? {
+                Some(first) => first,
+                None => return Ok(crate::stats::MyStats { from: to.clone(), to, hours: vec![0; 24], weekdays: vec![0; 7], ..Default::default() }),
+            },
+        };
+        let (stays, sights) = self.with_store(|s| s.stats_rows(&from, &to, &me.id, &me.display_name))?;
+        let jd = |text: &str| chrono::DateTime::parse_from_rfc3339(text).map(|t| t.timestamp_millis() as f64 / 86_400_000.0 + 2_440_587.5).unwrap_or(0.0);
+        let mut stats = crate::stats::work_out(jd(&from), jd(&to), &stays, &sights, running);
+        stats.from = from;
+        stats.to = to;
+        // A world the app has no name for is looked up once, in the slow queue.
+        for world in &stats.worlds {
+            if world.name.is_empty() && world.world_id.starts_with("wrld_") {
+                self.want_world(&world.world_id);
+            }
+        }
+        Ok(stats)
+    }
+
+    /// Friends whose friendship day (the date the friend log first shows us as friends) falls
+    /// today or in the next `ahead` days, in the PC's own calendar.
+    pub fn friend_days(&self, ahead: u32) -> AppResult<Vec<FriendDay>> {
+        use chrono::Datelike;
+        let inner = self.inner.lock().unwrap();
+        let store = inner.store.as_ref().ok_or(AppError::NotSignedIn)?;
+        let today = chrono::Local::now().date_naive();
+        let mut out = Vec::new();
+        for (user_id, since) in store.friends_since_all()? {
+            let Some(friend) = inner.friends.get(&user_id) else { continue };
+            let Ok(started) = chrono::DateTime::parse_from_rfc3339(&since) else { continue };
+            let start = started.with_timezone(&chrono::Local).date_naive();
+            for offset in 0..=ahead.min(14) {
+                let day = today + chrono::Duration::days(offset as i64);
+                let years = day.year() - start.year();
+                // A friendship from 29 February is kept on 28 February in other years.
+                let same = (day.month(), day.day()) == (start.month(), start.day())
+                    || (start.month() == 2 && start.day() == 29 && day.month() == 2 && day.day() == 28 && chrono::NaiveDate::from_ymd_opt(day.year(), 2, 29).is_none());
+                if same && years >= 1 {
+                    out.push(FriendDay {
+                        user_id: user_id.clone(),
+                        name: friend.display_name.clone(),
+                        image: friend.image.clone(),
+                        since: since.clone(),
+                        years,
+                        on: day.format("%Y-%m-%d").to_string(),
+                        in_days: offset as i64,
+                    });
+                    break;
+                }
+            }
+        }
+        out.sort_by(|a, b| a.in_days.cmp(&b.in_days).then(b.years.cmp(&a.years)).then_with(|| a.name.cmp(&b.name)));
+        Ok(out)
     }
 
     pub fn videos(&self, limit: u32) -> AppResult<Vec<crate::store::VideoPlay>> {

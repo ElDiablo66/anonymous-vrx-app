@@ -1,4 +1,4 @@
-import { useEscape } from "./escape";
+import { useEscape, useVeil } from "./escape";
 import { useEffect, useState } from "react";
 import { backend, errorText, type Friend } from "./backend";
 import { Avatar, accessName, ageGated, regionName, sinceWords, statusTone, tidy } from "./bits";
@@ -56,7 +56,9 @@ export function InstancePanel({
     };
   }, [location, worldId]);
 
-  useEscape(onClose);
+  // Escape goes back one window when there is one to go back to; Close puts them all away.
+  useEscape(() => (onBack ? onBack() : onClose()));
+  const veil = useVeil(onClose);
 
   const name = tidy(str(world?.name)) || "World";
   const image = str(world?.imageUrl) || str(world?.thumbnailImageUrl);
@@ -84,7 +86,7 @@ export function InstancePanel({
   const elsewhere = Array.isArray(world?.instances) ? Math.max(0, (world.instances as unknown[]).length - 1) : 0;
 
   return (
-    <div className="veil" onClick={onClose}>
+    <div className="veil" {...veil}>
       <div className="profile" role="dialog" aria-modal="true" aria-label={`${name}, instance`} onClick={(e) => e.stopPropagation()}>
         <aside className="profile-side">
           <button

@@ -1,6 +1,6 @@
 [package]
 name = "anonymous-vrx"
-version = "0.1.8"
+version = "0.1.9"
 description = "Your VRChat night on one screen: friends, worlds, history and your own avatars"
 authors = ["El Diablo 59"]
 license = "GPL-3.0-only"
@@ -25,7 +25,7 @@ reqwest = { version = "0.13", default-features = false, features = ["native-tls"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
 futures-util = "0.3"
-rusqlite = { version = "0.43", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled", "functions"] }
 keyring = { version = "3", features = ["windows-native"] }
 thiserror = "2"
 base64 = "0.22"

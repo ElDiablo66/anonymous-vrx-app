@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MouseEvent } from "react";
 
 /** The Escape of every open window, panel and menu, the newest last. */
 const open: Array<{ close: () => void }> = [];
@@ -12,6 +12,8 @@ function onKey(e: KeyboardEvent) {
   if (box instanceof HTMLInputElement && box.type === "search") return;
   // Only the newest one closes, and nothing behind it hears the key.
   e.stopImmediatePropagation();
+  // Holding the key down steps back once, not through every window.
+  if (e.repeat) return;
   open[open.length - 1].close();
 }
 
@@ -35,4 +37,26 @@ export function useEscape(close: () => void, on = true) {
       if (at >= 0) open.splice(at, 1);
     };
   }, [on]);
+}
+
+/**
+ * Props for a window's dark backdrop: it closes the window only on a press that both starts and
+ * ends on the backdrop, so selecting text that runs past the window's edge closes nothing.
+ */
+export function useVeil(close: () => void) {
+  const down = useRef(false);
+  const up = useRef(false);
+  const latest = useRef(close);
+  latest.current = close;
+  return {
+    onMouseDown: (e: MouseEvent) => {
+      down.current = e.target === e.currentTarget;
+    },
+    onMouseUp: (e: MouseEvent) => {
+      up.current = e.target === e.currentTarget;
+    },
+    onClick: (e: MouseEvent) => {
+      if (down.current && up.current && e.target === e.currentTarget) latest.current();
+    },
+  };
 }

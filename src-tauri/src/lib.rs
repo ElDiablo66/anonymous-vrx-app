@@ -7,6 +7,7 @@ pub mod gamelog;
 pub mod hub;
 pub mod photos;
 pub mod secrets;
+pub mod stats;
 pub mod store;
 pub mod vr;
 pub mod vrchat;
@@ -676,6 +677,25 @@ fn get_visit_people(hub: State<'_, Arc<Hub>>, visit_id: i64) -> AppResult<Vec<Si
 #[tauri::command]
 fn get_videos(hub: State<'_, Arc<Hub>>, limit: u32) -> AppResult<Vec<store::VideoPlay>> {
     hub.videos(limit)
+}
+
+#[tauri::command]
+fn get_videos_page(hub: State<'_, Arc<Hub>>, query: String, skip_arrival: bool, before_at: Option<String>, before_id: Option<i64>, limit: u32) -> AppResult<serde_json::Value> {
+    let before = before_at.zip(before_id);
+    let (rows, total) = hub.videos_page(&query, skip_arrival, before, limit)?;
+    Ok(serde_json::json!({ "rows": rows, "total": total }))
+}
+
+/// My own numbers over a range: "7d", "30d", "year" or "all".
+#[tauri::command]
+fn get_my_stats(hub: State<'_, Arc<Hub>>, range: String) -> AppResult<stats::MyStats> {
+    hub.my_stats(&range, GAME_RUNNING.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Friends whose friendship day is today or in the next days.
+#[tauri::command]
+fn get_friend_days(hub: State<'_, Arc<Hub>>, ahead: u32) -> AppResult<Vec<hub::FriendDay>> {
+    hub.friend_days(ahead)
 }
 
 #[tauri::command]
@@ -1564,6 +1584,9 @@ pub fn run() {
             get_visits,
             get_visit_people,
             get_videos,
+            get_videos_page,
+            get_my_stats,
+            get_friend_days,
             get_visit_videos,
             get_video_titles,
             export_history,
