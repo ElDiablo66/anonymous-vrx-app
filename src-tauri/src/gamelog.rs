@@ -1,11 +1,13 @@
 //! Reads VRChat's own output log files to learn which instances this PC
 //! visited and who was there. Nothing is written to those files.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-use chrono::{Local, NaiveDateTime, SecondsFormat, TimeZone, Utc};
+use chrono::{DateTime, Local, LocalResult, NaiveDateTime, SecondsFormat, TimeZone, Utc};
 
 use crate::error::{AppError, AppResult};
 use crate::store::Store;
@@ -155,13 +157,50 @@ pub fn said_goodbye(dir: &Path) -> Option<bool> {
     Some(text.contains("VRCApplication: HandleApplicationQuit") || text.contains("VRCApplication: OnApplicationQuit"))
 }
 
-/// The log uses the PC's local time with no zone. History is stored in UTC.
-pub fn to_utc(at: NaiveDateTime) -> String {
-    let utc = match Local.from_local_datetime(&at).earliest() {
-        Some(local) => local.with_timezone(&Utc),
-        None => Utc.from_utc_datetime(&at),
+/// How far the line before may run ahead of a line in the repeated hour before that line is
+/// taken to be from the second pass. Lines written at nearly the same moment can come out a
+/// second or so out of order, and that must not move them an hour.
+const OUT_OF_ORDER: i64 = 60;
+
+/// Picks between the two moments a local time in the repeated hour of the autumn clock change
+/// can mean. A log only moves forward, so once the line before is past the first moment, this
+/// line is from the second pass.
+fn pick(first: DateTime<Utc>, second: DateTime<Utc>, before: Option<DateTime<Utc>>) -> DateTime<Utc> {
+    match before {
+        Some(before) if before > first + chrono::Duration::seconds(OUT_OF_ORDER) => second,
+        _ => first,
+    }
+}
+
+/// The log uses the PC's local time with no zone. History is stored in UTC. `before` is the
+/// moment of the line before in the same file; it settles times in the hour the autumn clock
+/// change repeats, and is moved on to this line.
+fn to_utc(at: NaiveDateTime, before: &mut Option<DateTime<Utc>>) -> String {
+    let utc = match Local.from_local_datetime(&at) {
+        LocalResult::Single(local) => local.with_timezone(&Utc),
+        LocalResult::Ambiguous(first, second) => pick(first.with_timezone(&Utc), second.with_timezone(&Utc), *before),
+        LocalResult::None => Utc.from_utc_datetime(&at),
     };
+    *before = Some(utc);
     utc.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
+
+/// For each log file, where reading stopped and the moment of the last line read there. A new
+/// plan is made every pass, so this keeps the repeated hour sorted out from one pass to the next.
+static LAST_LINE: Mutex<Option<LastLines>> = Mutex::new(None);
+
+/// Each file's position and the moment of the last line read before it.
+type LastLines = HashMap<PathBuf, (u64, DateTime<Utc>)>;
+
+fn last_line(path: &Path, offset: u64) -> Option<DateTime<Utc>> {
+    let seen = LAST_LINE.lock().unwrap_or_else(|e| e.into_inner());
+    seen.as_ref()?.get(path).filter(|(at, _)| *at == offset).map(|(_, when)| *when)
+}
+
+fn remember_last_line(path: &Path, offset: u64, when: Option<DateTime<Utc>>) {
+    let Some(when) = when else { return };
+    let mut seen = LAST_LINE.lock().unwrap_or_else(|e| e.into_inner());
+    seen.get_or_insert_with(HashMap::new).insert(path.to_path_buf(), (offset, when));
 }
 
 /// The log files in the folder, or nothing when the folder cannot be read right now.
@@ -193,6 +232,8 @@ pub struct Pending {
     pub key: String,
     path: PathBuf,
     offset: u64,
+    /// The moment of the last line read from this file, when known.
+    last: Option<DateTime<Utc>>,
 }
 
 /// What the next stretch of a log file holds.
@@ -214,7 +255,8 @@ pub fn plan(dir: &Path, store: &Store) -> AppResult<Option<Vec<Pending>>> {
     for (name, path) in &files {
         let key = format!("log:{name}");
         let offset: u64 = store.setting(&key)?.and_then(|v| v.parse().ok()).unwrap_or(0);
-        out.push(Pending { key, path: path.clone(), offset });
+        let last = last_line(path, offset);
+        out.push(Pending { key, path: path.clone(), offset, last });
     }
     let keep: Vec<String> = out.iter().map(|p| p.key.clone()).collect();
     store.forget_settings_with_prefix("log:", &keep)?;
@@ -231,6 +273,7 @@ pub fn read_next(pending: &mut Pending) -> AppResult<Option<Chunk>> {
         let size = meta.len();
         if size < pending.offset {
             pending.offset = 0;
+            pending.last = None;
         }
         if size == pending.offset {
             return Ok(None);
@@ -248,13 +291,16 @@ pub fn read_next(pending: &mut Pending) -> AppResult<Option<Chunk>> {
             return Ok(None);
         };
         let text = String::from_utf8_lossy(&bytes[..=last_break]);
+        let mut last = pending.last;
         let events: Vec<(String, LogEvent)> = text
             .lines()
             .filter_map(parse_line)
-            .map(|(at, event)| (to_utc(at), event))
+            .map(|(at, event)| (to_utc(at, &mut last), event))
             .collect();
         let fresh_file = pending.offset == 0;
         pending.offset += last_break as u64 + 1;
+        pending.last = last;
+        remember_last_line(&pending.path, pending.offset, last);
         return Ok(Some(Chunk { events, fresh_file, offset: pending.offset }));
     }
 }
@@ -279,6 +325,7 @@ pub fn read_so_far(dir: &Path, store: &Store) -> AppResult<Vec<(PathBuf, u64)>> 
 pub fn videos_in(path: &Path, upto: u64) -> AppResult<Vec<(String, LogEvent)>> {
     let mut out = Vec::new();
     let mut from = 0u64;
+    let mut last = None;
     while from < upto {
         let bytes = read_range(path, from, (upto - from).min(CHUNK)).map_err(|e| AppError::Storage(e.to_string()))?;
         if bytes.is_empty() {
@@ -293,12 +340,14 @@ pub fn videos_in(path: &Path, upto: u64) -> AppResult<Vec<(String, LogEvent)>> {
             None => bytes.len(),
         };
         let text = String::from_utf8_lossy(&bytes[..end]);
-        out.extend(
-            text.lines()
-                .filter_map(parse_line)
-                .filter(|(_, e)| matches!(e, LogEvent::Video { .. } | LogEvent::VideoBy { .. }))
-                .map(|(at, e)| (to_utc(at), e)),
-        );
+        // Every line moves the clock on, not only the video lines, so the repeated hour is
+        // read the same way as in `read_next`.
+        for (at, e) in text.lines().filter_map(parse_line) {
+            let stamp = to_utc(at, &mut last);
+            if matches!(e, LogEvent::Video { .. } | LogEvent::VideoBy { .. }) {
+                out.push((stamp, e));
+            }
+        }
         from += end as u64;
     }
     Ok(out)
@@ -361,6 +410,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(e, LogEvent::VideoBy { url: "https://youtu.be/AbCdEfGhIjK".into(), name: "Pip Halloway".into() });
+    }
+
+    #[test]
+    fn the_repeated_hour_follows_the_line_before() {
+        let at = |t: &str| DateTime::parse_from_rfc3339(t).unwrap().with_timezone(&Utc);
+        // 02:20 local on the autumn change in Europe: 00:20 UTC on the first pass, 01:20 on the second.
+        let (first, second) = (at("2026-10-25T00:20:00Z"), at("2026-10-25T01:20:00Z"));
+        // Nothing read before, or the line before earlier in the first pass: the first pass.
+        assert_eq!(pick(first, second, None), first);
+        assert_eq!(pick(first, second, Some(at("2026-10-25T00:10:00Z"))), first);
+        // A line a second later written just before this one does not move it an hour.
+        assert_eq!(pick(first, second, Some(at("2026-10-25T00:20:01Z"))), first);
+        // The line before was 02:50 on the first pass: this one is from the second pass, so a
+        // stay joined at 02:50 and left at 02:20 lasts half an hour instead of minus half an hour.
+        assert_eq!(pick(first, second, Some(at("2026-10-25T00:50:00Z"))), second);
+        // Further into the second pass it stays there.
+        assert_eq!(pick(first, second, Some(at("2026-10-25T01:10:00Z"))), second);
     }
 
     #[test]

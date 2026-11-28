@@ -126,6 +126,10 @@ pub struct Friend {
     /// Age verified as 18+.
     #[serde(default)]
     pub adult: bool,
+    /// The last real place they were in before they started travelling, so the feed can say
+    /// where they came from once they arrive. Only kept in memory, never sent to the window.
+    #[serde(default, skip_serializing)]
+    pub before_travel: String,
 }
 
 fn text(v: &Value, key: &str) -> String {

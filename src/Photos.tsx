@@ -15,6 +15,8 @@ export function Photos({ onDone }: { onDone: (message: string) => void }) {
   const [open, setOpen] = useState<PhotoInfo | null>(null);
   /** How many photos there are before anything narrows the list. */
   const [everything, setEverything] = useState(0);
+  /** The folder the app looked through: the one VRChat was told to use, or Pictures\VRChat. */
+  const [folder, setFolder] = useState("");
   const [typed, setTyped] = useState("");
   /** What is being searched for: the typed text once typing has paused. */
   const [query, setQuery] = useState("");
@@ -31,6 +33,7 @@ export function Photos({ onDone }: { onDone: (message: string) => void }) {
       if (mine !== asked.current) return;
       setTotal(page.total);
       setEverything(page.everything);
+      setFolder(page.folder ?? "");
       setPhotos((had) => (skip === 0 || !had ? page.photos : [...had, ...page.photos]));
     } catch (err) {
       if (mine === asked.current) setProblem(errorText(err));
@@ -90,7 +93,11 @@ export function Photos({ onDone }: { onDone: (message: string) => void }) {
   }
   if (photos === null) return <p className="empty">Looking through your VRChat photos</p>;
   if (photos.length === 0 && !narrowed) {
-    return <p className="empty">No VRChat photos found in your Pictures folder. Photos taken with the camera in VRChat show up here.</p>;
+    return (
+      <p className="empty">
+        No VRChat photos found in {folder || "your Pictures folder"}. Photos taken with the camera in VRChat show up here.
+      </p>
+    );
   }
   if (photos.length === 0) {
     return (
@@ -109,7 +116,7 @@ export function Photos({ onDone }: { onDone: (message: string) => void }) {
     <div className="photos">
       {tools}
       <p className="tile-note">
-        {narrowed ? `${total} of ${everything} photos match.` : `${total} ${total === 1 ? "photo" : "photos"} in Pictures, VRChat.`} The world and the people come
+        {narrowed ? `${total} of ${everything} photos match.` : `${total} ${total === 1 ? "photo" : "photos"} in ${folder || "Pictures, VRChat"}.`} The world and the people come
         from this app's own history, so photos from before it was installed have none. A person is found when they were in the instance as the photo
         was taken, whether or not they are in the picture. Your files are not changed.
       </p>

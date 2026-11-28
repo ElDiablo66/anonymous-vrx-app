@@ -164,6 +164,16 @@ fn send(pipe: &mut std::fs::File, command: &Value) -> bool {
     pipe.read_exact(&mut body).is_ok()
 }
 
+/// How often an unchanged presence is sent again, to notice that Discord closed or restarted.
+/// One update a minute is far inside Discord's limit of five in twenty seconds.
+const REFRESH_EVERY: Duration = Duration::from_secs(60);
+
+/// Whether an unchanged presence should be sent again: only while something is shown over an
+/// open pipe, and only once the last update is a minute old.
+fn refresh_due(showing: bool, connected: bool, since_last: Duration) -> bool {
+    showing && connected && since_last >= REFRESH_EVERY
+}
+
 #[cfg(windows)]
 fn worker() {
     let pid = std::process::id();
@@ -176,6 +186,20 @@ fn worker() {
         std::thread::sleep(Duration::from_secs(2));
         let want = WANT.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if want == shown {
+            // Discord drops the activity when it closes or restarts, and the pipe gives no sign of
+            // that until it is used. Sending the same presence again now and then finds a dead
+            // pipe, and clearing both lets the normal reconnect below show it again.
+            if refresh_due(shown.is_some(), pipe.is_some(), last_sent.elapsed()) {
+                if let Some((_, file)) = pipe.as_mut() {
+                    nonce += 1;
+                    if send(file, &activity_command(want.as_ref(), pid, nonce)) {
+                        last_sent = Instant::now();
+                    } else {
+                        pipe = None;
+                        shown = None;
+                    }
+                }
+            }
             continue;
         }
         // Discord allows only a few updates in a row; changes closer than 4 seconds wait.
@@ -267,6 +291,15 @@ mod tests {
 
         // Clearing sends no activity at all.
         assert!(activity_command(None, 1, 1)["args"]["activity"].is_null());
+    }
+
+    #[test]
+    fn unchanged_presence_is_sent_again_once_a_minute() {
+        assert!(!refresh_due(true, true, Duration::from_secs(59)));
+        assert!(refresh_due(true, true, Duration::from_secs(60)));
+        // Nothing shown, or no pipe yet: the normal path handles it.
+        assert!(!refresh_due(false, true, Duration::from_secs(600)));
+        assert!(!refresh_due(true, false, Duration::from_secs(600)));
     }
 
     #[test]

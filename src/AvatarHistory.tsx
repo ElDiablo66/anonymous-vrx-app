@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { backend, errorText, type AvatarWorn } from "./backend";
 import { clock, dayLabel, tidy } from "./bits";
 import { openThing } from "./Detail";
@@ -17,7 +17,9 @@ export function spent(seconds: number): string {
 /** My wardrobe: every avatar I wore while the app was running, as a board to pick from or as a list with the numbers. */
 export function AvatarHistory({ onDone }: { onDone: (message: string) => void }) {
   const [list, setList] = useState<AvatarWorn[] | null>(null);
-  const [busy, setBusy] = useState("");
+  // Every avatar with a request still going, so one finishing does not unlock another.
+  const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
+  const running = useRef(new Set<string>());
   const [order, setOrder] = useState<"recent" | "worn" | "name">("recent");
   const [look, setLook] = useState<"board" | "list">(() => {
     try {
@@ -49,21 +51,26 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
   }, []);
 
   async function act(id: string, job: () => Promise<unknown>, done: string) {
-    setBusy(id);
+    // A second press that lands before the button is drawn as busy sends nothing.
+    if (running.current.has(id)) return;
+    running.current.add(id);
+    setBusy(new Set(running.current));
     try {
       await job();
       onDone(done);
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
     } finally {
-      setBusy("");
+      running.current.delete(id);
+      setBusy(new Set(running.current));
     }
   }
 
-  const wearing = list?.[0]?.avatarId ?? "";
+  const wearing = list?.find((a) => a.wearing)?.avatarId ?? "";
+  // Time brought over from VRCX counts for the order, though it has no part in the world numbers.
   const sorted =
     order === "worn" && list
-      ? [...list].sort((a, b) => b.secondsInGame - a.secondsInGame)
+      ? [...list].sort((a, b) => b.secondsInGame + b.importedSeconds - (a.secondsInGame + a.importedSeconds))
       : order === "name" && list
         ? [...list].sort((a, b) => tidy(a.name).localeCompare(tidy(b.name)))
         : (list ?? []);
@@ -165,16 +172,21 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
                 <div className="wardrobe-text">
                   <b className="hide-name">{name}</b>
                   <small>
-                    {a.lastInGame ? `Worn ${dayLabel(a.lastInGame).toLowerCase()}` : "Not worn in a world yet"}
+                    {a.lastInGame
+                      ? `Worn ${dayLabel(a.lastInGame).toLowerCase()}`
+                      : a.importedSeconds > 0
+                        ? `Worn ${dayLabel(a.lastWorn).toLowerCase()}`
+                        : "Not worn in a world yet"}
                     {a.secondsInGame > 0 ? `, ${spent(a.secondsInGame)} in all` : ""}
+                    {a.importedSeconds > 0 ? `, ${spent(a.importedSeconds)} from VRCX` : ""}
                   </small>
                   <TagChips id={a.avatarId} tags={tags} />
                 </div>
                 <div className="wardrobe-actions">
                   <button
                     className={on ? "plain" : "plain go"}
-                    disabled={on || busy === a.avatarId}
-                    onClick={() => void act(a.avatarId, () => backend.wearAvatar(a.avatarId), `You are now wearing ${name}.`)}
+                    disabled={on || busy.has(a.avatarId)}
+                    onClick={() => void act(a.avatarId, () => backend.wearAvatar(a.avatarId, tidy(a.name) || undefined), `You are now wearing ${name}.`)}
                   >
                     {on ? "On now" : "Wear"}
                   </button>
@@ -210,13 +222,25 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
                     <small>Time worn</small>
                     <b>{spent(a.secondsInGame)}</b>
                   </span>
+                  {a.importedSeconds > 0 && (
+                    <span className="fact" title="Wear time VRCX had noted. It has no dates, so it is not in the visits or the share of your time">
+                      <small>From VRCX</small>
+                      <b>{spent(a.importedSeconds)}</b>
+                    </span>
+                  )}
                   <span className="fact" title="Stays in a world with this avatar on">
                     <small>Visits</small>
                     <b>{a.visits}</b>
                   </span>
                   <span className="fact" title={`Put on ${a.times === 1 ? "once" : `${a.times} times`}, last ${dayLabel(a.lastWorn).toLowerCase()} ${clock(a.lastWorn)}`}>
                     <small>Last worn</small>
-                    <b>{a.lastInGame ? `${dayLabel(a.lastInGame)}, ${clock(a.lastInGame)}` : "Not in a world yet"}</b>
+                    <b>
+                      {a.lastInGame
+                        ? `${dayLabel(a.lastInGame)}, ${clock(a.lastInGame)}`
+                        : a.importedSeconds > 0
+                          ? `${dayLabel(a.lastWorn)}, ${clock(a.lastWorn)}`
+                          : "Not in a world yet"}
+                    </b>
                   </span>
                 </span>
                 {(list?.length ?? 0) > 1 && all > 0 && (
@@ -231,12 +255,12 @@ export function AvatarHistory({ onDone }: { onDone: (message: string) => void })
             </button>
             <span className="row-actions">
               {i > 0 && (
-                <button className="go" disabled={busy === a.avatarId} onClick={() => void act(a.avatarId, () => backend.wearAvatar(a.avatarId), `You are now wearing ${name}.`)}>
+                <button className="go" disabled={busy.has(a.avatarId)} onClick={() => void act(a.avatarId, () => backend.wearAvatar(a.avatarId, tidy(a.name) || undefined), `You are now wearing ${name}.`)}>
                   Wear
                 </button>
               )}
               <button
-                disabled={busy === a.avatarId}
+                disabled={busy.has(a.avatarId)}
                 title="Keeps it in Favourites, under On this PC. There is no limit, and nobody else sees it."
                 onClick={() =>
                   void act(

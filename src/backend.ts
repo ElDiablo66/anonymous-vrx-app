@@ -44,7 +44,12 @@ export interface AvatarWorn {
   releaseStatus: string;
   lastWorn: string;
   times: number;
+  /** Time worn in wearings this app recorded. */
   seconds: number;
+  /** Total wear time VRCX had noted when it was brought over. It has no times, so it is not part of the world numbers below. */
+  importedSeconds: number;
+  /** Whether it is the avatar on now, as far as the app knows. */
+  wearing: boolean;
   /** The part of `seconds` spent inside a world. */
   secondsInGame: number;
   /** How many stays in a world it was worn in. */
@@ -343,8 +348,21 @@ export interface VrRules {
   xs: boolean;
   ovrHud: boolean;
   ovrWrist: boolean;
+  /** Which place a notice tries first when XSOverlay and the app's own panel are both on. */
+  route?: "xs" | "own";
   seconds: number;
   opacity: number;
+}
+
+/** A controller, tracker or headset as SteamVR describes it. */
+export interface DeviceState {
+  /** Short: Left, Right, Tracker 2, Headset. */
+  name: string;
+  /** Whole percent, or null when the device does not say. */
+  battery: number | null;
+  charging: boolean;
+  /** Tracking lost for longer than three seconds. */
+  lost: boolean;
 }
 
 export interface CalendarEvent {
@@ -464,6 +482,8 @@ export interface Profile {
   pastNames?: Array<[string, string]>;
   /** The profile exactly as VRChat sent it. */
   raw: unknown;
+  /** VRChat's newer profile record arrived, so the bio and its links are the real ones. */
+  recordRead?: boolean;
 }
 
 
@@ -520,7 +540,10 @@ export type LiveEvents = {
   /** How far the download of an update is, in bytes. `total` is 0 when the size is not known. */
   "update:progress": { done: number; total: number };
   /** A notice for the app's own panel in the headset: the window draws it and hands it back. */
-  "vr:draw": { title: string; body: string };
+  "vr:draw": { kind: string; label: string; title: string; body: string };
+  "vr:devices": DeviceState[];
+  /** A click on the dashboard tab, in pixels of its picture from the top left. */
+  "vr:dash-click": { x: number; y: number };
   "world:resolved": World;
   "instance:info": Instance;
   "pipeline:status": string;
@@ -555,7 +578,8 @@ export interface Backend {
   thing(kind: string, id: string): Promise<unknown>;
   /** VRChat's photos on this PC, newest first, `limit` at a time after skipping `skip`. */
   /** `query` keeps photos whose world or one of whose people matches; `until` is a day, YYYY-MM-DD. `everything` counts all photos, `total` the ones that match. */
-  photos(limit: number, skip: number, query?: string, until?: string): Promise<{ total: number; everything: number; photos: PhotoInfo[] }>;
+  /** `folder` is the folder that was looked through, when the app knows it. */
+  photos(limit: number, skip: number, query?: string, until?: string): Promise<{ total: number; everything: number; photos: PhotoInfo[]; folder?: string }>;
   /** Opens the photo's folder with the file selected. */
   showPhoto(path: string): Promise<void>;
   /** Opens the folder with the credits and licence texts. */
@@ -642,8 +666,8 @@ export interface Backend {
   inviteMessages(kind: "message" | "request"): Promise<InviteMessage[]>;
   /** Changes one saved line; VRChat allows it once an hour for each. Gives back all twelve. */
   setInviteMessage(kind: "message" | "request", slot: number, text: string): Promise<InviteMessage[]>;
-  /** Changes my bio, my pronouns and the links on my profile. */
-  updateProfile(bio: string, pronouns: string, links: string[]): Promise<void>;
+  /** Changes my bio with its links, and my pronouns. `null` leaves that part as it is. */
+  updateProfile(about: { bio: string; links: string[] } | null, pronouns: string | null): Promise<void>;
   /** The frames, effects and backgrounds I own, by kind. */
   myCosmetics(): Promise<Record<string, string[]>>;
   /** Changes my frame, effects or background. Only the keys given change. */
@@ -667,7 +691,8 @@ export interface Backend {
   /** Asks a public avatar database. Only the search text leaves the app. */
   searchAvatars(provider: string, query: string): Promise<AvatarCard[]>;
   /** Switches you to an avatar. */
-  wearAvatar(avatarId: string): Promise<void>;
+  /** `name` is only for the notice in the headset that says how it went. */
+  wearAvatar(avatarId: string, name?: string): Promise<void>;
   /** Invites a friend to the world I am in. */
   inviteHere(userId: string, slot?: number): Promise<void>;
   /** Opens a web link in the browser. */
@@ -676,7 +701,8 @@ export interface Backend {
   noticeAction(id: string, action: string, replyKind?: string, replyData?: string): Promise<void>;
   /** Shows a Windows notification. Resolves to false when Windows refused permission. Does nothing in the browser demo. */
   /** Shows a Windows notification. `always` skips the quiet rules, for the test button. */
-  notify(title: string, body: string, always?: boolean): Promise<boolean>;
+  /** `kind` and `label` colour and name the notice on the app's own panel in the headset. */
+  notify(title: string, body: string, always?: boolean, kind?: string, label?: string): Promise<boolean>;
   worlds(): Promise<World[]>;
   /** Asks for a world's name and picture when they are not known yet; they arrive as `world:resolved`. */
   wantWorld(worldId: string): Promise<void>;
@@ -744,10 +770,18 @@ export interface Backend {
   setGameCacheLimit(gb: number): Promise<number>;
   /** Which overlay programs get my notifications in the headset. */
   setVrNotices(rules: VrRules): Promise<void>;
-  /** Whether the app should be in SteamVR at all: a notice panel or a wrist feed is switched on. */
-  /** Shows a picture (a PNG data address) in front of the eyes for some seconds. */
-  /** Puts a picture on a wrist, or takes the feed off with `null`. `width` is in metres. */
+  /** Whether the app should be in SteamVR at all (a panel, the dashboard tab or SteamVR's alerts), and whether those alerts are told. */
+  setVrOverlay(on: boolean, watch: boolean): Promise<void>;
+  /** Shows a picture (a PNG data address) in front of the eyes for some seconds, over or under the middle. */
+  vrOverlayNotice(png: string, seconds: number, alpha: number, above: boolean): Promise<void>;
+  /** Puts a picture on an arm, or takes the feed off with `null`. `width` and `shift` are in metres. */
+  vrOverlayWrist(png: string | null, hand: "left" | "right", spot: "forearm" | "wrist" | "inside", width: number, alpha: number, shift: number): Promise<void>;
+  /** The tab in SteamVR's dashboard and, the first time, its icon; `null` takes it away. */
+  vrOverlayDashboard(png: string | null, thumb: string | null): Promise<void>;
   /** Where the app's own panels stand, in words. */
+  vrOverlayStatus(): Promise<string>;
+  /** Sends one of SteamVR's own notifications and says how SteamVR took it. */
+  vrOverlayTryNative(): Promise<string>;
   /** Sends a sample notice now and says how each program took it. */
   testVrNotice(rules: VrRules): Promise<Array<{ target: string; ok: boolean; problem: string }>>;
   /** `byItself` is the quiet run the app makes when VRCX's file has changed. */
@@ -828,8 +862,8 @@ const desktop: Backend = {
     forget("part:");
   },
   photos: async (limit, skip, query, until) => {
-    const page = await invoke<{ total: number; everything: number; photos: Array<Omit<PhotoInfo, "url">> }>("photos", { limit, skip, query: query ?? "", until: until ?? "" });
-    return { total: page.total, everything: page.everything, photos: page.photos.map((p) => ({ ...p, url: convertFileSrc(p.path) })) };
+    const page = await invoke<{ total: number; everything: number; photos: Array<Omit<PhotoInfo, "url">>; folder?: string }>("photos", { limit, skip, query: query ?? "", until: until ?? "" });
+    return { total: page.total, everything: page.everything, photos: page.photos.map((p) => ({ ...p, url: convertFileSrc(p.path) })), folder: page.folder };
   },
   showPhoto: (path) => invoke("show_photo", { path }),
   openLicencesFolder: () => invoke("open_licences_folder"),
@@ -857,14 +891,18 @@ const desktop: Backend = {
     forget("profile:");
   },
   updateLanguages: async (add, remove) => {
-    await invoke("update_languages", { add, remove });
-    forget("profile:");
+    // Forgotten either way: a save that stopped halfway still changed the profile.
+    try {
+      await invoke("update_languages", { add, remove });
+    } finally {
+      forget("profile:");
+    }
   },
   moderationsFor: (userId) => invoke("get_moderations_for", { userId }),
   myGroups: () => invoke("get_my_groups"),
   inviteToGroup: (groupId, userId) => invoke("invite_to_group", { groupId, userId }),
-  updateProfile: async (bio, pronouns, links) => {
-    await invoke("update_profile", { bio, pronouns, links });
+  updateProfile: async (about, pronouns) => {
+    await invoke("update_profile", { bio: about?.bio ?? null, links: about?.links ?? null, pronouns });
     // My own profile is kept a minute; what was just saved must not be read back as it was before.
     forget("profile:");
   },
@@ -901,14 +939,14 @@ const desktop: Backend = {
   searchUsers: (query) => invoke("search_users", { query }),
   searchWorlds: (query) => invoke("search_worlds", { query }),
   searchAvatars: (provider, query) => invoke("search_avatars", { provider, query }),
-  wearAvatar: (avatarId) => invoke("wear_avatar", { avatarId }),
+  wearAvatar: (avatarId, name) => invoke("wear_avatar", { avatarId, name: name ?? null }),
   inviteHere: (userId, slot) => invoke("invite_here", { userId, slot: slot ?? null }),
   openLink: (url) => invoke("open_link", { url }),
   noticeAction: (id, action, replyKind, replyData) =>
     invoke("notice_action", { id, action, replyKind: replyKind ?? null, replyData: replyData ?? null }),
-  notify: async (title, body, always) => {
+  notify: async (title, body, always, kind, label) => {
     // The headset gets it as well, by its own rules.
-    if (!always) void invoke("notify_vr", { title, body }).catch(() => {});
+    if (!always) void invoke("notify_vr", { title, body, kind: kind ?? null, label: label ?? null }).catch(() => {});
     if (!always && !(await invoke<boolean>("may_notify"))) return false;
     let allowed = await isPermissionGranted();
     if (!allowed) allowed = (await requestPermission()) === "granted";
@@ -957,6 +995,12 @@ const desktop: Backend = {
   setGameCacheLimit: (gb) => invoke("set_game_cache_limit", { gb }),
   setVrNotices: (rules) => invoke("set_vr_notices", { rules }),
   testVrNotice: (rules) => invoke("test_vr_notice", { rules }),
+  setVrOverlay: (on, watch) => invoke("set_vr_overlay", { on, watch }),
+  vrOverlayNotice: (png, seconds, alpha, above) => invoke("vr_overlay_notice", { png, seconds, alpha, above }),
+  vrOverlayWrist: (png, hand, spot, width, alpha, shift) => invoke("vr_overlay_wrist", { png, hand, spot, width, alpha, shift }),
+  vrOverlayDashboard: (png, thumb) => invoke("vr_overlay_dashboard", { png, thumb }),
+  vrOverlayStatus: () => invoke("vr_overlay_status"),
+  vrOverlayTryNative: () => invoke("vr_overlay_try_native"),
   openBackupsFolder: () => invoke("open_backups_folder"),
   here: () => invoke("get_here"),
   visits: (limit, before) => invoke("get_visits", { limit, before: before ?? null }),

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { openThing } from "./Detail";
 import { openProfile } from "./Profile";
 import { backend, errorText, type Friend, type Handled, type Notice } from "./backend";
@@ -131,7 +131,10 @@ export function Inbox({
   meId: string;
   onDone: (message: string) => void;
 }) {
-  const [busy, setBusy] = useState("");
+  // Every notice with a request still out is held here, so one finishing does not unlock another.
+  // The ref is the guard against a double click that lands before the page draws again.
+  const [busy, setBusy] = useState<Set<string>>(() => new Set());
+  const sending = useRef(new Set<string>());
   const [problem, setProblem] = useState("");
   const [tab, setTab] = useState<"waiting" | "done">("waiting");
   const [handled, setHandled] = useState<Handled[]>([]);
@@ -149,8 +152,24 @@ export function Inbox({
     };
   }, [notices]);
 
+  function start(id: string): boolean {
+    if (sending.current.has(id)) return false;
+    sending.current.add(id);
+    setBusy((old) => new Set(old).add(id));
+    return true;
+  }
+
+  function finish(id: string) {
+    sending.current.delete(id);
+    setBusy((old) => {
+      const next = new Set(old);
+      next.delete(id);
+      return next;
+    });
+  }
+
   async function act(n: Notice, action: string, replyKind?: string, replyData?: string, replyText = "") {
-    setBusy(n.id);
+    if (!start(n.id)) return;
     setProblem("");
     try {
       await backend.noticeAction(n.id, action, replyKind, replyData);
@@ -158,20 +177,20 @@ export function Inbox({
     } catch (err) {
       setProblem(errorText(err));
     } finally {
-      setBusy("");
+      finish(n.id);
     }
   }
 
   /** Goes to the instance an invite points at. The invite stays in the list until it is dismissed. */
   async function join(n: Notice) {
-    setBusy(n.id);
+    if (!start(n.id)) return;
     setProblem("");
     try {
       onDone(launched[await backend.launchInstance(n.location, savedLaunchMode())]);
     } catch (err) {
       setProblem(errorText(err));
     } finally {
-      setBusy("");
+      finish(n.id);
     }
   }
 
@@ -270,7 +289,7 @@ export function Inbox({
           const header = day && day !== lastDay ? <li className="day" key={`day-${n.id}`}>{day}</li> : null;
           if (day) lastDay = day;
           const { title, detail } = noticeLine(n, meId);
-          const off = busy === n.id;
+          const off = busy.has(n.id);
           return [
             header,
             <li className={`notice${n.seen ? "" : " notice-new"}`} key={n.id}>

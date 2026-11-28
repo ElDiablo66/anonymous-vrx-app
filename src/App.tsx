@@ -1,5 +1,6 @@
+import { drawDashboard, drawNotice, drawThumb, drawWrist, feedRows, type DashPage, type DashView, type Hit } from "./vrpanels";
 import { discordPresence } from "./presence";
-import type { HereNow, FriendDay } from "./backend";
+import type { DeviceState, HereNow, FriendDay } from "./backend";
 import { PersonMenu } from "./PersonMenu";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -15,7 +16,7 @@ import {
   type ServiceStatus,
   type World,
 } from "./backend";
-import { Avatar, sinceWords, statusTone, tidy } from "./bits";
+import { Avatar, clock, sinceWords, statusTone, tidy } from "./bits";
 import { Login } from "./Login";
 import { Around } from "./Around";
 import { Everyone } from "./Everyone";
@@ -33,7 +34,7 @@ import { MyStatus } from "./MyStatus";
 import { InstancePanel } from "./Instance";
 import { Uploads } from "./Uploads";
 import { Events, monthOf } from "./Events";
-import { useSettings } from "./settings";
+import { noteVrcxImport, useSettings, vrcxMarkKey, vrcxSeenKey } from "./settings";
 import { QueueBar } from "./Queue";
 import { EditProfile, SendPanel } from "./Send";
 import { useEscape } from "./escape";
@@ -205,31 +206,40 @@ export function App() {
       .noted()
       .then((ids) => setNoted(new Set(ids)))
       .catch(() => {});
+  // The account, not the whole record: a change to my status gives `me` a new object, and that
+  // must not start everything below over again.
+  const meId = me?.id ?? "";
   useEffect(() => {
-    if (me) void loadNoted();
-  }, [me]);
+    if (meId) void loadNoted();
+  }, [meId]);
   const [closing, setClosing] = useState(false);
   useEscape(() => setClosing(false), closing);
   const [always, setAlways] = useState(false);
-  const { settings, change, fitted, picture, setPicture } = useSettings();
+  const { settings, change, saveNow, fitted, picture, setPicture } = useSettings();
+  const saveNowRef = useRef(saveNow);
+  saveNowRef.current = saveNow;
 
   // Discord shows where I am, as far as my settings allow. Sent only when something changed.
   const sentPresence = useRef("");
   useEffect(() => {
-    if (!me) return;
+    if (!meId) {
+      // Signing out clears Discord, so after the next sign-in the same place is sent again.
+      sentPresence.current = "";
+      return;
+    }
     const presence = discordPresence(settings, hereNow, worlds);
     const text = JSON.stringify(presence);
     if (text === sentPresence.current) return;
     sentPresence.current = text;
     void backend.setDiscord(presence).catch(() => {});
-  }, [me, hereNow, worlds, settings]);
+  }, [meId, hereNow, worlds, settings]);
 
   // The daily backup: looked at a minute after signing in and every hour after. The app
   // itself decides whether one is due, so asking often costs nothing.
   const settingsNow = useRef(settings);
   settingsNow.current = settings;
   useEffect(() => {
-    if (!me || !settings.autoBackup) return;
+    if (!meId || !settings.autoBackup) return;
     const run = () => {
       const s = settingsNow.current;
       void backend.autoBackup(JSON.stringify(s), s.autoBackupKeep).catch(() => {});
@@ -240,29 +250,29 @@ export function App() {
       window.clearTimeout(first);
       window.clearInterval(hourly);
     };
-  }, [me, settings.autoBackup]);
+  }, [meId, settings.autoBackup]);
 
   // History that came over from VRCX sits between the entries already shown and gives them
   // new numbers, so the feed is read again.
   useEffect(() => {
-    if (!me) return;
+    if (!meId) return;
     const again = () => void backend.feed(200).then(setFeed).catch(() => {});
     window.addEventListener("history:imported", again);
     return () => window.removeEventListener("history:imported", again);
-  }, [me]);
+  }, [meId]);
 
   // My own worlds are noted a little after the start and twice a day, so their numbers have
   // a point for every day the app ran. One question each time.
   useEffect(() => {
-    if (!me) return;
-    const note = () => void backend.profilePart(me.id, "worlds", "", "").catch(() => {});
+    if (!meId) return;
+    const note = () => void backend.profilePart(meId, "worlds", "", "").catch(() => {});
     const first = window.setTimeout(note, 90_000);
     const later = window.setInterval(note, 12 * 3_600_000);
     return () => {
       window.clearTimeout(first);
       window.clearInterval(later);
     };
-  }, [me]);
+  }, [meId]);
 
   // A newer version: looked for a little after the start and every six hours after that.
   // `auto` installs it straight away, `tell` puts up a note with a button.
@@ -335,19 +345,20 @@ export function App() {
 
   // What VRCX has written since the last look is taken over without asking, when I want that.
   useEffect(() => {
-    if (!me || !settings.vrcxAuto) return;
-    const key = `vrcx-seen:${me.id}`;
+    if (!meId || !settings.vrcxAuto) return;
     const look = async () => {
       try {
+        // The first full import is only ever made by hand, from Settings: reading a long
+        // history takes a while and slows the app, so it never starts by itself after sign-in.
+        // Each look reads only what VRCX wrote since two days before the last one, which is
+        // short however long the history is.
+        const since = localStorage.getItem(vrcxMarkKey(meId));
+        if (!since) return;
         const stamp = await backend.vrcxStamp();
-        if (!stamp || localStorage.getItem(key) === stamp) return;
-        // The first look reads everything; later ones only what VRCX wrote since two days
-        // before the last look, which is short however long the history is.
-        const mark = `vrcx-mark:${me.id}`;
+        if (!stamp || localStorage.getItem(vrcxSeenKey(meId)) === stamp) return;
         const started = Date.now();
-        const { broughtOver: got } = await backend.importVrcx(JSON.stringify(settingsNow.current), true, localStorage.getItem(mark) ?? undefined);
-        localStorage.setItem(key, stamp);
-        localStorage.setItem(mark, new Date(started - 2 * 86_400_000).toISOString());
+        const { broughtOver: got } = await backend.importVrcx(JSON.stringify(settingsNow.current), true, since);
+        noteVrcxImport(meId, started, stamp);
         const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites + got.avatars + got.tags;
         if (total > 0) {
           setToast(`Brought over ${total.toLocaleString()} new ${total === 1 ? "entry" : "entries"} from VRCX.`);
@@ -363,15 +374,229 @@ export function App() {
       window.clearTimeout(first);
       window.clearInterval(hourly);
     };
-  }, [me, settings.vrcxAuto]);
+  }, [meId, settings.vrcxAuto]);
 
-  // Which overlay programs get my notifications while I am in the headset.
+  // Which overlay programs get my notifications while I am in the headset, and which goes first.
   useEffect(() => {
     void backend
-      .setVrNotices({ own: settings.vrOwn, xs: settings.vrXs, ovrHud: settings.vrOvrHud, ovrWrist: settings.vrOvrWrist, seconds: settings.vrSeconds, opacity: settings.vrOpacity })
+      .setVrNotices({ own: settings.vrOwn, xs: settings.vrXs, ovrHud: settings.vrOvrHud, ovrWrist: settings.vrOvrWrist, route: settings.vrRoute, seconds: settings.vrSeconds, opacity: settings.vrOpacity })
       .catch(() => {});
-  }, [settings.vrOwn, settings.vrXs, settings.vrOvrHud, settings.vrOvrWrist, settings.vrSeconds, settings.vrOpacity]);
+  }, [settings.vrOwn, settings.vrXs, settings.vrOvrHud, settings.vrOvrWrist, settings.vrRoute, settings.vrSeconds, settings.vrOpacity]);
 
+  // The app's own panels in SteamVR. It only goes into SteamVR while a panel, the dashboard tab
+  // or SteamVR's alerts are wanted.
+  const panelsOn = settings.vrOwn || settings.vrWrist !== "off" || settings.vrDashboard || settings.vrDevices;
+  useEffect(() => {
+    void backend.setVrOverlay(panelsOn, settings.vrDevices).catch(() => {});
+  }, [panelsOn, settings.vrDevices]);
+  // What SteamVR says about the controllers, trackers and headset, for the arm and the dashboard.
+  const [devices, setDevices] = useState<DeviceState[]>([]);
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void backend.on("vr:devices", setDevices).then((off) => (gone ? off() : (stop = off)));
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, []);
+  useEffect(() => {
+    if (!panelsOn) setDevices([]);
+  }, [panelsOn]);
+  // A notice for the headset arrives as words. Each is drawn here, shown for its seconds, and
+  // then the next one: a burst becomes a short line of notices, one picture each.
+  const ownNotices = settings.vrOwn || settings.vrDevices;
+  useEffect(() => {
+    if (!ownNotices) return;
+    const waiting: Array<{ kind: string; label: string; title: string; body: string }> = [];
+    let busy = false;
+    let gone = false;
+    let timer = 0;
+    const next = () => {
+      if (gone || busy) return;
+      const n = waiting.shift();
+      if (!n) return;
+      busy = true;
+      const s = settingsNow.current;
+      void drawNotice(n.kind, n.label, n.title, n.body)
+        .then((png) => (gone ? undefined : backend.vrOverlayNotice(png, s.vrSeconds, s.vrOpacity, s.vrNoticeSpot === "above")))
+        .catch(() => {})
+        .finally(() => {
+          timer = window.setTimeout(
+            () => {
+              busy = false;
+              next();
+            },
+            Math.max(2, s.vrSeconds) * 1000,
+          );
+        });
+    };
+    let stop: (() => void) | undefined;
+    void backend
+      .on("vr:draw", (n) => {
+        waiting.push(n);
+        // Five waiting is about twenty seconds of notices; older ones beyond that are let go.
+        if (waiting.length > 5) waiting.shift();
+        next();
+      })
+      .then((off) => (gone ? off() : (stop = off)));
+    return () => {
+      gone = true;
+      window.clearTimeout(timer);
+      stop?.();
+    };
+  }, [ownNotices]);
+  // The arm feed and the dashboard tab are drawn again only when what they show changes (a
+  // feed entry, the friends count, the clock's minute, a battery, a setting), at most twice a
+  // second.
+  const wristOn = settings.vrWrist !== "off" && !!me;
+  const dashOn = settings.vrDashboard && !!me;
+  const vrOnline = wristOn || dashOn ? [...friends.values()].filter((f) => f.state === "online").length : 0;
+  const looks = [settings.timeFormat, settings.accent, settings.accent2, settings.background, settings.headingFont, settings.textFont, settings.textColor, settings.softTextColor];
+  const wristKey = wristOn
+    ? JSON.stringify([feedRows(feed, 6), vrOnline, clock(new Date().toISOString()), devices, settings.vrWrist, settings.vrWristSpot, settings.vrWristShift, settings.vrWristSize, settings.vrOpacity, looks])
+    : "";
+  // The dashboard tab has a feed page and two pages of the same settings as the window.
+  const [dashPage, setDashPage] = useState<DashPage>("feed");
+  const vrOthers = settings.vrXs && !settings.vrOvrHud && !settings.vrOvrWrist ? "XSOverlay first" : settings.vrXs ? "XSOverlay or OVR Toolkit first" : settings.vrOvrHud || settings.vrOvrWrist ? "OVR Toolkit first" : "";
+  const dashView: DashView = {
+    page: dashPage,
+    vrOwn: settings.vrOwn,
+    vrRoute: settings.vrRoute,
+    vrNoticeSpot: settings.vrNoticeSpot,
+    vrSeconds: settings.vrSeconds,
+    vrDevices: settings.vrDevices,
+    vrWrist: settings.vrWrist,
+    vrWristSpot: settings.vrWristSpot,
+    vrWristShift: settings.vrWristShift,
+    vrWristSize: settings.vrWristSize,
+    vrOpacity: settings.vrOpacity,
+    others: vrOthers,
+  };
+  // The feed page alone shows the feed, so the clock and the feed only count on that page.
+  const dashKey = dashOn
+    ? JSON.stringify(dashPage === "feed" ? [feedRows(feed, 8), vrOnline, clock(new Date().toISOString()), devices, looks, dashView] : [looks, dashView])
+    : "";
+  const lastWrist = useRef({ key: "-", at: 0 });
+  useEffect(() => {
+    if (wristKey === lastWrist.current.key) return;
+    if (!wristKey) {
+      lastWrist.current = { key: "", at: 0 };
+      void backend.vrOverlayWrist(null, "left", "forearm", 0.16, 1, 0).catch(() => {});
+      return;
+    }
+    const s = settingsNow.current;
+    const hand = s.vrWrist === "right" ? "right" : "left";
+    const [rows, online, list] = [feed, vrOnline, devices];
+    let gone = false;
+    const later = window.setTimeout(
+      () => {
+        lastWrist.current.at = Date.now();
+        void drawWrist(rows, online, list)
+          .then(async (png) => {
+            if (gone) return;
+            // While it is on its way, what SteamVR ends up showing is not known yet. A quick change
+            // back to the picture shown before then still draws it again, as the dashboard does.
+            lastWrist.current.key = "-";
+            await backend.vrOverlayWrist(png, hand, s.vrWristSpot, s.vrWristSize, s.vrOpacity, s.vrWristShift / 100);
+            // Switched off or changed while the picture was on its way: that newer state counts.
+            if (!gone) lastWrist.current.key = wristKey;
+          })
+          .catch(() => {});
+      },
+      Math.max(250, 500 - (Date.now() - lastWrist.current.at)),
+    );
+    return () => {
+      gone = true;
+      window.clearTimeout(later);
+    };
+  }, [wristKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lastDash = useRef({ key: "-", at: 0, thumb: false });
+  // Where the buttons sit on the dashboard picture SteamVR shows now.
+  const dashHits = useRef<Hit[]>([]);
+  useEffect(() => {
+    if (dashKey === lastDash.current.key) return;
+    if (!dashKey) {
+      lastDash.current = { key: "", at: 0, thumb: false };
+      void backend.vrOverlayDashboard(null, null).catch(() => {});
+      return;
+    }
+    const [rows, online, list, view] = [feed, vrOnline, devices, dashView];
+    let gone = false;
+    const later = window.setTimeout(
+      () => {
+        // This round's record. Switching the tab off swaps in a fresh one, which a late answer
+        // here must leave alone, or the tab would come back without its icon.
+        const box = lastDash.current;
+        box.at = Date.now();
+        void Promise.all([drawDashboard(rows, online, list, view), box.thumb ? Promise.resolve(null) : drawThumb()])
+          .then(async ([drawn, thumb]) => {
+            if (gone) return;
+            // While it is on its way, what SteamVR ends up showing is not known yet.
+            box.key = "-";
+            await backend.vrOverlayDashboard(drawn.png, thumb);
+            // SteamVR shows this picture now, whatever changed meanwhile, so its buttons count.
+            dashHits.current = drawn.hits;
+            box.thumb = true;
+            if (!gone) box.key = dashKey;
+          })
+          .catch(() => {});
+      },
+      Math.max(250, 500 - (Date.now() - lastDash.current.at)),
+    );
+    return () => {
+      gone = true;
+      window.clearTimeout(later);
+    };
+  }, [dashKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A click on the dashboard tab, in its picture's pixels. Settings change exactly as they
+  // would in the window; the picture is drawn again with the new choice lit.
+  const changeNow = useRef(change);
+  changeNow.current = change;
+  useEffect(() => {
+    const allowed = new Set(["vrOwn", "vrRoute", "vrNoticeSpot", "vrSeconds", "vrDevices", "vrWrist", "vrWristSpot", "vrWristSize"]);
+    const onClick = ({ x, y }: { x: number; y: number }) => {
+      const hit = dashHits.current.find((h) => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h);
+      if (!hit) return;
+      const [kind, key = "", ...rest] = hit.act.split(":");
+      const s = settingsNow.current;
+      // Two quick clicks come before the window draws again, so the second builds on the first.
+      const apply = (patch: Partial<typeof s>) => {
+        changeNow.current(patch);
+        settingsNow.current = { ...settingsNow.current, ...patch };
+      };
+      if (kind === "page") {
+        if (key === "feed" || key === "notices" || key === "arm") setDashPage(key);
+      } else if (kind === "set" && allowed.has(key)) {
+        try {
+          apply({ [key]: JSON.parse(rest.join(":")) } as Partial<typeof s>);
+        } catch {
+          // A button always carries a value that reads back; nothing to do otherwise.
+        }
+      } else if (kind === "step") {
+        const by = Number(rest.join(":"));
+        if (key === "vrWristShift") apply({ vrWristShift: Math.max(-6, Math.min(12, Math.round(s.vrWristShift + by))) });
+        if (key === "vrOpacity") apply({ vrOpacity: Math.max(0.2, Math.min(1, Math.round((s.vrOpacity + by) * 100) / 100)) });
+      } else if (kind === "test" && (s.vrOwn || s.vrDevices)) {
+        void backend
+          .vrOverlayStatus()
+          .then(async (state) => {
+            if (!state.startsWith("Connected")) return;
+            const png = await drawNotice("steamvr", "Test", "Anonymous VRX", "This is what a notice looks like in the headset.");
+            await backend.vrOverlayNotice(png, s.vrSeconds, s.vrOpacity, s.vrNoticeSpot === "above");
+          })
+          .catch(() => {});
+      }
+    };
+    let stop: (() => void) | undefined;
+    let gone = false;
+    void backend.on("vr:dash-click", onClick).then((off) => (gone ? off() : (stop = off)));
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, []);
 
   // The title names the tab that is open on screens that have tabs.
   const [tabTitle, setTabTitle] = useState("");
@@ -434,7 +659,7 @@ export function App() {
   }, []);
   useEffect(() => {
     void backend.setOwnFeed(settings.feedMine).catch(() => {});
-  }, [settings.feedMine, me]);
+  }, [settings.feedMine, meId]);
   // The browser demo can open a tab on the screen ("?tab=Worlds"), a tab in the open window
   // ("?wtab=Avatars") and run a search ("?q=robot"), so every view can be looked at by address.
   useEffect(() => {
@@ -511,7 +736,7 @@ export function App() {
           /* not being able to save it only means a reminder may come twice */
         }
         const minutes = Math.max(1, Math.round((starts - now) / 60_000));
-        void backend.notify(`${e.title} starts in ${minutes} min`, e.groupName ? `An event of ${e.groupName}` : "An event you follow");
+        void backend.notify(`${e.title} starts in ${minutes} min`, e.groupName ? `An event of ${e.groupName}` : "An event you follow", false, "day", "Event soon");
       }
     };
     read();
@@ -571,7 +796,7 @@ export function App() {
       : fresh.length === 1
         ? `You and ${fresh[0].name} became friends ${years(fresh[0].years)} ago today.`
         : `${fresh.map((d) => d.name).slice(0, 3).join(", ")}${fresh.length > 3 ? ` and ${fresh.length - 3} more` : ""}: friendship days today.`;
-    void backend.notify("Friendship day", body);
+    void backend.notify("Friendship day", body, false, "day", "Friendship day");
   }, [friendDays, settings.alertFriendDays, settings.hidePeople]); // eslint-disable-line react-hooks/exhaustive-deps
   // VRChat closed without warning: where I was, until I go back or put the note away.
   const [crash, setCrash] = useState<{ location: string; worldName: string } | null>(null);
@@ -608,17 +833,24 @@ export function App() {
   useEffect(() => {
     const stop = backend.on("window:close-asked", () => {
       const choice = now.current.settings.onClose;
-      if (!signedIn.current || choice === "quit") void backend.quit();
+      // A change made just before is written first, or the short wait before saving would lose it.
+      if (!signedIn.current || choice === "quit") void saveNowRef.current().finally(() => void backend.quit());
       else if (choice === "tray") void backend.hideToTray();
       else setClosing(true);
     });
     return () => void stop.then((off) => off());
   }, []);
 
-  // Redraw once a minute so "12 min" keeps counting.
+  // Redraw as each minute turns over, so "12 min" keeps counting and the clock on the arm in the
+  // headset changes with the real one.
   useEffect(() => {
-    const timer = window.setInterval(() => setMinute((n) => n + 1), 60_000);
-    return () => window.clearInterval(timer);
+    let timer = 0;
+    const tick = () => {
+      setMinute((n) => n + 1);
+      timer = window.setTimeout(tick, 60_000 - (Date.now() % 60_000) + 50);
+    };
+    timer = window.setTimeout(tick, 60_000 - (Date.now() % 60_000) + 50);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -627,16 +859,17 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  function finishClose(choice: "tray" | "quit") {
-    if (always) change({ onClose: choice });
+  async function finishClose(choice: "tray" | "quit") {
     setClosing(false);
     setAlways(false);
-    // Give the saved choice a moment to reach storage before the window goes.
-    window.setTimeout(() => void (choice === "tray" ? backend.hideToTray() : backend.quit()), 60);
+    // Settings are normally written a moment after a change, and quitting would cut that
+    // short. So they are written now, and the app goes only once the file is done.
+    if (always || choice === "quit") await saveNow(always ? { onClose: choice } : {});
+    void (choice === "tray" ? backend.hideToTray() : backend.quit());
   }
 
   useEffect(() => {
-    if (!me) return;
+    if (!meId) return;
     let alive = true;
     void backend
       .here()
@@ -650,10 +883,10 @@ export function App() {
     return () => {
       alive = false;
     };
-  }, [me, logTick]);
+  }, [meId, logTick]);
 
   useEffect(() => {
-    if (!me) return;
+    if (!meId) return;
     let alive = true;
     const stops: Array<() => void> = [];
     const hold = (p: Promise<() => void>) => p.then((stop) => (alive ? stops.push(stop) : stop()));
@@ -691,7 +924,7 @@ export function App() {
         const { favorites, settings, worlds } = now.current;
         // A rule set on one person comes before their favourite group's.
         const own = settings.alertPeople?.[item.userId]?.rule;
-        if (own === "never" || item.userId === me?.id) return;
+        if (own === "never" || item.userId === meId) return;
         if (own !== "always") {
           if (!(item.userId in favorites.friends)) return;
           // A favourite group can be told to stay quiet.
@@ -699,9 +932,9 @@ export function App() {
         }
         const world = item.worldId ? (worlds.get(item.worldId)?.name ?? "a world") : "";
         if (item.kind === "online" && settings.alertFavouriteOnline) {
-          void backend.notify(`${item.displayName} is online`, world ? `In ${world}` : "In a private world");
+          void backend.notify(`${item.displayName} is online`, world ? `In ${world}` : "In a private world", false, "friend", "Friend online");
         } else if (item.kind === "location" && item.previous === "private" && world && settings.alertFavouriteLeavesPrivate) {
-          void backend.notify(`${item.displayName} left the private world`, `Now in ${world}`);
+          void backend.notify(`${item.displayName} left the private world`, `Now in ${world}`, false, "friend", "Friend moved");
         }
       }),
     );
@@ -732,6 +965,7 @@ export function App() {
     void hold(
       backend.on("session:ended", () => {
         void backend.setDiscord(null).catch(() => {});
+        sentPresence.current = "";
         setNotice("");
         setMe(null);
       }),
@@ -740,7 +974,7 @@ export function App() {
       alive = false;
       stops.forEach((stop) => stop());
     };
-  }, [me]);
+  }, [meId]);
 
   useStatusRules(me, setMe, settings, hereNow, friends, setToast);
 
@@ -757,6 +991,7 @@ export function App() {
   async function signOut() {
     // Discord stops showing where I am the moment I sign out.
     void backend.setDiscord(null).catch(() => {});
+    sentPresence.current = "";
     await backend.logout().catch(() => {});
     setFriends(new Map());
     setFeed([]);
@@ -1018,8 +1253,8 @@ export function App() {
             </label>
             <div className="dialog-actions">
               <button onClick={() => setClosing(false)}>Cancel</button>
-              <button onClick={() => finishClose("quit")}>Quit</button>
-              <button className="go" autoFocus onClick={() => finishClose("tray")}>
+              <button onClick={() => void finishClose("quit")}>Quit</button>
+              <button className="go" autoFocus onClick={() => void finishClose("tray")}>
                 Keep running in the tray
               </button>
             </div>

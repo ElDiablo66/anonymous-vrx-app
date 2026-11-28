@@ -17,6 +17,8 @@ fn quick() -> Timing {
         backoff: Duration::from_millis(20),
         max_wait: Duration::from_millis(200),
         attempts: 3,
+        action_wait: Duration::from_millis(100),
+        action_hold: Duration::from_secs(60),
     }
 }
 
@@ -194,7 +196,91 @@ async fn gives_up_after_repeated_429() {
         .mount(&server)
         .await;
     let api = client(&server);
-    assert!(matches!(api.world("wrld_a").await, Err(AppError::RateLimited)));
+    assert!(matches!(api.world("wrld_a").await, Err(AppError::RateLimited(_))));
+}
+
+#[tokio::test]
+async fn a_boop_vrchat_turns_down_is_sent_once_says_how_long_and_holds_nothing_else() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/users/usr_ash/boop"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "45"))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/users/usr_kit/boop"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "success": { "message": "Booped" } })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/worlds/wrld_a"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "wrld_a", "name": "Quiet Pier" })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let api = client(&server);
+    let started = std::time::Instant::now();
+    let first = api.boop("usr_ash", None).await;
+    assert!(matches!(first, Err(AppError::RateLimited(Some(45)))), "{first:?}");
+    assert!(first.unwrap_err().to_string().contains("45 seconds"));
+    // Asking again inside the wait is answered here, without a second request.
+    assert!(matches!(api.boop("usr_ash", None).await, Err(AppError::RateLimited(Some(s))) if s > 40 && s <= 45));
+    // Another friend and a read go through at once.
+    api.boop("usr_kit", None).await.unwrap();
+    assert_eq!(api.world("wrld_a").await.unwrap()["name"], "Quiet Pier");
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[tokio::test]
+async fn avatar_switches_share_one_hold_and_are_never_sent_again_by_themselves() {
+    let server = MockServer::start().await;
+    Mock::given(method("PUT"))
+        .and(path("/avatars/avtr_a/select"))
+        .respond_with(ResponseTemplate::new(429))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/avatars/avtr_b/select"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "usr_me" })))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let api = client(&server);
+    // No Retry-After: the action's own hold of a minute is used.
+    assert!(matches!(api.select_avatar("avtr_a").await, Err(AppError::RateLimited(Some(60)))));
+    assert!(matches!(api.select_avatar("avtr_b").await, Err(AppError::RateLimited(Some(_)))));
+}
+
+#[tokio::test]
+async fn an_action_behind_a_long_slowdown_says_so_instead_of_waiting() {
+    let server = MockServer::start().await;
+    // A read meets a slowdown of three seconds. Its first answer shuts the gate for that long and
+    // its second try waits it out.
+    Mock::given(method("GET"))
+        .and(path("/worlds/wrld_a"))
+        .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "3"))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/users/usr_ash/boop"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let api = ApiClient::with_base(&server.uri(), Timing { attempts: 2, max_wait: Duration::from_secs(3), ..quick() }).unwrap();
+    let reading = api.world("wrld_a");
+    let boop = async {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let started = std::time::Instant::now();
+        let got = api.boop("usr_ash", None).await;
+        (got, started.elapsed())
+    };
+    let (_, (got, took)) = tokio::join!(reading, boop);
+    assert!(matches!(got, Err(AppError::RateLimited(Some(s))) if (2..=3).contains(&s)), "{got:?}");
+    assert!(took < Duration::from_millis(500));
 }
 
 fn page(from: usize, count: usize, location: &str) -> Value {
@@ -1011,7 +1097,10 @@ async fn boops_carry_an_emoji_and_invites_a_saved_message() {
     Mock::given(method("POST")).and(path("/invite/usr_a")).and(body_json(json!({ "instanceId": "wrld_a:1", "messageSlot": 0 }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
     Mock::given(method("GET")).and(path("/message/usr_me_msg/request")).respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "slot": 0, "message": "Can I join?", "canBeUpdated": true, "remainingCooldownMinutes": 0 }]))).expect(1).mount(&server).await;
     Mock::given(method("PUT")).and(path("/message/usr_me_msg/message/2")).and(body_json(json!({ "message": "Come over" }))).respond_with(ResponseTemplate::new(200).set_body_json(json!([{ "slot": 2, "message": "Come over" }]))).expect(1).mount(&server).await;
-    Mock::given(method("PUT")).and(path("/users/usr_me_msg")).and(body_json(json!({ "bio": "Hello", "pronouns": "they/them", "bioLinks": ["https://example.org/me"] }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
+    // The bio and its links go to the profile record, which answers with the record as kept.
+    Mock::given(method("PUT")).and(path("/profile/usr_me_msg")).and(body_json(json!({ "bio": "Hello", "bioLinks": ["https://example.org/me"] }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "usr_me_msg", "bio": "Hello", "bioLinks": ["https://example.org/me"] }))).expect(1).mount(&server).await;
+    // Pronouns alone go to the account.
+    Mock::given(method("PUT")).and(path("/users/usr_me_msg")).and(body_json(json!({ "pronouns": "they/them" }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).expect(1).mount(&server).await;
 
     let api = Arc::new(client(&server));
     api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
@@ -1033,11 +1122,16 @@ async fn boops_carry_an_emoji_and_invites_a_saved_message() {
     assert!(hub.set_invite_message("message", 1, "").await.is_err());
     assert!(hub.set_invite_message("message", 1, &"x".repeat(65)).await.is_err());
 
-    hub.update_profile("Hello", " they/them ", &["https://example.org/me".into(), "  ".into()]).await.unwrap();
-    assert!(hub.update_profile("Hello", "", &["javascript:alert(1)".into()]).await.is_err());
-    assert!(hub.update_profile(&"x".repeat(513), "", &[]).await.is_err());
-    assert!(hub.update_profile("line one\nline\u{1b}two", "", &[]).await.is_err());
-    assert!(hub.update_profile("", "", &["https://a.org".into(), "https://b.org".into(), "https://c.org".into(), "https://d.org".into()]).await.is_err());
+    let links: Vec<String> = vec!["https://example.org/me".into(), "  ".into()];
+    hub.update_profile(Some(("Hello", &links)), None).await.unwrap();
+    hub.update_profile(None, Some(" they/them ")).await.unwrap();
+    // Nothing changed, nothing sent.
+    hub.update_profile(None, None).await.unwrap();
+    assert!(hub.update_profile(Some(("Hello", &["javascript:alert(1)".to_string()])), None).await.is_err());
+    assert!(hub.update_profile(Some((&"x".repeat(513), &[])), None).await.is_err());
+    assert!(hub.update_profile(Some(("line one\nline\u{1b}two", &[])), None).await.is_err());
+    assert!(hub.update_profile(Some(("", &["https://a.org".into(), "https://b.org".into(), "https://c.org".into(), "https://d.org".into()])), None).await.is_err());
+    assert!(hub.update_profile(None, Some(&"x".repeat(33))).await.is_err());
 }
 
 #[tokio::test]
@@ -1088,4 +1182,189 @@ async fn profile_look_moderation_and_group_invites_are_checked_before_they_go_ou
     hub.invite_to_group("grp_a", "usr_a").await.unwrap();
     assert!(hub.invite_to_group("grp_a/../x", "usr_a").await.is_err());
     assert!(hub.invite_to_group("grp_a", "usr_me_look").await.is_err());
+}
+
+#[tokio::test]
+async fn a_bio_vrchat_did_not_keep_is_an_error_and_the_record_wins_on_the_profile() {
+    let server = MockServer::start().await;
+    // The record answers without the bio, and reading it back shows the old one: not kept.
+    Mock::given(method("PUT")).and(path("/profile/usr_me_bio")).and(body_json(json!({ "bio": "New words", "bioLinks": [] }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "usr_me_bio" }))).expect(1).mount(&server).await;
+    Mock::given(method("PUT")).and(path("/profile/usr_me_bio")).and(body_json(json!({ "bio": "Kept\r\nwords ", "bioLinks": [] }))).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "usr_me_bio", "bio": "Kept\nwords" }))).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/profile/usr_me_bio")).and(query_param("asSelf", "true")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "usr_me_bio", "bio": "Old words", "bioLinks": ["https://example.org/a"] }))).mount(&server).await;
+    // The account record still carries an old bio and more links; the profile record wins.
+    Mock::given(method("GET")).and(path("/users/usr_me_bio")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "usr_me_bio", "displayName": "Tester", "bio": "Stale words", "bioLinks": ["https://example.org/a", "https://example.org/b"] }))).mount(&server).await;
+    Mock::given(method("GET")).and(path("/auth/user")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "usr_me_bio", "displayName": "Tester" }))).mount(&server).await;
+    // Someone whose record cannot be read: nothing marks their bio as real.
+    Mock::given(method("GET")).and(path("/users/usr_other")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "usr_other", "displayName": "Other" }))).mount(&server).await;
+    Mock::given(method("GET")).and(path("/profile/usr_other")).respond_with(ResponseTemplate::new(500).set_body_json(json!({ "error": { "message": "busy" } }))).mount(&server).await;
+
+    let api = Arc::new(client(&server));
+    api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
+    let hub = Hub::new(api, std::env::temp_dir().join(format!("avrx-bio-{}", std::process::id())), Arc::new(|_, _| {}), false, None);
+    hub.begin(json!({ "id": "usr_me_bio", "displayName": "Tester" })).unwrap();
+
+    let err = hub.update_profile(Some(("New words", &[])), None).await.unwrap_err();
+    assert!(err.to_string().contains("did not keep"), "{err}");
+    // Line ends and outer spaces tidied by VRChat still count as kept.
+    hub.update_profile(Some(("Kept\r\nwords ", &[])), None).await.unwrap();
+
+    let mine = hub.profile("usr_me_bio").await.unwrap();
+    assert!(mine.record_read);
+    assert_eq!(mine.raw["bio"], "Old words");
+    assert_eq!(mine.raw["bioLinks"], json!(["https://example.org/a"]));
+    let other = hub.profile("usr_other").await.unwrap();
+    assert!(!other.record_read);
+}
+
+
+#[tokio::test]
+async fn a_slowdown_holds_the_next_read_even_after_the_last_try_and_sign_out_still_goes() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/worlds/wrld_a")).respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "1")).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/worlds/wrld_b")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "wrld_b", "name": "Calm Dock" }))).expect(1).mount(&server).await;
+    Mock::given(method("PUT")).and(path("/logout")).respond_with(ResponseTemplate::new(200)).expect(1).mount(&server).await;
+    let api = Arc::new(ApiClient::with_base(&server.uri(), Timing { attempts: 1, max_wait: Duration::from_secs(5), action_wait: Duration::from_millis(100), ..quick() }).unwrap());
+    api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
+    assert!(matches!(api.world("wrld_a").await, Err(AppError::RateLimited(Some(1)))));
+    // The read that follows waits out the second VRChat asked for, and so does signing out,
+    // which is sent once it may go rather than turned away (the mock expects it once).
+    let started = std::time::Instant::now();
+    let (read, _) = tokio::join!(api.world("wrld_b"), api.logout());
+    assert_eq!(read.unwrap()["name"], "Calm Dock");
+    assert!(started.elapsed() >= Duration::from_millis(900), "{:?}", started.elapsed());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+}
+
+#[tokio::test]
+async fn signing_out_is_done_at_once_and_vrchat_is_told_later_with_the_old_cookie() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/worlds/wrld_a")).respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "1")).expect(1).mount(&server).await;
+    Mock::given(method("PUT")).and(path("/logout")).and(header("cookie", "auth=authcookie_old")).respond_with(ResponseTemplate::new(200)).expect(1).mount(&server).await;
+    let api = Arc::new(ApiClient::with_base(&server.uri(), Timing { attempts: 1, max_wait: Duration::from_secs(5), ..quick() }).unwrap());
+    api.set_session(Session { auth: Some("authcookie_old".into()), two_factor: None });
+    assert!(matches!(api.world("wrld_a").await, Err(AppError::RateLimited(Some(1)))));
+    // Inside the slowdown, signing out still answers at once.
+    let started = std::time::Instant::now();
+    api.logout().await.unwrap();
+    assert!(started.elapsed() < Duration::from_millis(300), "{:?}", started.elapsed());
+    assert!(api.auth_token().is_none());
+    // A new sign-in made before VRChat is told is neither sent along nor undone.
+    api.set_session(Session { auth: Some("authcookie_new".into()), two_factor: None });
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(api.auth_token().as_deref(), Some("authcookie_new"));
+    let outs: Vec<_> = server.received_requests().await.unwrap().into_iter().filter(|r| r.url.path() == "/logout").collect();
+    assert_eq!(outs.len(), 1);
+}
+
+#[tokio::test]
+async fn a_read_told_to_wait_longer_than_it_sleeps_goes_once_and_holds_the_rest_for_the_whole_time() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/worlds/wrld_a")).respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "2")).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/worlds/wrld_b")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "wrld_b" }))).expect(0).mount(&server).await;
+    // `quick` sleeps at most 200 ms per 429; VRChat asks for two seconds.
+    let api = client(&server);
+    let started = std::time::Instant::now();
+    let got = api.world("wrld_a").await;
+    assert!(matches!(got, Err(AppError::RateLimited(Some(2)))), "{got:?}");
+    assert!(started.elapsed() < Duration::from_millis(500), "{:?}", started.elapsed());
+    // The next read is held for the whole two seconds, not just `max_wait`: it is longer than a
+    // read sleeps, so it is answered here with the time left and nothing is sent.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let got = api.world("wrld_b").await;
+    assert!(matches!(got, Err(AppError::RateLimited(Some(s))) if (1..=2).contains(&s)), "{got:?}");
+}
+
+#[tokio::test]
+async fn a_sign_in_vrchat_turns_down_holds_the_next_one_and_the_code() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/auth/user")).respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "30")).expect(1).mount(&server).await;
+    Mock::given(method("POST")).and(path("/auth/twofactorauth/totp/verify")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "verified": true }))).expect(0).mount(&server).await;
+    let api = Arc::new(client(&server));
+    assert!(matches!(api.login("tester", "x").await, Err(AppError::RateLimited(Some(30)))));
+    // Pressing Sign in again, or sending a code, is answered here without a request.
+    assert!(matches!(api.login("tester", "x").await, Err(AppError::RateLimited(Some(s))) if s > 25 && s <= 30));
+    assert!(matches!(api.verify_code("totp", "123456").await, Err(AppError::RateLimited(Some(_)))));
+    // Signing out does not lift the wait.
+    api.logout().await.unwrap();
+    assert!(matches!(api.login("tester", "x").await, Err(AppError::RateLimited(Some(_)))));
+}
+
+#[tokio::test]
+async fn a_code_vrchat_turns_down_holds_signing_in_too() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST")).and(path("/auth/twofactorauth/totp/verify")).respond_with(ResponseTemplate::new(429)).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/auth/user")).respond_with(ResponseTemplate::new(200).set_body_json(user())).expect(0).mount(&server).await;
+    let api = client(&server);
+    // No Retry-After: the minute of `action_hold`.
+    assert!(matches!(api.verify_code("totp", "123456").await, Err(AppError::RateLimited(Some(60)))));
+    assert!(matches!(api.login("tester", "x").await, Err(AppError::RateLimited(Some(_)))));
+}
+
+#[tokio::test]
+async fn signed_pictures_keep_to_the_slowdown_and_start_one_themselves() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/file/busy")).respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "2")).expect(1).mount(&server).await;
+    Mock::given(method("GET")).and(path("/file/photo")).respond_with(ResponseTemplate::new(200).insert_header("content-type", "image/png").set_body_bytes(vec![1u8; 4])).expect(0).mount(&server).await;
+    Mock::given(method("GET")).and(path("/worlds/wrld_a")).respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "wrld_a" }))).expect(0).mount(&server).await;
+    // Another host is not VRChat's API and is not held back.
+    let elsewhere = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/pic.png")).respond_with(ResponseTemplate::new(200).insert_header("content-type", "image/png").set_body_bytes(vec![1u8, 2, 3])).expect(1).mount(&elsewhere).await;
+    let api = client(&server);
+    api.set_session(Session { auth: Some("authcookie_test".into()), two_factor: None });
+    let got = api.picture_as(&format!("{}/file/busy", server.uri()), true).await;
+    assert!(matches!(got, Err(AppError::RateLimited(Some(2)))), "{got:?}");
+    // The next signed picture is refused here, and reads wait out the same two seconds.
+    let got = api.picture_as(&format!("{}/file/photo", server.uri()), true).await;
+    assert!(matches!(got, Err(AppError::RateLimited(Some(s))) if s <= 2), "{got:?}");
+    assert!(matches!(api.world("wrld_a").await, Err(AppError::RateLimited(Some(_)))));
+    api.picture_as(&format!("{}/pic.png", elsewhere.uri()), true).await.unwrap();
+}
+
+#[tokio::test]
+async fn an_avatar_database_that_fails_is_not_put_down_to_vrchat() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/down")).respond_with(ResponseTemplate::new(503)).mount(&server).await;
+    Mock::given(method("GET")).and(path("/odd")).respond_with(ResponseTemplate::new(200).set_body_string("<html>busy</html>")).mount(&server).await;
+    let api = client(&server);
+    // A port nothing listens on stands in for a service that is gone.
+    let gone = {
+        let spare = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}/db", spare.local_addr().unwrap())
+    };
+    for provider in [gone, format!("{}/down", server.uri()), format!("{}/odd", server.uri())] {
+        let got = api.search_avatars(&provider, "fox").await;
+        let Err(AppError::CannotDo(words)) = got else { panic!("{provider}: {got:?}") };
+        assert!(words.starts_with("The avatar search service"), "{words}");
+        assert!(!words.contains("VRChat"), "{words}");
+    }
+    let got = api.ask_avatar_database(&format!("{}/odd", server.uri()), "fileId", "file_1").await;
+    assert!(matches!(got, Err(AppError::CannotDo(ref w)) if w.starts_with("The avatar search service")), "{got:?}");
+}
+
+#[tokio::test]
+async fn a_client_for_vrchat_itself_never_fetches_from_this_pc() {
+    // The real client only lets https through, and not to this PC or the home network.
+    let api = ApiClient::new().unwrap();
+    for url in ["http://127.0.0.1:8080/admin/delete?all=1", "https://localhost/pic.png", "https://192.168.1.1/pic.png"] {
+        assert!(matches!(api.picture(url).await, Err(AppError::CannotDo(_))), "{url}");
+        assert!(matches!(api.search_avatars(url.split('?').next().unwrap(), "fox").await, Err(AppError::CannotDo(_))), "{url}");
+    }
+}
+
+#[tokio::test]
+async fn the_avatar_databases_do_not_wait_out_a_vrchat_slowdown() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).and(path("/worlds/wrld_a")).respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "2")).mount(&server).await;
+    Mock::given(method("GET")).and(path("/db")).respond_with(ResponseTemplate::new(200).set_body_json(json!([]))).expect(1).mount(&server).await;
+    let api = Arc::new(ApiClient::with_base(&server.uri(), Timing { attempts: 3, max_wait: Duration::from_secs(5), ..quick() }).unwrap());
+    // A read keeps meeting the slowdown and waits it out in the background.
+    let reader = tokio::spawn({
+        let api = api.clone();
+        async move { api.world("wrld_a").await }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let started = std::time::Instant::now();
+    api.search_avatars(&format!("{}/db", server.uri()), "fox").await.unwrap();
+    assert!(started.elapsed() < Duration::from_millis(500), "{:?}", started.elapsed());
+    reader.abort();
 }

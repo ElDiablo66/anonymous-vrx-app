@@ -4,7 +4,8 @@ import { backend, errorText, type BackupInfo } from "./backend";
 import { StatusRuleSettings } from "./RuleSettings";
 import { ExportHistory } from "./Export";
 import { Avatar } from "./bits";
-import { DEFAULT_AVATAR_PROVIDER, EXTRA_AVATAR_PROVIDERS, shrinkPicture, sizes, themeColours, type Settings } from "./settings";
+import { cleanSettings, DEFAULT_AVATAR_PROVIDER, EXTRA_AVATAR_PROVIDERS, noteVrcxImport, shrinkPicture, sizes, themeColours, vrcxImportedBefore, type Settings } from "./settings";
+import { VrPanelSettings } from "./VrPanelSettings";
 import { DateSettings, FontSettings, UpdateSettings, GameCacheSettings, InstanceSettings, PeopleColourSettings, PerformanceSettings, ProfileLookSettings, VrNoticeSettings } from "./SettingsMore";
 
 function Swatch({ label, value, set }: { label: string; value: string; set: (value: string) => void }) {
@@ -85,7 +86,8 @@ export function SettingsPage({
 }) {
   const [testResult, setTestResult] = useState("");
   const [pictureNote, setPictureNote] = useState("");
-  const base = themeColours[settings.background];
+  // A look this version does not know draws as the first one rather than leaving the page blank.
+  const base = themeColours[settings.background] ?? themeColours.sunset;
 
   async function pickPicture(file: File | undefined) {
     if (!file) return;
@@ -102,12 +104,16 @@ export function SettingsPage({
   }
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [dataNote, setDataNote] = useState("");
+  // A failed "Open the licence texts" shows here, in the About section, where the button is.
+  const [aboutNote, setAboutNote] = useState("");
   const [asking, setAsking] = useState("");
   const [restored, setRestored] = useState(false);
   // Moving over from VRCX: whether its history is on this PC, and how the last run went.
   const [vrcx, setVrcx] = useState(false);
   const [bringing, setBringing] = useState(false);
   const [brought, setBrought] = useState("");
+  // The automatic look only starts once the history was brought over here by hand.
+  const [broughtBefore, setBroughtBefore] = useState(() => vrcxImportedBefore(me.id));
   useEffect(() => {
     void backend
       .vrcxFound()
@@ -118,7 +124,12 @@ export function SettingsPage({
     setBringing(true);
     setBrought("");
     try {
+      // VRCX's stamp from before the run, so anything it writes meanwhile is still new at the next look.
+      const stamp = await backend.vrcxStamp().catch(() => "");
+      const started = Date.now();
       const { broughtOver: got, backup } = await backend.importVrcx(JSON.stringify(settings));
+      noteVrcxImport(me.id, started, stamp);
+      setBroughtBefore(vrcxImportedBefore(me.id));
       const total = got.feed + got.friendLog + got.visits + got.notes + got.favourites + got.avatars + got.tags;
       if (total > 0) window.dispatchEvent(new Event("history:imported"));
       setBrought(
@@ -171,7 +182,9 @@ export function SettingsPage({
       const old = await backend.restoreBackup(name, JSON.stringify(settings));
       if (old) {
         try {
-          change(JSON.parse(old));
+          // The backup's settings get the same checks and moves to newer values as the ones read
+          // at start, so an old or unknown value in it cannot leave the window unable to draw.
+          change(cleanSettings(JSON.parse(old), settings));
         } catch {
           // Settings in the backup were unreadable; the history still comes back.
         }
@@ -637,6 +650,7 @@ export function SettingsPage({
       <PerformanceSettings />
 
       <VrNoticeSettings settings={settings} change={change} />
+      <VrPanelSettings settings={settings} change={change} />
       <GameCacheSettings settings={settings} change={change} />
 
       <section data-group="general">
@@ -646,7 +660,9 @@ export function SettingsPage({
             <span className="setting-name">Avatar database</span>
             <span className="setting-hint">
               VRChat has no avatar search for outside apps, so this asks a public, community-run database. It is
-              not run by VRChat or by this app. Only the words you search for are sent to it, never your account.
+              not run by VRChat or by this app. Avatar search sends the words you type. Opening someone's profile
+              can send the id of their avatar picture, to find the avatar's name, and their Avatars tab sends their
+              user id. Nothing about your account is sent.
             </span>
           </span>
           <div className="provider">
@@ -844,7 +860,12 @@ export function SettingsPage({
           <button className="plain go" disabled={working} onClick={() => void backUp()}>
             Back up now
           </button>
-          <button className="plain" onClick={() => void backend.openBackupsFolder()}>
+          <button
+            className="plain"
+            onClick={() =>
+              void backend.openBackupsFolder().catch((err) => setDataNote(`Could not open the backups folder: ${errorText(err)}`))
+            }
+          >
             Open the backups folder
           </button>
         </div>
@@ -898,12 +919,14 @@ export function SettingsPage({
           the favourites VRCX kept on this PC. VRCX's own file is only read, never changed, and a backup of this app's history is made first. Running
           it again only adds what is new.
         </p>
+        <p className="setting-hint">A long history can take several minutes to bring over, and the app can be slow until it is done.</p>
         <Switch
           label="Keep taking over what is new"
-          hint="When the app starts, and once an hour after that, it looks whether VRCX has written anything and brings over only that. You can keep using both."
+          hint="Starts after you brought your history over once with the button below. Then, when the app starts and once an hour after that, it brings over what VRCX wrote since: activity, the friend log, world visits and avatars you wore. Notes, avatar tags and favourites only come with the button. You can keep using both."
           on={settings.vrcxAuto}
           set={(on) => change({ vrcxAuto: on })}
         />
+        {settings.vrcxAuto && !broughtBefore && <p className="setting-hint">Nothing is taken over yet. Bring your history over once first.</p>}
         <div className="data-actions">
           <button className="plain go" disabled={!vrcx || bringing} onClick={() => void bringOver()}>
             {bringing ? "Bringing it over" : "Bring my VRCX history over"}
@@ -963,10 +986,20 @@ export function SettingsPage({
         </ul>
         <button
           className="plain"
-          onClick={() => void backend.openLicencesFolder().catch((err) => setTestResult(errorText(err)))}
+          onClick={() =>
+            void backend
+              .openLicencesFolder()
+              .then(() => setAboutNote(""))
+              .catch((err) => setAboutNote(errorText(err)))
+          }
         >
           Open the licence texts
         </button>
+        {aboutNote && (
+          <p className="setting-hint" role="status">
+            {aboutNote}
+          </p>
+        )}
       </section>
       </div>
     </div>

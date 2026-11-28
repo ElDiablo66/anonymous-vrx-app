@@ -50,7 +50,10 @@ export function Here({
   const world = worlds.get(visit.worldId);
   const count = instances.get(visit.location);
   const present = people.filter((p) => !p.leftAt);
-  const gone = people.filter((p) => p.leftAt);
+  // Someone who left and came back has an old sighting with a leave time and a new one without.
+  // They are still here, so they are not listed as gone too. The key is the one PeopleList uses.
+  const stillHere = new Set(present.map((p) => p.userId || p.displayName));
+  const gone = people.filter((p) => p.leftAt && p.userId !== meId && !stillHere.has(p.userId || p.displayName));
   const others = present.filter((p) => p.userId !== meId);
   const friendsHere = others.filter((p) => friends.has(p.userId)).length;
 

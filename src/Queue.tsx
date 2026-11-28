@@ -53,7 +53,7 @@ export function QueueButton({ location, worldName, full, inLine = 0, onDone }: {
   return (
     <div className="queue-ask">
       <p>
-        {waiting ? "You are waiting for room here." : "This instance is full."} <span className="mark">Beta</span>
+        {waiting ? "You are waiting for room here." : "This instance is full."}
       </p>
       <button
         className={waiting ? "plain" : "plain go"}
@@ -124,7 +124,7 @@ export function QueueBar({ settings, onDone }: { settings: Settings; onDone: (me
       {waiting.length > 0 && (
         <div className="queue-strip" role="status">
           <span className="queue-lead">
-            Waiting for room <span className="mark">Beta</span>
+            Waiting for room
           </span>
           <ul>
             {waiting.map((w) => (

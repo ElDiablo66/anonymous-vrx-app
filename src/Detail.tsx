@@ -267,6 +267,16 @@ export function DetailPanel({
       .catch(() => setExtra((old) => ({ ...old, [key]: null })));
   }
 
+  // Coming back to the Photos tab lands on it before the group is read, so no gallery could be
+  // picked then. Once the group is in, the first gallery is shown, or Info when it has none now.
+  useEffect(() => {
+    if (tab !== "photos" || gallery || !data) return;
+    const first = str(list(data.galleries)[0]?.id);
+    if (first) showGallery(first);
+    else open("info");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, tab]);
+
   const d = data ?? {};
   const galleries = kind === "group" ? list(d.galleries) : [];
   const membership = str(d.membershipStatus);
@@ -358,7 +368,7 @@ export function DetailPanel({
           )}
           <div className="wayback">
             {kind === "avatar" && (
-              <button className="go" disabled={busy || !data} onClick={() => void act(() => backend.wearAvatar(id), `You are now wearing ${name}.`)}>
+              <button className="go" disabled={busy || !data} onClick={() => void act(() => backend.wearAvatar(id, name), `You are now wearing ${name}.`)}>
                 Wear
               </button>
             )}

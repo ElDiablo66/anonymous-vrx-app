@@ -355,7 +355,7 @@ export function Everyone({
             </thead>
             <tbody>
               {rows.slice(0, 600).map((f) => (
-                <tr key={f.id} data-person={f.id} data-person-name={f.displayName} className={f.state === "offline" ? "dim" : ""} onClick={() => openProfile(f.id)} title="Open profile. Right-click for invites and a boop">
+                <tr key={f.id} data-person={f.id} data-person-name={f.displayName} className={f.state === "offline" ? "dim" : ""} tabIndex={0} onClick={() => openProfile(f.id)} onKeyDown={(e) => e.key === "Enter" && openProfile(f.id)} title="Open profile. Right-click for invites and a boop">
                   <td>
                     <span className="person">
                       <Avatar name={f.displayName} image={f.image} tone={statusTone(f)} />

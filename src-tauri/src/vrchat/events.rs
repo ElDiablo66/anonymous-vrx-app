@@ -161,6 +161,7 @@ pub fn apply(friends: &mut HashMap<String, Friend>, kind: &str, content: &Value)
             f.state = if kind == "friend-active" { "active" } else { "offline" }.into();
             f.set_location("offline");
             f.traveling_to.clear();
+            f.before_travel.clear();
             f.since.clear();
             f.since_at_least = false;
             if let Some(p) = content.get("platform").and_then(Value::as_str) {
@@ -194,8 +195,18 @@ pub fn apply(friends: &mut HashMap<String, Friend>, kind: &str, content: &Value)
                 f.since = now_utc();
                 f.since_at_least = false;
             }
-            if is_real_place(&f.location) && f.location != before {
-                out.push(draft(f, "location", "", &before));
+            // VRChat sends "traveling" between two places. The place they left is kept over
+            // that step, so the feed says where they really came from, not "traveling".
+            if f.location == "traveling" {
+                if is_real_place(&before) {
+                    f.before_travel = before.clone();
+                }
+            } else if is_real_place(&f.location) && f.location != before {
+                let came_from = if before == "traveling" { std::mem::take(&mut f.before_travel) } else { before.clone() };
+                f.before_travel.clear();
+                out.push(draft(f, "location", "", &came_from));
+            } else {
+                f.before_travel.clear();
             }
             out.push(Effect::FriendChanged(f.clone()));
         }
@@ -367,6 +378,41 @@ mod tests {
         let fx = apply(&mut friends, &k, &c);
         assert!(feed_kinds(&fx).is_empty());
         assert_eq!(friends["usr_2"].traveling_to, "wrld_b:1");
+    }
+
+    #[test]
+    fn the_place_before_travelling_is_where_they_came_from() {
+        let mut friends = HashMap::new();
+        let mut moved = |content: Value| {
+            let (k, c) = read_frame(&frame("friend-location", content)).unwrap();
+            apply(&mut friends, &k, &c)
+        };
+        let previous = |fx: &[Effect]| {
+            fx.iter()
+                .find_map(|e| match e {
+                    Effect::Feed(d) if d.kind == "location" => Some(d.previous.clone()),
+                    _ => None,
+                })
+                .expect("a location entry")
+        };
+        moved(json!({ "userId": "usr_5", "location": "private", "user": { "id": "usr_5", "displayName": "Ash" } }));
+        let fx = moved(json!({ "userId": "usr_5", "location": "traveling", "travelingToLocation": "wrld_x:1",
+            "user": { "id": "usr_5", "displayName": "Ash" } }));
+        assert!(feed_kinds(&fx).is_empty());
+        // The same "traveling" word twice does not lose the place they left.
+        moved(json!({ "userId": "usr_5", "location": "traveling", "travelingToLocation": "wrld_x:1",
+            "user": { "id": "usr_5", "displayName": "Ash" } }));
+        let fx = moved(json!({ "userId": "usr_5", "location": "wrld_x:1", "user": { "id": "usr_5", "displayName": "Ash" } }));
+        assert_eq!(previous(&fx), "private");
+
+        // A move without the travelling step names the place before, as always.
+        let fx = moved(json!({ "userId": "usr_5", "location": "wrld_y:2", "user": { "id": "usr_5", "displayName": "Ash" } }));
+        assert_eq!(previous(&fx), "wrld_x:1");
+        // Nothing is carried over into the next trip.
+        let fx = moved(json!({ "userId": "usr_5", "location": "traveling", "user": { "id": "usr_5", "displayName": "Ash" } }));
+        assert!(feed_kinds(&fx).is_empty());
+        let fx = moved(json!({ "userId": "usr_5", "location": "wrld_z:3", "user": { "id": "usr_5", "displayName": "Ash" } }));
+        assert_eq!(previous(&fx), "wrld_y:2");
     }
 
     #[test]

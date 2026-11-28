@@ -46,6 +46,7 @@ enum Job {
     /// Look up an avatar I switched to, for the avatar history.
     Avatar(String),
 }
+/// A live connection that has sent nothing back for this long, not even a pong, is taken as dead.
 const QUIET_LIMIT: Duration = Duration::from_secs(150);
 /// How often the app pings the live connection, so a dead one is noticed within minutes.
 const PING_EVERY: Duration = Duration::from_secs(45);
@@ -88,8 +89,9 @@ pub struct Hub {
     log_dir: Option<PathBuf>,
     inner: Mutex<Inner>,
     alerts: Mutex<Alerts>,
-    /// The last favourites answer per kind, so screens can show at once and refresh after.
-    fav_cache: Mutex<HashMap<String, Value>>,
+    /// The last favourites answer per kind, so screens can show at once and refresh after,
+    /// with the account it belongs to. Another account's answer is never handed out.
+    fav_cache: Mutex<HashMap<String, (String, Value)>>,
     /// The people I blocked or muted, with the account the list belongs to.
     blocked: Mutex<Option<(String, Value)>>,
     /// Picture, rank and status of people looked up for a list, kept while the app runs.
@@ -107,11 +109,70 @@ pub struct Hub {
     mutuals_running: std::sync::atomic::AtomicBool,
     /// VRChat's whole list of my choices about other people, kept a minute.
     moderation_raw: Mutex<Option<(String, Instant, Value)>>,
-    /// When the app last set my status itself, and to what.
-    status_set: Mutex<Option<(Instant, String, String)>>,
+    /// When the app last set my status itself, what it was before and what it was set to.
+    status_set: Mutex<Option<StatusSet>>,
     mutuals_stop: std::sync::atomic::AtomicBool,
     /// Put my own world, avatar and status changes into the feed too.
     own_feed: std::sync::atomic::AtomicBool,
+    /// Notifications the app is answering or dismissing right now, by id.
+    acting: Mutex<HashSet<String>>,
+    /// A VRCX import is under way. It runs without the hub's main lock, so this is what keeps
+    /// a second one from starting meanwhile and writing the same rows again.
+    importing: std::sync::atomic::AtomicBool,
+}
+
+/// A status change the app made itself, kept for a few seconds so a late word from VRChat
+/// about the status before it can be told apart from a real change made elsewhere.
+struct StatusSet {
+    at: Instant,
+    old_status: String,
+    old_text: String,
+    new_status: String,
+    new_text: String,
+}
+
+/// How long after setting my status a word carrying the old one is taken as late.
+const STATUS_ECHO: Duration = Duration::from_secs(8);
+
+/// Marks a notification as being acted on for as long as it is kept. Dropping it clears the
+/// mark, on every way out.
+struct Acting<'a> {
+    set: &'a Mutex<HashSet<String>>,
+    id: String,
+}
+
+impl<'a> Acting<'a> {
+    fn start(set: &'a Mutex<HashSet<String>>, id: &str) -> Acting<'a> {
+        set.lock().unwrap().insert(id.to_string());
+        Acting { set, id: id.to_string() }
+    }
+}
+
+impl Drop for Acting<'_> {
+    fn drop(&mut self) {
+        self.set.lock().unwrap().remove(&self.id);
+    }
+}
+
+/// Marks a VRCX import as running for as long as it is kept. Dropping it clears the mark on
+/// every way out, a run that failed or stopped half way included.
+struct Importing<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl<'a> Importing<'a> {
+    /// Takes the mark, or gives back nothing when another import already holds it.
+    fn start(flag: &'a std::sync::atomic::AtomicBool) -> Option<Importing<'a>> {
+        if flag.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            None
+        } else {
+            Some(Importing(flag))
+        }
+    }
+}
+
+impl Drop for Importing<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 /// Which notifications get a Windows pop-up. The window sends its switches here,
@@ -169,6 +230,9 @@ pub struct Profile {
     pub feed: Vec<FeedItem>,
     /// Names this PC saw them use, each with when it was last seen.
     pub past_names: Vec<(String, String)>,
+    /// The newer profile record arrived, so the bio and its links are the real ones. Without
+    /// it nothing about them may be saved over.
+    pub record_read: bool,
 }
 
 enum Ended {
@@ -188,6 +252,19 @@ fn safe_file_part(id: &str) -> String {
     id.chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
         .collect()
+}
+
+/// VRChat limits boops on its own: a boop to the same person can be held back until they answer
+/// the last one, and many in a row are turned down for a while. Said plainly, with the wait when
+/// VRChat gave one. The app does not send it again by itself.
+fn boop_turned_down(e: AppError) -> AppError {
+    match e {
+        AppError::RateLimited(seconds) => AppError::CannotDo(format!(
+            "VRChat did not take the boop. {}. It can also hold back a new boop to someone until they answer your last one.",
+            AppError::RateLimited(seconds)
+        )),
+        other => other,
+    }
 }
 
 impl Hub {
@@ -222,6 +299,8 @@ impl Hub {
             moderation_raw: Mutex::new(None),
             mutuals_stop: std::sync::atomic::AtomicBool::new(false),
             own_feed: std::sync::atomic::AtomicBool::new(false),
+            acting: Mutex::new(HashSet::new()),
+            importing: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -269,12 +348,25 @@ impl Hub {
                 return;
             }
             // Right after the app set my status, VRChat can still send word of the one
-            // before it. That late word must not put the old status back in the window.
-            if let Some((at, set_status, set_text)) = self.status_set.lock().unwrap().as_ref() {
-                let late = user.get("status").and_then(Value::as_str).is_some_and(|s| s != set_status)
-                    || user.get("statusDescription").and_then(Value::as_str).is_some_and(|t| t.trim() != set_text.trim());
-                if late && at.elapsed() < Duration::from_secs(8) {
-                    return;
+            // before it. That late word must not put the old status back in the window. Only
+            // word that carries the old values is held back; anything else is a real change,
+            // made in VRChat or on the website, and goes through.
+            {
+                let mut set = self.status_set.lock().unwrap();
+                if let Some(s) = set.as_ref() {
+                    let status = user.get("status").and_then(Value::as_str);
+                    let text = user.get("statusDescription").and_then(Value::as_str).map(str::trim);
+                    let carries = |want_status: &str, want_text: &str| {
+                        (status.is_some() || text.is_some())
+                            && status.is_none_or(|v| v == want_status)
+                            && text.is_none_or(|v| v == want_text.trim())
+                    };
+                    if carries(&s.new_status, &s.new_text) {
+                        // VRChat confirmed the change, so later word is news, whatever it says.
+                        *set = None;
+                    } else if carries(&s.old_status, &s.old_text) && s.at.elapsed() < STATUS_ECHO {
+                        return;
+                    }
                 }
             }
             if let Some(now) = user.get("status").and_then(Value::as_str) {
@@ -373,6 +465,21 @@ impl Hub {
             self.send("queue:changed", Value::Null);
             return 0;
         }
+        // A wait ends after an hour, before VRChat is asked again, whatever VRChat answered in
+        // the rounds before. A wait that old never announces room.
+        let (old, list): (Vec<_>, Vec<_>) = list.into_iter().partition(|(_, _, began)| began.elapsed() >= Duration::from_secs(3600));
+        for (location, world, began) in old {
+            let ended = {
+                let mut waiting = self.waiting.lock().unwrap();
+                // Only the same wait: one stopped and asked for again since is newer.
+                let same = waiting.get(&location).is_some_and(|(_, at)| *at == began);
+                same && waiting.remove(&location).is_some()
+            };
+            if ended {
+                self.send("queue:gone", json!({ "location": location, "worldName": world, "why": "hour" }));
+                self.send("queue:changed", Value::Null);
+            }
+        }
         for (location, world, _) in list {
             // Stopped while this round was under way.
             if !self.waiting.lock().unwrap().contains_key(&location) {
@@ -387,6 +494,12 @@ impl Hub {
             let gone = |why: &str| ("queue:gone", json!({ "location": location, "worldName": world, "why": why }));
             let done = match reply {
                 Ok(i) => {
+                    // The head count just read is news for the cards too, so the instance's card
+                    // shows the free places as soon as the alarm sees them.
+                    if let Some(instance) = Instance::from_json(&location, &i) {
+                        self.inner.lock().unwrap().instances.insert(location.clone(), (instance.clone(), Instant::now()));
+                        self.send("instance:info", json!(instance));
+                    }
                     let users = crate::vrchat::model::head_count(&i);
                     let capacity = i["capacity"].as_i64().unwrap_or(0);
                     let closed = i["closedAt"].as_str().is_some_and(|c| !c.is_empty());
@@ -401,15 +514,18 @@ impl Hub {
                         Some(gone("closed"))
                     } else if full == Some(false) {
                         let free = users.filter(|_| capacity > 0).map_or(1, |n| (capacity - n).max(1));
-                        self.send("popup", json!({ "title": format!("Room in {world}"), "body": format!("{free} {} free. Open Anonymous VRX to join.", if free == 1 { "place is" } else { "places are" }) }));
+                        self.send("popup", json!({ "title": format!("Room in {world}"), "body": format!("{free} {} free. Open Anonymous VRX to join.", if free == 1 { "place is" } else { "places are" }), "kind": "room", "label": "Room free" }));
                         Some(("queue:room", json!({ "location": location, "worldName": world, "free": free })))
                     } else {
                         None
                     }
                 }
                 Err(AppError::Api { status: 403 | 404, .. }) => Some(gone("closed")),
-                // Told to slow down, or no connection: the rest of this round is skipped, the waits go on.
-                Err(_) => break,
+                // Told to slow down, no connection, or signed out: the rest of this round is
+                // skipped, the waits go on.
+                Err(AppError::RateLimited(_) | AppError::Network(_) | AppError::Unauthorized | AppError::NotSignedIn) => break,
+                // VRChat could not answer about this one instance: the others are still asked.
+                Err(_) => None,
             };
             let done = done.or_else(|| (since.elapsed() >= Duration::from_secs(3600)).then(|| gone("hour")));
             if let Some((event, payload)) = done {
@@ -490,12 +606,19 @@ impl Hub {
             let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
             // The page size and offset are added by `read_all`; naming one here as well made
             // VRChat turn the question down for every friend.
-            match self.api.read_all(&format!("/users/{}/mutuals/friends", utf8(id))).await {
+            let answer = self.api.read_all(&format!("/users/{}/mutuals/friends", utf8(id))).await;
+            // Signed out, or into another account, while VRChat answered: nothing may be
+            // written into whichever history is open now.
+            if self.me().is_none_or(|now| now.id != me.id) {
+                ended = "stopped";
+                break;
+            }
+            match answer {
                 Ok(list) => {
                     let others: Vec<String> = list.iter().filter_map(|u| u["id"].as_str().map(str::to_string)).collect();
                     let _ = self.with_store(|s| s.set_mutuals(id, &others, &now, false));
                 }
-                Err(AppError::RateLimited) => {
+                Err(AppError::RateLimited(_)) => {
                     ended = "slow";
                     break;
                 }
@@ -698,7 +821,14 @@ impl Hub {
         self.api
             .update_me(&me.id, json!({ "status": status, "statusDescription": text }))
             .await?;
-        *self.status_set.lock().unwrap() = Some((Instant::now(), status.to_string(), text.to_string()));
+        // `me` was read before the change went out, so it holds the status VRChat had before.
+        *self.status_set.lock().unwrap() = Some(StatusSet {
+            at: Instant::now(),
+            old_status: me.status.clone(),
+            old_text: me.status_description.clone(),
+            new_status: status.to_string(),
+            new_text: text.to_string(),
+        });
         // VRChat's own update for my account may land before or after this line. Whichever
         // comes first finds the old value and writes the feed entry; the other finds nothing changed.
         let (mut was_status, mut was_text) = (None, None);
@@ -753,12 +883,17 @@ impl Hub {
         };
         if wanted && !mine {
             let (title, body) = notices::popup_text(notice);
-            self.send("popup", json!({ "title": title, "body": body }));
+            let (kind, label) = notices::popup_kind(notice);
+            self.send("popup", json!({ "title": title, "body": body, "kind": kind, "label": label }));
         }
     }
 
     /// Keeps notifications VRChat cleared on its own side in the Done list, so none vanish unseen.
-    fn log_cleared(&self, cleared: &[Notice]) {
+    /// A notice the app is acting on right now is left out: the app logs it itself, with what
+    /// was really done, once VRChat answers. `acting` is what the app was acting on when the
+    /// notices were taken off the list, read under the same lock.
+    fn log_cleared(&self, cleared: &[Notice], acting: &HashSet<String>) {
+        let cleared: Vec<&Notice> = cleared.iter().filter(|n| !acting.contains(&n.id)).collect();
         if cleared.is_empty() {
             return;
         }
@@ -781,7 +916,16 @@ impl Hub {
         // The copy is made through a second, read-only door to the same file, so the rest of
         // the app keeps working while a large history is copied.
         let copy = Store::open_existing(&self.history_path(&me.id))?;
-        backup::create(root, &copy, settings_json, label)
+        backup::create(root, &copy, settings_json, label, &me.id)
+    }
+
+    /// The backups the signed-in account may restore, newest first: its own and the older
+    /// untagged ones. With nobody signed in, every backup on this PC.
+    pub fn list_backups(&self, root: &std::path::Path) -> Vec<BackupInfo> {
+        match self.me() {
+            Some(me) => backup::list_for(root, &me.id),
+            None => backup::list(root),
+        }
     }
 
     /// Brings the history VRCX kept for this account into this one. A backup is made first,
@@ -805,7 +949,7 @@ impl Hub {
         for kind in ["iconFrame", "profileEffect", "nameplateEffect", "profileBackground"] {
             let list = match self.api.read(&format!("/cosmetics/index/{kind}")).await {
                 Ok(list) => list,
-                Err(AppError::RateLimited) => return Err(AppError::RateLimited),
+                Err(e @ AppError::RateLimited(_)) => return Err(e),
                 // One list failing does not hide the others.
                 Err(_) => continue,
             };
@@ -854,17 +998,34 @@ impl Hub {
         if !other.is_file() {
             return Err(AppError::CannotDo("VRCX's history file was not found on this PC.".into()));
         }
+        // Only one import runs at a time, from the backup to the last write. A run started from
+        // Settings while the hourly look is going, or the other way round, is turned away here;
+        // the window says nothing when its own hourly look is the one turned away.
+        let _running = Importing::start(&self.importing)
+            .ok_or_else(|| AppError::CannotDo("VRCX history is already being brought over. Wait for it to finish.".into()))?;
         const QUIET_LABEL: &str = "before taking over VRCX news";
         let saved = if !by_itself {
             self.backup(backups, settings_json, "before bringing over VRCX")?.name
-        } else if backup::due_for(backups, QUIET_LABEL, std::time::Duration::from_secs(24 * 3600)) {
+        } else if backup::due_for(backups, QUIET_LABEL, &me.id, std::time::Duration::from_secs(24 * 3600)) {
             let made = self.backup(backups, settings_json, QUIET_LABEL)?;
-            backup::prune_for(backups, QUIET_LABEL, 3);
+            backup::prune_for(backups, QUIET_LABEL, &me.id, 3);
             made.name
         } else {
             String::new()
         };
-        let got = self.with_store(|s| s.import_vrcx(other, &me.id, by_itself, since.filter(|_| by_itself)))?;
+        // The import gets its own connection to the history file instead of the one the hub
+        // keeps, so the hub's lock is held only for this look and the rest of the app keeps
+        // reading and writing while a long history comes over. The file keeps a write-ahead
+        // log, so readers are never held up, and the import writes in short pieces.
+        let path = {
+            let inner = self.inner.lock().unwrap();
+            if inner.store.is_none() || inner.me.as_ref().map(|m| m.id.as_str()) != Some(me.id.as_str()) {
+                return Err(AppError::NotSignedIn);
+            }
+            self.history_path(&me.id)
+        };
+        let got = Store::open(&path)?.import_vrcx(other, &me.id, by_itself, since.filter(|_| by_itself))?;
+        // Lists the window shows are read from the history again when it hears this.
         self.send("here:changed", Value::Null);
         Ok(json!({ "broughtOver": got, "backup": saved }))
     }
@@ -872,20 +1033,24 @@ impl Hub {
     /// Makes an automatic backup when the last one is older than a day, then keeps only the
     /// newest `keep`. Gives back the new backup, or nothing when none was due.
     pub fn auto_backup(&self, root: &std::path::Path, settings_json: &str, keep: usize) -> AppResult<Option<BackupInfo>> {
-        if !backup::auto_due(root, std::time::Duration::from_secs(24 * 3600)) {
+        let me = self.me().ok_or(AppError::NotSignedIn)?;
+        // Each account on this PC counts and keeps only its own automatic backups.
+        if !backup::auto_due(root, &me.id, std::time::Duration::from_secs(24 * 3600)) {
             return Ok(None);
         }
         let made = self.backup(root, settings_json, backup::AUTO_LABEL)?;
-        backup::prune_auto(root, keep.clamp(1, 60));
+        backup::prune_auto(root, &me.id, keep.clamp(1, 60));
         Ok(Some(made))
     }
 
     /// Saves the current data first, then lines the chosen backup up for the next start.
-    /// Returns the backup's window settings.
+    /// Returns the backup's window settings. A backup made for another account is refused
+    /// before anything is saved or replaced.
     pub fn restore_backup(&self, root: &std::path::Path, name: &str, current_settings: &str) -> AppResult<String> {
         let me = self.me().ok_or(AppError::NotSignedIn)?;
+        backup::check_restore(root, name, &me.id)?;
         self.backup(root, current_settings, "before restore")?;
-        backup::stage_restore(root, name, &self.history_path(&me.id))
+        backup::stage_restore(root, name, &self.history_path(&me.id), &me.id)
     }
 
     fn send(&self, name: &str, payload: Value) {
@@ -910,13 +1075,20 @@ impl Hub {
 
     /// Fetches the favourite friends and their groups. Two or three requests.
     pub async fn sync_favorites(&self) -> AppResult<()> {
+        self.sync_favorites_read().await.map(|_| ())
+    }
+
+    /// The work of `sync_favorites`. Gives back the favourite friend entries and, when they
+    /// were asked for, the favourite groups, so the read-ahead after signing in does not ask
+    /// for them again.
+    async fn sync_favorites_read(&self) -> AppResult<(Vec<Value>, Option<Vec<Value>>)> {
         let list = self.api.favorite_friends().await?;
         let groups = if list.is_empty() {
-            Vec::new()
+            None
         } else {
-            self.api.favorite_groups().await?
+            Some(self.api.favorite_groups().await?)
         };
-        let favorites = Favorites::from_api(&list, &groups);
+        let favorites = Favorites::from_api(&list, groups.as_deref().unwrap_or_default());
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(store) = &inner.store {
@@ -928,14 +1100,15 @@ impl Hub {
             inner.favorites = favorites;
         }
         self.send("favorites:reset", Value::Null);
-        Ok(())
+        Ok((list, groups))
     }
 
     /// One person's profile from VRChat, with what this PC knows about them.
     pub async fn profile(&self, user_id: &str) -> AppResult<Profile> {
         // My own account has more to show (my settings, my avatar), and only I can read it.
         let mine = self.me().is_some_and(|me| me.id == user_id);
-        let profile_path = format!("/profile/{}", utf8(user_id));
+        // My own record is asked for as myself, so a bio I just saved is read back fresh.
+        let profile_path = if mine { format!("/profile/{}?asSelf=true", utf8(user_id)) } else { format!("/profile/{}", utf8(user_id)) };
         let (user, public, own) = tokio::join!(self.api.user(user_id), self.api.read(&profile_path), async {
             if mine {
                 self.api.current_user().await.ok()
@@ -955,6 +1128,7 @@ impl Hub {
             }
         }
         // Bio, badges, banner, icon and the avatar being worn live in the newer profile record.
+        let mut record_read = false;
         if let Ok(Value::Object(public)) = public {
             if let Some(target) = json.as_object_mut() {
                 for (k, v) in &public {
@@ -969,6 +1143,11 @@ impl Hub {
                         target.insert(k.clone(), v.clone());
                     }
                 }
+                // The record is the only place the bio and its links are kept now, so it wins
+                // over any older copy, also when it is empty or has fewer links.
+                target.insert("bio".into(), public.get("bio").filter(|v| v.is_string()).cloned().unwrap_or_else(|| json!("")));
+                target.insert("bioLinks".into(), public.get("bioLinks").filter(|v| v.is_array()).cloned().unwrap_or_else(|| json!([])));
+                record_read = true;
             }
         }
         // Profiles no longer carry the worn avatar's picture; the friend list still does.
@@ -997,6 +1176,7 @@ impl Hub {
             past_names: store.past_names(user_id).unwrap_or_default(),
             person,
             raw: json,
+            record_read,
         })
     }
 
@@ -1151,40 +1331,88 @@ impl Hub {
             self.api.read_all("/favorites?type=avatar"),
             self.api.read_all("/favorites?type=world"),
         );
+        let groups = groups?;
         let mut counts = serde_json::Map::new();
         for (kind, entries) in [("friend", friends), ("avatar", avatars), ("world", worlds)] {
-            for entry in entries.unwrap_or_default() {
+            // A list that could not be read is not taken as empty: every group of its kind
+            // would then show no favourites at all. The answer fails instead, and the window
+            // keeps the counts it showed last.
+            for entry in entries? {
                 let Some(group) = entry.pointer("/tags/0").and_then(Value::as_str) else { continue };
                 let key = format!("{kind}:{group}");
                 let had = counts.get(&key).and_then(Value::as_u64).unwrap_or(0);
                 counts.insert(key, json!(had + 1));
             }
         }
-        Ok(json!({ "groups": groups?, "counts": counts }))
+        Ok(json!({ "groups": groups, "counts": counts }))
     }
 
     pub async fn favorites_of(&self, kind: &str) -> AppResult<Value> {
         if !matches!(kind, "world" | "avatar" | "friend") {
             return Err(AppError::CannotDo("Favourites are worlds, avatars or friends.".into()));
         }
+        // The answer is kept only for the account it was read for.
+        let owner = self.me().map(|m| m.id).unwrap_or_default();
         let entries_path = format!("/favorites?type={kind}");
         let (groups, entries, limits) = tokio::join!(
             self.api.favorite_groups(),
             self.api.read_all(&entries_path),
             self.api.read("/auth/user/favoritelimits"),
         );
-        let groups: Vec<Value> = groups?
-            .into_iter()
+        let (groups, entries) = (groups?, entries?);
+        Ok(self.build_favorites(kind, &owner, &groups, entries, limits.ok().as_ref()).await)
+    }
+
+    /// Reads my avatar and world favourites ahead after signing in, so their screens open at
+    /// once. The favourite friends and the group list the sign-in sync just read are used
+    /// again, and the groups and limits are asked for once for all three kinds, so no list is
+    /// asked for twice.
+    async fn read_ahead_favorites(&self, read: Option<(Vec<Value>, Option<Vec<Value>>)>) {
+        let Some(owner) = self.me().map(|m| m.id) else { return };
+        let known_groups = read.as_ref().and_then(|(_, groups)| groups.clone());
+        let (groups, limits, avatars, worlds) = tokio::join!(
+            async {
+                match known_groups {
+                    Some(groups) => Ok(groups),
+                    None => self.api.favorite_groups().await,
+                }
+            },
+            self.api.read("/auth/user/favoritelimits"),
+            self.api.read_all("/favorites?type=avatar"),
+            self.api.read_all("/favorites?type=world"),
+        );
+        let Ok(groups) = groups else { return };
+        let limits = limits.ok();
+        let avatar = async {
+            if let Ok(entries) = avatars {
+                self.build_favorites("avatar", &owner, &groups, entries, limits.as_ref()).await;
+            }
+        };
+        let world = async {
+            if let Ok(entries) = worlds {
+                self.build_favorites("world", &owner, &groups, entries, limits.as_ref()).await;
+            }
+        };
+        tokio::join!(avatar, world);
+        if let Some((friends, _)) = read {
+            self.build_favorites("friend", &owner, &groups, friends, limits.as_ref()).await;
+        }
+    }
+
+    /// Puts one kind of favourites together from the groups, entries and limits already read,
+    /// asks VRChat only for the items in each group in use, and keeps the answer for `owner`.
+    async fn build_favorites(&self, kind: &str, owner: &str, all_groups: &[Value], entries: Vec<Value>, limits: Option<&Value>) -> Value {
+        let groups: Vec<Value> = all_groups
+            .iter()
             .filter(|g| g.get("type").and_then(Value::as_str) == Some(kind))
+            .cloned()
             .collect();
-        let entries = entries?;
         let fallback = match kind {
             "world" => 100,
             "friend" => 150,
             _ => 50,
         };
         let capacity = limits
-            .ok()
             .and_then(|l| l.pointer(&format!("/maxFavoritesPerGroup/{kind}")).and_then(Value::as_u64))
             .unwrap_or(fallback);
         let mut items: Vec<Value> = Vec::new();
@@ -1217,8 +1445,8 @@ impl Hub {
             }
         }
         let all = json!({ "groups": groups, "entries": entries, "items": items, "complete": complete, "capacity": capacity });
-        self.fav_cache.lock().unwrap().insert(kind.to_string(), all.clone());
-        Ok(all)
+        self.cache_favorites(kind, owner, &all);
+        all
     }
 
     /// Looks for favourites that are really gone. Anything VRChat did not list is asked
@@ -1261,7 +1489,7 @@ impl Hub {
                 Ok(v) if hidden(&v) => Some(("private", v.get("name").and_then(Value::as_str).unwrap_or("").to_string())),
                 Ok(_) => None,
                 Err(AppError::Api { status: 404, .. }) => Some(("deleted", String::new())),
-                Err(AppError::RateLimited) => {
+                Err(AppError::RateLimited(_)) => {
                     stopped = true;
                     break;
                 }
@@ -1292,9 +1520,21 @@ impl Hub {
         }
     }
 
-    /// The favourites answer from last time, if there is one.
+    /// The favourites answer from last time, if there is one and it belongs to the account
+    /// signed in now.
     pub fn favorites_cached(&self, kind: &str) -> Option<Value> {
-        self.fav_cache.lock().unwrap().get(kind).cloned()
+        let current = self.me().map(|m| m.id).unwrap_or_default();
+        self.fav_cache.lock().unwrap().get(kind).filter(|(owner, _)| *owner == current).map(|(_, v)| v.clone())
+    }
+
+    /// Keeps a favourites answer for later, but only while the account it was read for is
+    /// still the one signed in. A read that finished after signing out, or after another
+    /// account signed in, is dropped.
+    fn cache_favorites(&self, kind: &str, owner: &str, all: &Value) {
+        let current = self.me().map(|m| m.id).unwrap_or_default();
+        if current == owner {
+            self.fav_cache.lock().unwrap().insert(kind.to_string(), (owner.to_string(), all.clone()));
+        }
     }
 
     pub async fn boop(&self, user_id: &str, emoji: Option<&str>) -> AppResult<()> {
@@ -1307,7 +1547,7 @@ impl Hub {
         if emoji.is_some_and(|e| !((e.starts_with("default_") || e.starts_with("file_")) && plain(e))) {
             return Err(AppError::CannotDo("That is not an emoji VRChat knows.".into()));
         }
-        self.api.boop(user_id, emoji).await
+        self.api.boop(user_id, emoji).await.map_err(boop_turned_down)
     }
 
     /// My saved messages for invites (`message`) or for asking to be invited (`request`), twelve of each.
@@ -1332,24 +1572,62 @@ impl Hub {
         self.api.set_invite_message(&me.id, kind, slot, text).await
     }
 
-    /// Changes what my profile says about me: bio, pronouns and up to three links.
-    pub async fn update_profile(&self, bio: &str, pronouns: &str, links: &[String]) -> AppResult<()> {
-        let links: Vec<&str> = links.iter().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    /// Changes what my profile says about me. `about` is the bio with up to three links, sent
+    /// together; `pronouns` goes only when it changed. Either can be left out.
+    ///
+    /// VRChat keeps the bio and its links in the newer profile record, so they go to
+    /// `PUT /profile/{me}`. Since September 2026 `PUT /users/{me}` answers yes to a bio and keeps
+    /// nothing, which is how a bio could look saved and stay the same. Pronouns still live on the
+    /// account, `PUT /users/{me}`. VRChat's answer is checked, and when it does not show the bio
+    /// the record is read once more: a bio VRChat did not keep is never reported as saved.
+    pub async fn update_profile(&self, about: Option<(&str, &[String])>, pronouns: Option<&str>) -> AppResult<()> {
         let web = |l: &str| (l.starts_with("https://") || l.starts_with("http://")) && l.len() <= 200 && !l.chars().any(|c| c.is_control() || c.is_whitespace());
-        if bio.chars().count() > 512 {
-            return Err(AppError::CannotDo("A bio can be at most 512 characters.".into()));
+        let about = match about {
+            None => None,
+            Some((bio, links)) => {
+                let links: Vec<&str> = links.iter().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+                if bio.chars().count() > 512 {
+                    return Err(AppError::CannotDo("A bio can be at most 512 characters.".into()));
+                }
+                if bio.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')) {
+                    return Err(AppError::CannotDo("The bio has a character in it that cannot be shown. Type it again without pasting.".into()));
+                }
+                if links.len() > 3 || links.iter().any(|l| !web(l)) {
+                    return Err(AppError::CannotDo("A profile holds up to three links, each a web address starting with https://.".into()));
+                }
+                Some((bio, links))
+            }
+        };
+        if let Some(p) = pronouns {
+            if p.chars().count() > 32 || p.chars().any(char::is_control) {
+                return Err(AppError::CannotDo("Pronouns can be at most 32 characters.".into()));
+            }
         }
-        if bio.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')) {
-            return Err(AppError::CannotDo("The bio has a character in it that cannot be shown. Type it again without pasting.".into()));
-        }
-        if pronouns.chars().count() > 32 || pronouns.chars().any(char::is_control) {
-            return Err(AppError::CannotDo("Pronouns can be at most 32 characters.".into()));
-        }
-        if links.len() > 3 || links.iter().any(|l| !web(l)) {
-            return Err(AppError::CannotDo("A profile holds up to three links, each a web address starting with https://.".into()));
+        if about.is_none() && pronouns.is_none() {
+            return Ok(());
         }
         let me = self.me().ok_or(AppError::NotSignedIn)?;
-        self.api.update_me(&me.id, json!({ "bio": bio, "pronouns": pronouns.trim(), "bioLinks": links })).await
+        if let Some((bio, links)) = about {
+            let answer = self.api.update_profile_record(&me.id, json!({ "bio": bio, "bioLinks": links })).await?;
+            // Line ends and the spaces at either end may come back tidied.
+            let tidy = |s: &str| s.replace("\r\n", "\n").trim().to_string();
+            let kept_in = |record: &Value| record.as_object().and_then(|o| o.get("bio")).map(|b| tidy(b.as_str().unwrap_or("")) == tidy(bio));
+            let kept = match kept_in(&answer) {
+                Some(kept) => kept,
+                None => {
+                    let again = self.api.read(&format!("/profile/{}?asSelf=true", utf8(&me.id))).await?;
+                    // A record without a bio has an empty one.
+                    again.is_object() && tidy(again.get("bio").and_then(Value::as_str).unwrap_or("")) == tidy(bio)
+                }
+            };
+            if !kept {
+                return Err(AppError::CannotDo("VRChat answered but did not keep the new bio. Try again in a minute.".into()));
+            }
+        }
+        if let Some(p) = pronouns {
+            self.api.update_me(&me.id, json!({ "pronouns": p.trim() })).await?;
+        }
+        Ok(())
     }
 
     pub async fn picture(&self, url: &str) -> AppResult<(String, Vec<u8>)> {
@@ -1404,11 +1682,12 @@ impl Hub {
             return Ok(());
         }
         let me = self.me().ok_or(AppError::NotSignedIn)?;
-        self.api.update_profile_record(&me.id, Value::Object(body)).await
+        self.api.update_profile_record(&me.id, Value::Object(body)).await.map(|_| ())
     }
 
     /// Changes the languages on my profile. VRChat keeps them as tags on the account
-    /// (`language_eng`), the way its website changes them: the ones dropped come off, the new ones go on.
+    /// (`language_eng`): the new ones go on first, then the ones dropped come off. In that order
+    /// a held or refused add leaves the profile as it was, never with fewer languages than before.
     pub async fn update_languages(&self, add: &[String], remove: &[String]) -> AppResult<()> {
         let code = |c: &String| c.len() == 3 && c.chars().all(|x| x.is_ascii_lowercase());
         if add.len() > 3 || remove.len() > 10 || !add.iter().chain(remove).all(code) {
@@ -1416,11 +1695,22 @@ impl Hub {
         }
         let me = self.me().ok_or(AppError::NotSignedIn)?;
         let tags = |list: &[String]| list.iter().map(|c| format!("language_{c}")).collect::<Vec<_>>();
-        if !remove.is_empty() {
-            self.api.change_tags(&me.id, false, &tags(remove)).await?;
-        }
+        // A language both added and dropped stays on.
+        let remove: Vec<String> = remove.iter().filter(|c| !add.contains(c)).cloned().collect();
         if !add.is_empty() {
             self.api.change_tags(&me.id, true, &tags(add)).await?;
+        }
+        if !remove.is_empty() {
+            if let Err(e) = self.api.change_tags(&me.id, false, &tags(&remove)).await {
+                if add.is_empty() {
+                    return Err(e);
+                }
+                // Nothing more is sent here, after a wait or not: the profile has every language
+                // it had plus the new ones, and the next save takes the old ones off.
+                return Err(AppError::CannotDo(format!(
+                    "The new languages were added, but the old ones could not be taken off ({e}). Save again to take them off."
+                )));
+            }
         }
         Ok(())
     }
@@ -1579,7 +1869,7 @@ impl Hub {
                     let name = group["name"].as_str().unwrap_or_default().to_string();
                     self.group_names.lock().unwrap().insert(id, name);
                 }
-                Err(AppError::RateLimited) => break,
+                Err(AppError::RateLimited(_)) => break,
                 Err(_) => {
                     // A group that cannot be read is not asked about again this session.
                     self.group_names.lock().unwrap().insert(id, String::new());
@@ -1720,7 +2010,7 @@ impl Hub {
         for id in entry_ids.iter().filter(|i| i.starts_with("fvrt_")) {
             match self.api.remove_favorite(id).await {
                 Ok(()) => done += 1,
-                Err(AppError::RateLimited) => break,
+                Err(AppError::RateLimited(_)) => break,
                 Err(_) => {}
             }
         }
@@ -1801,10 +2091,15 @@ impl Hub {
     /// while the live connection was down is announced like a live one.
     pub async fn sync_notices(&self, announce: bool) -> AppResult<()> {
         let v1 = self.api.notifications().await?;
-        let v2 = self.api.notifications_v2().await.unwrap_or_default();
-        let fresh = notices::from_api(&v1, &v2);
+        let v2 = self.api.notifications_v2().await;
+        let mut fresh = notices::from_api(&v1, v2.as_deref().unwrap_or_default());
         let new_ones: Vec<Notice> = {
             let mut inner = self.inner.lock().unwrap();
+            // The newer kind could not be read: the ones already listed stay, so they neither
+            // vanish from the Inbox nor come back later as if they were new.
+            if v2.is_err() {
+                notices::keep_newer_kind(&mut fresh, &inner.notices);
+            }
             let known: HashSet<String> = inner.notices.iter().map(|n| n.id.clone()).collect();
             let new_ones = fresh.iter().filter(|n| !known.contains(&n.id) && !n.seen).cloned().collect();
             inner.notices = fresh;
@@ -1827,6 +2122,56 @@ impl Hub {
             .into_iter()
             .find(|n| n.id == id)
             .ok_or_else(|| AppError::CannotDo("That notification is already gone.".into()))?;
+        // VRChat's live word that the notice was cleared often arrives before the answer to
+        // this request. While the request is under way, that word must not log it a second
+        // time as handled elsewhere.
+        //
+        // The guard ends only inside the lock that also logs and removes the notice. A frame
+        // takes the notice off the list and reads the guards under that same lock, so it either
+        // finds the guard still there or finds the notice already gone, never neither.
+        // The guard is set while the list is held, so the notice is either still there and
+        // guarded, or already cleared and logged by the frame that cleared it.
+        let acting = {
+            let inner = self.inner.lock().unwrap();
+            if inner.notices.iter().all(|n| n.id != id) {
+                return Err(AppError::CannotDo("That notification is already gone.".into()));
+            }
+            Acting::start(&self.acting, id)
+        };
+        let done = self.carry_out(&notice, id, action, reply_kind, reply_data).await;
+        if let Err(e) = done {
+            // VRChat may still have cleared it meanwhile. The frame that did so left it alone
+            // because of the guard, so it is logged here as handled elsewhere.
+            let inner = self.inner.lock().unwrap();
+            if inner.notices.iter().all(|n| n.id != id) {
+                if let Some(store) = &inner.store {
+                    let _ = store.log_handled(&notice, "elsewhere", "");
+                }
+            }
+            drop(acting);
+            drop(inner);
+            return Err(e);
+        }
+        let reply_text = notice
+            .replies
+            .iter()
+            .find(|r| action == "reply" && r.kind == reply_kind && r.data == reply_data)
+            .map(|r| if r.text.is_empty() { r.kind.clone() } else { r.text.clone() })
+            .unwrap_or_default();
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(store) = &inner.store {
+                let _ = store.log_handled(&notice, action, &reply_text);
+            }
+            notices::remove(&mut inner.notices, id);
+            drop(acting);
+        }
+        self.send("notices:changed", Value::Null);
+        Ok(())
+    }
+
+    /// Sends what the user clicked on a notification to VRChat.
+    async fn carry_out(&self, notice: &Notice, id: &str, action: &str, reply_kind: &str, reply_data: &str) -> AppResult<()> {
         match (action, notice.version) {
             ("accept", 1) if notice.kind == "friendRequest" => {
                 self.api.accept_friend_request(id).await?;
@@ -1840,7 +2185,7 @@ impl Hub {
                 self.api.respond_notification_v2(id, reply_kind, reply_data).await?;
             }
             ("boopBack", _) if notice.kind == "boop" => {
-                self.api.boop(&notice.sender_id, None).await?;
+                self.api.boop(&notice.sender_id, None).await.map_err(boop_turned_down)?;
                 let _ = if notice.version == 2 {
                     self.api.delete_notification_v2(id).await
                 } else {
@@ -1855,24 +2200,13 @@ impl Hub {
                     ));
                 };
                 self.api.invite_user(&notice.sender_id, &location, None).await?;
-                self.api.hide_notification(id).await?;
+                // The invite went out. Hiding the request is tidying up, like after a boop
+                // back: if it fails, the invite still counts as sent, so the button is not
+                // pressed again for a second invite. The next sync shows the request again.
+                let _ = self.api.hide_notification(id).await;
             }
             _ => return Err(AppError::CannotDo("That does not work on this notification.".into())),
         }
-        let reply_text = notice
-            .replies
-            .iter()
-            .find(|r| action == "reply" && r.kind == reply_kind && r.data == reply_data)
-            .map(|r| if r.text.is_empty() { r.kind.clone() } else { r.text.clone() })
-            .unwrap_or_default();
-        {
-            let mut inner = self.inner.lock().unwrap();
-            if let Some(store) = &inner.store {
-                let _ = store.log_handled(&notice, action, &reply_text);
-            }
-            notices::remove(&mut inner.notices, id);
-        }
-        self.send("notices:changed", Value::Null);
         Ok(())
     }
 
@@ -1929,7 +2263,6 @@ impl Hub {
     /// photo was taken, not that they are in the picture.
     pub fn photos(&self, root: &std::path::Path, limit: usize, skip: usize, query: &str, until: &str) -> AppResult<Value> {
         let all = crate::photos::scan(root);
-        let me = self.me().map(|m| m.id).unwrap_or_default();
         let want = query.trim().to_lowercase();
         // A photo's time is kept in UTC; the day the user picks is a day on their own clock.
         let last = chrono::NaiveDate::parse_from_str(until.trim(), "%Y-%m-%d")
@@ -1938,10 +2271,25 @@ impl Hub {
             .and_then(|d| d.and_hms_opt(0, 0, 0))
             .and_then(|t| chrono::TimeZone::from_local_datetime(&chrono::Local, &t).earliest())
             .map(|t| t.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
-        let inner = self.inner.lock().unwrap();
-        let store = inner.store.as_ref().ok_or(AppError::NotSignedIn)?;
+        let me = self.me().ok_or(AppError::NotSignedIn)?.id;
+        let in_range = |photo: &&crate::photos::Photo| last.as_ref().is_none_or(|end| photo.taken_at.as_str() < end.as_str());
+        let dated: Vec<&crate::photos::Photo> = all.iter().filter(in_range).collect();
+        // A search can look at thousands of photos. It reads through a second, read-only door
+        // to the history, so the live events and every other part of the app keep working
+        // meanwhile instead of waiting for the whole search.
+        let store = Store::open_existing(&self.history_path(&me))?;
+        let store = &store;
+        // A search over many photos reads every stay once, and each photo finds its own in
+        // memory, so the history is not searched again for every photo.
+        let stays: Option<Vec<Visit>> = if !want.is_empty() && dated.len() > 200 { Some(all_stays(store)?) } else { None };
+        let find_stay = |at: &str| -> AppResult<Option<Visit>> {
+            match &stays {
+                Some(sorted) => Ok(stay_at(sorted, at)),
+                None => store.visit_at(at),
+            }
+        };
         let describe = |photo: &crate::photos::Photo| -> AppResult<(Value, bool)> {
-            let visit = store.visit_at(&photo.taken_at)?;
+            let visit = find_stay(&photo.taken_at)?;
             let people: Vec<(String, String)> = match &visit {
                 Some(v) => store
                     .people_at(v.id, &photo.taken_at)?
@@ -1967,19 +2315,17 @@ impl Hub {
             });
             Ok((row, hit))
         };
-        let in_range = |photo: &&crate::photos::Photo| last.as_ref().is_none_or(|end| photo.taken_at.as_str() < end.as_str());
         let limit = limit.min(200);
         let mut page = Vec::new();
         if want.is_empty() {
             // Nothing to look up for photos that are not on this page.
-            let dated: Vec<&crate::photos::Photo> = all.iter().filter(in_range).collect();
             for photo in dated.iter().skip(skip).take(limit) {
                 page.push(describe(photo)?.0);
             }
             return Ok(serde_json::json!({ "total": dated.len(), "everything": all.len(), "photos": page }));
         }
         let mut found = 0usize;
-        for photo in all.iter().filter(in_range) {
+        for photo in &dated {
             let (row, hit) = describe(photo)?;
             if !hit {
                 continue;
@@ -2222,12 +2568,14 @@ impl Hub {
 
     async fn log_worker(self: Arc<Self>, dir: PathBuf) {
         // The stay I was in when the last pass ended; a different one means I moved.
-        let mut stay: Option<Option<i64>> = None;
+        // A stay is told apart by when it began and where, not by its row id, because a
+        // VRCX import can renumber the visits and give the open one a new id.
+        let mut stay: Option<Option<(String, String)>> = None;
         loop {
             let found = self.read_back_videos(&dir);
             let changed = self.read_log(&dir) || found;
             if let Ok(here) = self.here() {
-                let now = here.as_ref().map(|(visit, _)| visit.id);
+                let now = here.as_ref().map(|(visit, _)| stay_key(visit));
                 if let (Some(before), Some((visit, _))) = (stay, here.as_ref()) {
                     if before != now {
                         self.own_entry("location", "", "", &visit.location);
@@ -2283,6 +2631,8 @@ impl Hub {
     /// Called once VRChat has returned the signed-in user.
     pub fn begin(self: &Arc<Self>, user: Value) -> AppResult<Me> {
         self.stop_tasks();
+        // Nothing read for an account signed in before may greet this one.
+        self.fav_cache.lock().unwrap().clear();
         let me = Me::from_user(&user);
         if me.id.is_empty() {
             return Err(AppError::Parse("signed-in user had no id".into()));
@@ -2324,7 +2674,8 @@ impl Hub {
         if let Some(dir) = self.log_dir.clone() {
             tasks.push(tokio::spawn(self.clone().log_worker(dir)));
         }
-        self.inner.lock().unwrap().tasks = tasks;
+        // Added to, not replaced: the live task may already have put its favourites read-ahead there.
+        self.inner.lock().unwrap().tasks.extend(tasks);
         Ok(me)
     }
 
@@ -2344,6 +2695,22 @@ impl Hub {
         }
         self.forget();
         Ok(())
+    }
+
+    /// VRChat ended the sign-in on its side. Every background worker is stopped first, so
+    /// lookups still queued are never sent without a sign-in, then the dead cookie is dropped
+    /// from the saved session and everything kept for the account is forgotten.
+    ///
+    /// Called from the live connection's own task, whose handle is among those aborted. That
+    /// is harmless: an abort only takes hold at the next wait, and nothing here waits.
+    fn end_session(&self) {
+        self.stop_tasks();
+        self.api.clear_auth();
+        if self.use_secrets {
+            let _ = secrets::save(&self.api.session());
+        }
+        self.forget();
+        self.send("session:ended", Value::Null);
     }
 
     fn forget(&self) {
@@ -2372,28 +2739,27 @@ impl Hub {
             self.avatar_changed(id);
         }
         let (friends, favorites, notices) =
-            tokio::join!(self.sync_friends(Some(user)), self.sync_favorites(), self.sync_notices(false));
+            tokio::join!(self.sync_friends(Some(user)), self.sync_favorites_read(), self.sync_notices(false));
+        let (favorites, read) = match favorites {
+            Ok(read) => (Ok(()), Some(read)),
+            Err(e) => (Err(e), None),
+        };
         for result in [friends, favorites, notices] {
             if let Err(e) = result {
                 self.send("sync:error", json!(e));
             }
         }
-        // Favourites are read ahead, so their screens open at once.
+        // Favourites are read ahead, so their screens open at once. The task is kept with the
+        // others, so signing out stops it and it sends nothing more to VRChat.
         let ahead = self.clone();
-        tokio::spawn(async move {
-            let _ = tokio::join!(ahead.favorites_of("avatar"), ahead.favorites_of("world"), ahead.favorites_of("friend"));
-        });
+        let reading = tokio::spawn(async move { ahead.read_ahead_favorites(read).await });
+        self.inner.lock().unwrap().tasks.push(reading);
         let mut delay = Duration::from_secs(5);
         loop {
             self.set_pipeline("connecting");
             let started = Instant::now();
             if let Ended::SessionOver = self.listen().await {
-                self.api.clear_auth();
-                if self.use_secrets {
-                    let _ = secrets::save(&self.api.session());
-                }
-                self.forget();
-                self.send("session:ended", Value::Null);
+                self.end_session();
                 return;
             }
             self.set_pipeline("reconnecting");
@@ -2416,9 +2782,7 @@ impl Hub {
                         let _ = self.sync_favorites().await;
                     }
                     Err(AppError::Unauthorized) => {
-                        self.api.clear_auth();
-                        self.forget();
-                        self.send("session:ended", Value::Null);
+                        self.end_session();
                         return;
                     }
                     Err(e) => self.send("sync:error", json!(e)),
@@ -2493,6 +2857,8 @@ impl Hub {
                     if old.location == f.location {
                         f.since = old.since.clone();
                         f.since_at_least = old.since_at_least;
+                        // Still on the way: where they came from is still worth knowing.
+                        f.before_travel = old.before_travel.clone();
                     }
                 }
                 if f.since.is_empty() && f.state == "online" && f.place.kind != "none" {
@@ -2587,7 +2953,7 @@ impl Hub {
     async fn count_ticker(self: Arc<Self>) {
         loop {
             tokio::time::sleep(Duration::from_secs(5)).await;
-            let occupied: HashSet<String> = {
+            let friends_at: HashSet<String> = {
                 let inner = self.inner.lock().unwrap();
                 inner
                     .friends
@@ -2596,12 +2962,20 @@ impl Hub {
                     .map(|f| f.location.clone())
                     .collect()
             };
+            // The instance I am in counts as occupied too, so its count is kept for its full
+            // time and the game log does not ask for it again every round.
+            let mut occupied = friends_at.clone();
+            if let Ok(Some((visit, _))) = self.here() {
+                occupied.insert(visit.location);
+            }
             {
                 let mut inner = self.inner.lock().unwrap();
                 inner.instances.retain(|loc, _| occupied.contains(loc));
-                inner.refused.retain(|loc, _| occupied.contains(loc));
+                // A refusal is honoured for its whole time, wherever anyone is.
+                inner.refused.retain(|loc, at| occupied.contains(loc) || at.elapsed() < COUNT_RETRY);
             }
-            for location in &occupied {
+            // Only friends' instances are asked for here; my own is asked for by the game log.
+            for location in &friends_at {
                 self.want_count(location);
             }
             tokio::time::sleep(COUNT_EVERY).await;
@@ -2663,6 +3037,10 @@ impl Hub {
     /// Looks up world names one at a time, slowly. Each world is asked for once.
     async fn world_worker(self: Arc<Self>, mut rx: mpsc::UnboundedReceiver<Job>) {
         while let Some(job) = rx.recv().await {
+            // Without a sign-in the lookups still queued are dropped, never sent.
+            if self.api.auth_token().is_none() {
+                break;
+            }
             match job {
                 Job::World(id) => match self.api.world(&id).await {
                     Ok(json) => {
@@ -2670,10 +3048,19 @@ impl Hub {
                             self.keep_world(world);
                         }
                     }
-                    Err(AppError::RateLimited) => {
+                    Err(AppError::RateLimited(_)) => {
                         tokio::time::sleep(Duration::from_secs(120)).await;
                         self.inner.lock().unwrap().wanted.remove(&id);
                     }
+                    // A dropped connection or a fault on VRChat's side says nothing about the
+                    // world, so the next time it is seen or opened it is asked for again.
+                    Err(AppError::Network(_)) => {
+                        self.inner.lock().unwrap().wanted.remove(&id);
+                    }
+                    Err(AppError::Api { status, .. }) if status >= 500 => {
+                        self.inner.lock().unwrap().wanted.remove(&id);
+                    }
+                    // Refused or not found: asked once this session, as before.
                     Err(_) => {}
                 },
                 Job::Avatar(id) => match self.api.read(&format!("/avatars/{}", utf8(&id))).await {
@@ -2685,12 +3072,12 @@ impl Hub {
                         });
                         self.send("avatars:changed", Value::Null);
                     }
-                    Err(AppError::RateLimited) => tokio::time::sleep(Duration::from_secs(120)).await,
+                    Err(AppError::RateLimited(_)) => tokio::time::sleep(Duration::from_secs(120)).await,
                     Err(_) => {}
                 },
                 Job::Instance(location) => {
                     let result = self.api.instance(&location).await;
-                    let limited = matches!(result, Err(AppError::RateLimited));
+                    let limited = matches!(result, Err(AppError::RateLimited(_)));
                     let found = result.ok().and_then(|json| Instance::from_json(&location, &json));
                     {
                         let mut inner = self.inner.lock().unwrap();
@@ -2736,11 +3123,19 @@ impl Hub {
         self.set_pipeline("live");
         let mut ping = tokio::time::interval(PING_EVERY);
         ping.tick().await;
+        // When anything last came in: a frame, a pong or a ping. Kept across the loop, so the
+        // pings going out never restart the count.
+        let mut heard = Instant::now();
         loop {
             let next = tokio::select! {
-                next = tokio::time::timeout(QUIET_LIMIT, socket.next()) => next,
+                next = socket.next() => next,
                 _ = ping.tick() => {
-                    // A connection that silently died fails here, or stays quiet until QUIET_LIMIT.
+                    // Something in between can keep the link up and take our pings while
+                    // nothing comes back from VRChat. Quiet that long means the connection is dead.
+                    if heard.elapsed() > QUIET_LIMIT {
+                        return Ended::Dropped;
+                    }
+                    // A connection that silently died fails here.
                     if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
                         return Ended::Dropped;
                     }
@@ -2748,9 +3143,10 @@ impl Hub {
                 }
             };
             let message = match next {
-                Ok(Some(Ok(m))) => m,
+                Some(Ok(m)) => m,
                 _ => return Ended::Dropped,
             };
+            heard = Instant::now();
             match message {
                 Message::Text(text) => {
                     if self.handle_frame(text.as_str()) {
@@ -2786,11 +3182,18 @@ impl Hub {
             return false;
         }
         if kind.contains("notification") {
-            let outcome = notices::apply(&mut self.inner.lock().unwrap().notices, &kind, &content);
+            let (outcome, acting) = {
+                let mut inner = self.inner.lock().unwrap();
+                let outcome = notices::apply(&mut inner.notices, &kind, &content);
+                // Read while the notices are still locked, so a notice the app is acting on
+                // cannot finish being logged by notice_action in between.
+                let acting = self.acting.lock().unwrap().clone();
+                (outcome, acting)
+            };
             if let Some(notice) = &outcome.arrived {
                 self.announce(notice);
             }
-            self.log_cleared(&outcome.removed);
+            self.log_cleared(&outcome.removed, &acting);
             if outcome.changed {
                 self.send("notices:changed", Value::Null);
             }
@@ -2849,6 +3252,34 @@ impl Hub {
     }
 }
 
+/// Every stay in the history, oldest first by when it began, ties by id.
+fn all_stays(store: &Store) -> AppResult<Vec<Visit>> {
+    let mut all: Vec<Visit> = Vec::new();
+    let mut before = None;
+    loop {
+        let page = store.visits(500, before)?;
+        let Some(last) = page.last() else { break };
+        before = Some(last.id);
+        all.extend(page);
+    }
+    all.sort_by(|a, b| a.joined_at.cmp(&b.joined_at).then(a.id.cmp(&b.id)));
+    Ok(all)
+}
+
+/// The stay I was in at a moment, the same way `Store::visit_at` finds it: the one that began
+/// last at or before the moment, newest id first on a tie, and only if it had not ended yet.
+fn stay_at(sorted: &[Visit], at: &str) -> Option<Visit> {
+    let after = sorted.partition_point(|v| v.joined_at.as_str() <= at);
+    let latest = sorted[..after].last()?;
+    latest.left_at.as_deref().is_none_or(|left| left >= at).then(|| latest.clone())
+}
+
+/// What tells one stay from another across passes over the log: when it began and where.
+/// The row id is not used, because a VRCX import can renumber the visits.
+fn stay_key(visit: &Visit) -> (String, String) {
+    (visit.joined_at.clone(), visit.location.clone())
+}
+
 fn world_ids(f: &Friend) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(id) = &f.place.world_id {
@@ -2881,5 +3312,341 @@ mod file_name_tests {
         assert_eq!(avatar_name_from_file("Avatar - Sun - Set Fox - Image - 2022").as_deref(), Some("Sun - Set Fox"));
         assert!(avatar_name_from_file("World - Pier - Image - 2022").is_none());
         assert!(avatar_name_from_file("Avatar -  - Image - x").is_none());
+    }
+}
+
+#[cfg(test)]
+mod hub_tests {
+    use super::*;
+
+    fn hub() -> Arc<Hub> {
+        let api = Arc::new(ApiClient::new().unwrap());
+        Hub::new(api, std::env::temp_dir(), Arc::new(|_, _| {}), false, None)
+    }
+
+    fn sign_in_as(hub: &Hub, id: &str, status: &str) {
+        hub.inner.lock().unwrap().me = Some(Me {
+            id: id.into(),
+            display_name: "Tester".into(),
+            status: status.into(),
+            status_description: String::new(),
+            image: String::new(),
+        });
+    }
+
+    #[test]
+    fn a_late_word_is_held_back_but_a_real_change_goes_through() {
+        let hub = hub();
+        sign_in_as(&hub, "usr_me", "busy");
+        let set = |hub: &Hub| {
+            *hub.status_set.lock().unwrap() = Some(StatusSet {
+                at: Instant::now(),
+                old_status: "active".into(),
+                old_text: String::new(),
+                new_status: "busy".into(),
+                new_text: String::new(),
+            });
+        };
+        set(&hub);
+        // The old status arriving late does not put it back.
+        hub.own_status_changed(&json!({ "id": "usr_me", "status": "active" }));
+        assert_eq!(hub.me().unwrap().status, "busy");
+        // A change made in VRChat a few seconds later is not lost.
+        hub.own_status_changed(&json!({ "id": "usr_me", "status": "join me" }));
+        assert_eq!(hub.me().unwrap().status, "join me");
+
+        // Once VRChat confirms the new status, later word is news whatever it says.
+        sign_in_as(&hub, "usr_me", "busy");
+        set(&hub);
+        hub.own_status_changed(&json!({ "id": "usr_me", "status": "busy" }));
+        assert!(hub.status_set.lock().unwrap().is_none());
+        hub.own_status_changed(&json!({ "id": "usr_me", "status": "active" }));
+        assert_eq!(hub.me().unwrap().status, "active");
+    }
+
+    #[test]
+    fn favourites_kept_for_one_account_are_not_shown_to_another() {
+        let hub = hub();
+        let answer = json!({ "groups": [], "entries": [] });
+        // Read for an account that has signed out since: dropped.
+        hub.cache_favorites("avatar", "usr_a", &answer);
+        assert!(hub.fav_cache.lock().unwrap().is_empty());
+        sign_in_as(&hub, "usr_a", "active");
+        hub.cache_favorites("avatar", "usr_a", &answer);
+        assert_eq!(hub.favorites_cached("avatar"), Some(answer));
+        sign_in_as(&hub, "usr_b", "active");
+        assert!(hub.favorites_cached("avatar").is_none());
+    }
+
+    fn stay(id: i64, joined: &str, left: Option<&str>) -> Visit {
+        Visit {
+            id,
+            location: format!("wrld_{id}:1"),
+            world_id: format!("wrld_{id}"),
+            world_name: String::new(),
+            joined_at: joined.into(),
+            left_at: left.map(str::to_string),
+            place: Default::default(),
+            people: 0,
+        }
+    }
+
+    #[test]
+    fn a_photo_finds_its_stay_in_memory_like_the_history_does() {
+        let mut stays = vec![
+            stay(3, "2026-01-01T12:00:00Z", None),
+            stay(1, "2026-01-01T10:00:00Z", Some("2026-01-01T11:00:00Z")),
+            stay(2, "2026-01-01T12:00:00Z", Some("2026-01-01T13:00:00Z")),
+        ];
+        stays.sort_by(|a, b| a.joined_at.cmp(&b.joined_at).then(a.id.cmp(&b.id)));
+        let at = |t: &str| stay_at(&stays, t).map(|v| v.id);
+        assert_eq!(at("2026-01-01T09:00:00Z"), None, "before any stay");
+        assert_eq!(at("2026-01-01T10:30:00Z"), Some(1));
+        assert_eq!(at("2026-01-01T11:30:00Z"), None, "between two stays");
+        // Two stays that began at the same moment: the newer id wins, as in the history.
+        assert_eq!(at("2026-01-01T12:00:00Z"), Some(3));
+        assert_eq!(at("2026-01-01T15:00:00Z"), Some(3), "a stay never closed");
+    }
+
+    #[test]
+    fn a_notice_being_acted_on_is_not_logged_by_the_frame_that_clears_it() {
+        let hub = hub();
+        hub.inner.lock().unwrap().store = Some(Store::in_memory().unwrap());
+        let arrive = |id: &str| {
+            let note = json!({ "id": id, "type": "invite", "senderUserId": "usr_a", "senderUsername": "Ana", "created_at": "2026-01-01T10:00:00Z" });
+            hub.handle_frame(&json!({ "type": "notification", "content": note.to_string() }).to_string());
+        };
+        let hide = |id: &str| hub.handle_frame(&json!({ "type": "hide-notification", "content": id }).to_string());
+        let logged = || hub.inner.lock().unwrap().store.as_ref().unwrap().handled(50).unwrap().len();
+
+        arrive("not_1");
+        let guard = Acting::start(&hub.acting, "not_1");
+        hide("not_1");
+        assert!(hub.notices().is_empty());
+        assert_eq!(logged(), 0, "left for the action to log");
+        drop(guard);
+
+        arrive("not_2");
+        hide("not_2");
+        assert_eq!(logged(), 1, "cleared elsewhere, logged once");
+    }
+
+    #[test]
+    fn a_renumbered_stay_is_still_the_same_stay() {
+        let before = stay(7, "2026-01-01T12:00:00Z", None);
+        // A VRCX import gave the open stay a new id; it is still where I am.
+        let mut after = before.clone();
+        after.id = 42;
+        assert_eq!(stay_key(&before), stay_key(&after));
+        // A new stay in the same world is a move, even with the old id.
+        let mut moved = before.clone();
+        moved.joined_at = "2026-01-01T13:00:00Z".into();
+        assert_ne!(stay_key(&before), stay_key(&moved));
+    }
+
+    #[test]
+    fn a_second_vrcx_import_waits_for_the_first() {
+        let dir = std::env::temp_dir().join(format!("anonymous-vrx-one-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let api = Arc::new(ApiClient::new().unwrap());
+        let hub = Hub::new(api, dir.clone(), Arc::new(|_, _| {}), false, None);
+        let me = "usr_me-0000";
+        sign_in_as(&hub, me, "active");
+        hub.inner.lock().unwrap().store = Some(Store::open(&hub.history_path(me)).unwrap());
+        let other = dir.join("VRCX.sqlite3");
+        rusqlite::Connection::open(&other)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE usrme0000_feed_gps (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO usrme0000_feed_gps (created_at, user_id, display_name, location, previous_location) VALUES ('2025-01-02T10:00:00.000Z', 'usr_a', 'Ana', 'wrld_x:1', 'private');",
+            )
+            .unwrap();
+        let backups = dir.join("backups");
+
+        // While one import holds the mark, another is turned away before it makes a backup or
+        // writes anything.
+        let first = Importing::start(&hub.importing).unwrap();
+        for by_itself in [false, true] {
+            match hub.import_vrcx(&other, &backups, "{}", by_itself, None) {
+                Err(AppError::CannotDo(words)) => assert_eq!(words, "VRCX history is already being brought over. Wait for it to finish."),
+                got => panic!("a second import ran: {got:?}"),
+            }
+        }
+        assert!(!backups.exists(), "no backup was made for the run that was turned away");
+        assert_eq!(hub.feed(10, None).unwrap().len(), 0);
+        drop(first);
+
+        // Once the first is done the next one runs, and the mark is let go again afterwards,
+        // also when the run fails.
+        let got = hub.import_vrcx(&other, &backups, "{}", false, None).unwrap();
+        assert_eq!(got["broughtOver"]["feed"], 1);
+        assert!(!hub.importing.load(std::sync::atomic::Ordering::Acquire));
+        assert!(hub.import_vrcx(&dir.join("missing.sqlite3"), &backups, "{}", false, None).is_err());
+        // A backup folder that cannot be made stops the run after it took the mark.
+        std::fs::write(dir.join("not a folder"), b"").unwrap();
+        assert!(hub.import_vrcx(&other, &dir.join("not a folder"), "{}", false, None).is_err());
+        assert!(!hub.importing.load(std::sync::atomic::Ordering::Acquire), "a failed run lets go of the mark");
+        assert_eq!(hub.import_vrcx(&other, &backups, "{}", false, None).unwrap()["broughtOver"]["feed"], 0);
+        hub.inner.lock().unwrap().store = None;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Builds a history of 50,000 feed entries and 10,000 stays, and a VRCX file with 50,000
+    /// friend-activity lines (10,000 of them already here), 10,000 stays (half already here)
+    /// with 50,000 join and leave lines, then brings VRCX over while the rest of the app keeps
+    /// reading and writing. It takes a few seconds even in a debug build; `--nocapture` prints
+    /// the times.
+    #[test]
+    fn a_big_vrcx_import_leaves_the_app_free() {
+        let dir = std::env::temp_dir().join(format!("anonymous-vrx-big-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let api = Arc::new(ApiClient::new().unwrap());
+        let hub = Hub::new(api, dir.clone(), Arc::new(|_, _| {}), false, None);
+        // `ANON_VRX_SCALE` makes everything but the avatars, notes and favourites that many times bigger.
+        let n: usize = std::env::var("ANON_VRX_SCALE").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+        let me = "usr_me-0000";
+        sign_in_as(&hub, me, "active");
+        let store = Store::open(&hub.history_path(me)).unwrap();
+        // Entry j is at 2024-01-01 plus j minutes, for one of 500 people, of one of four kinds.
+        store
+            .run_sql(&format!(
+                "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 50000 * {n} - 1)
+                 INSERT INTO feed (at, user_id, display_name, kind)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', '2024-01-01', '+' || (i * 60) || ' seconds'), 'usr_' || (i % 500), 'Person ' || (i % 500),
+                            CASE i % 4 WHEN 0 THEN 'online' WHEN 1 THEN 'offline' WHEN 2 THEN 'location' ELSE 'status' END
+                     FROM n;
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 10000 * {n} - 1)
+                 INSERT INTO visits (location, world_id, world_name, joined_at, left_at)
+                     SELECT 'wrld_' || (i % 200) || ':' || i, 'wrld_' || (i % 200), 'World ' || (i % 200),
+                            strftime('%Y-%m-%dT%H:%M:%fZ', '2024-01-01', '+' || (i * 900) || ' seconds'),
+                            strftime('%Y-%m-%dT%H:%M:%fZ', '2024-01-01', '+' || (i * 900 + 600) || ' seconds')
+                     FROM n;"
+            ))
+            .unwrap();
+        hub.inner.lock().unwrap().store = Some(store);
+
+        let other = dir.join("VRCX.sqlite3");
+        {
+            let old = rusqlite::Connection::open(&other).unwrap();
+            old.execute_batch(&format!(
+                "CREATE TABLE usrme0000_feed_gps (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT);
+                 CREATE TABLE usrme0000_feed_online_offline (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 CREATE TABLE usrme0000_feed_status (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, status TEXT, status_description TEXT, previous_status TEXT, previous_status_description TEXT);
+                 CREATE TABLE usrme0000_feed_avatar (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, owner_id TEXT, avatar_name TEXT, current_avatar_image_url TEXT, current_avatar_thumbnail_image_url TEXT, previous_current_avatar_image_url TEXT, previous_current_avatar_thumbnail_image_url TEXT);
+                 CREATE TABLE usrme0000_friend_log_history (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, user_id TEXT, display_name TEXT, previous_display_name TEXT, trust_level TEXT, previous_trust_level TEXT, friend_number INTEGER);
+                 CREATE TABLE gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 CREATE TABLE gamelog_join_leave (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, display_name TEXT, location TEXT, user_id TEXT, time INTEGER);
+                 CREATE TABLE usrme0000_avatar_history (avatar_id TEXT PRIMARY KEY, created_at TEXT, time INTEGER);
+                 CREATE TABLE memos (user_id TEXT PRIMARY KEY, edited_at TEXT, memo TEXT);
+                 CREATE TABLE favorite_world (id INTEGER PRIMARY KEY, created_at TEXT, world_id TEXT, group_name TEXT);
+
+                 -- Lines from before this history began, 47 seconds apart in each table.
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 15000 * {n} - 1)
+                 INSERT INTO usrme0000_feed_gps (created_at, user_id, display_name, location, previous_location)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', '2023-06-01', '+' || (i * 47) || ' seconds'), 'usr_' || (i % 500), 'Person', 'wrld_1:' || i, 'private' FROM n;
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 5000 * {n} - 1)
+                 INSERT INTO usrme0000_feed_online_offline (created_at, user_id, display_name, type, location)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', '2023-06-01', '+' || (i * 47 + 3) || ' seconds'), 'usr_' || (i % 500), 'Person', 'Offline', '' FROM n;
+                 -- The same moments as the 'online' entries already here: all of them are skipped.
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 10000 * {n} - 1)
+                 INSERT INTO usrme0000_feed_online_offline (created_at, user_id, display_name, type, location)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', '2024-01-01', '+' || (i * 240 + 2) || ' seconds'), 'usr_' || ((i * 4) % 500), 'Person', 'Online', '' FROM n;
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 10000 * {n} - 1)
+                 INSERT INTO usrme0000_feed_status (created_at, user_id, display_name, status, status_description, previous_status, previous_status_description)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', '2023-06-01', '+' || (i * 47 + 5) || ' seconds'), 'usr_' || (i % 500), 'Person', 'busy', 'same', 'active', 'same' FROM n;
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 5000 * {n} - 1)
+                 INSERT INTO usrme0000_feed_avatar (created_at, user_id, display_name)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', '2023-06-01', '+' || (i * 47 + 7) || ' seconds'), 'usr_' || (i % 500), 'Person' FROM n;
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 5000 * {n} - 1)
+                 INSERT INTO usrme0000_friend_log_history (created_at, type, user_id, display_name, previous_display_name)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', '2023-06-01', '+' || (i * 47 + 9) || ' seconds'), 'Friend', 'usr_' || i, 'Person', '' FROM n;
+
+                 -- Half the stays are ones already here, three seconds off; half are older.
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 5000 * {n} - 1)
+                 INSERT INTO gamelog_location (created_at, location, world_id, world_name, time)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', '2024-01-01', '+' || (i * 2 * 900 + 3) || ' seconds'), 'wrld_' || ((i * 2) % 200) || ':' || (i * 2), 'wrld_' || ((i * 2) % 200), 'World', 600000 FROM n;
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 5000 * {n} - 1)
+                 INSERT INTO gamelog_location (created_at, location, world_id, world_name, time)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', '2023-06-01', '+' || (i * 900) || ' seconds'), 'wrld_old' || (i % 200) || ':' || i, 'wrld_old' || (i % 200), 'Old world', 600000 FROM n;
+                 -- Five lines in each stay: three people join, two of them leave.
+                 INSERT INTO gamelog_join_leave (created_at, type, display_name, location, user_id)
+                     SELECT strftime('%Y-%m-%dT%H:%M:%fZ', l.created_at, '+' || (k.n * 60 + 10) || ' seconds'),
+                            CASE WHEN k.n < 3 THEN 'OnPlayerJoined' ELSE 'OnPlayerLeft' END,
+                            'Guest ' || (k.n % 3), l.location, 'usr_g' || (k.n % 3)
+                     FROM gamelog_location l, (SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) k;
+
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 1999)
+                 INSERT INTO usrme0000_avatar_history (avatar_id, created_at, time)
+                     SELECT 'avtr_' || i, strftime('%Y-%m-%dT%H:%M:%fZ', '2023-06-01', '+' || (i * 3600) || ' seconds'), 3600000 FROM n;
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 999)
+                 INSERT INTO memos (user_id, edited_at, memo) SELECT 'usr_' || i, '2023-06-01T00:00:00.000Z', 'note ' || i FROM n;
+                 WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 499)
+                 INSERT INTO favorite_world (created_at, world_id, group_name) SELECT '2023-06-01T00:00:00.000Z', 'wrld_' || i, 'Fav' FROM n;"
+            ))
+            .unwrap();
+        }
+
+        let backups = dir.join("backups");
+        let started = Instant::now();
+        let worker = {
+            let hub = hub.clone();
+            let (other, backups) = (other.clone(), backups.clone());
+            std::thread::spawn(move || {
+                let got = hub.import_vrcx(&other, &backups, "{}", false, None);
+                (got, started.elapsed())
+            })
+        };
+        // Meanwhile the app reads its feed and writes to it, as it does while it runs.
+        let (mut calls, mut slowest) = (0u32, Duration::ZERO);
+        while !worker.is_finished() {
+            let asked = Instant::now();
+            hub.feed(50, None).unwrap();
+            hub.with_store(|s| {
+                s.add_feed(&FeedDraft {
+                    user_id: "usr_live".into(),
+                    display_name: "Live".into(),
+                    kind: "online",
+                    detail: String::new(),
+                    previous: String::new(),
+                    location: String::new(),
+                })
+            })
+            .unwrap();
+            slowest = slowest.max(asked.elapsed());
+            calls += 1;
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (got, took) = worker.join().unwrap();
+        let got = got.unwrap();
+        println!("import took {took:?}; the app made {calls} reads and writes meanwhile, the slowest took {slowest:?}");
+        println!("{got}");
+        let counts = &got["broughtOver"];
+        assert_eq!(counts["feed"], 35000 * n);
+        assert_eq!(counts["friendLog"], 5000 * n);
+        assert_eq!(counts["visits"], 5000 * n);
+        assert_eq!(counts["people"], 15000 * n);
+        assert_eq!(counts["avatars"], 2000);
+        assert_eq!(counts["notes"], 1000);
+        assert_eq!(counts["favourites"], 500);
+        assert!(!got["backup"].as_str().unwrap_or_default().is_empty(), "a backup was made first");
+        assert!(calls > 0, "the app got its turn while the import ran");
+        // The longest wait is the one write that puts the whole feed back in order of time.
+        let limit = Duration::from_secs(3).max(Duration::from_millis(500 * n as u64));
+        assert!(slowest < limit, "the app waited {slowest:?} for one call");
+        // The feed stays in order of time, newest first.
+        let feed = hub.feed(200, None).unwrap();
+        assert!(feed.windows(2).all(|w| w[0].at >= w[1].at));
+
+        let again = Instant::now();
+        let second = hub.import_vrcx(&other, &backups, "{}", false, None).unwrap();
+        println!("a second run took {:?}", again.elapsed());
+        assert_eq!(second["broughtOver"], json!(crate::store::BroughtOver::default()));
+        let wardrobe = Instant::now();
+        hub.avatar_history(1000).unwrap();
+        println!("the wardrobe list took {:?}", wardrobe.elapsed());
+        hub.inner.lock().unwrap().store = None;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

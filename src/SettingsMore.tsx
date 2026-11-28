@@ -503,13 +503,14 @@ export function GameCacheSettings({ settings, change }: Props) {
 export function VrNoticeSettings({ settings, change }: Props) {
   const [results, setResults] = useState<Array<{ target: string; ok: boolean; problem: string }> | null>(null);
   const [testing, setTesting] = useState(false);
-  const any = settings.vrXs || settings.vrOvrHud || settings.vrOvrWrist;
+  const ovr = settings.vrOvrHud || settings.vrOvrWrist;
+  const any = settings.vrXs || ovr;
 
   async function test() {
     setTesting(true);
     setResults(null);
     try {
-      setResults(await backend.testVrNotice({ own: false, xs: settings.vrXs, ovrHud: settings.vrOvrHud, ovrWrist: settings.vrOvrWrist, seconds: settings.vrSeconds, opacity: settings.vrOpacity }));
+      setResults(await backend.testVrNotice({ own: false, xs: settings.vrXs, ovrHud: settings.vrOvrHud, ovrWrist: settings.vrOvrWrist, route: settings.vrRoute, seconds: settings.vrSeconds, opacity: settings.vrOpacity }));
     } catch (err) {
       setResults([{ target: "The test", ok: false, problem: errorText(err) }]);
     } finally {
@@ -527,11 +528,30 @@ export function VrNoticeSettings({ settings, change }: Props) {
         hours still hold. Which notifications are sent is set under Notifications. This part is new and has seen little testing in a headset.
       </p>
       <Switch label="XSOverlay" hint="Shown where XSOverlay shows its own notifications." on={settings.vrXs} set={(vrXs) => change({ vrXs })} />
-      <Switch label="OVR Toolkit, in view" hint="A notice in front of you." on={settings.vrOvrHud} set={(vrOvrHud) => change({ vrOvrHud })} />
-      <Switch label="OVR Toolkit, on the wrist" hint="One line on the wrist overlay." on={settings.vrOvrWrist} set={(vrOvrWrist) => change({ vrOvrWrist })} />
+      {/* OVR Toolkit is one place: a notice goes in view or on the wrist, never both. */}
+      <Switch label="OVR Toolkit" hint="Shown by OVR Toolkit, in view or on the wrist." on={ovr} set={(on) => change({ vrOvrHud: on, vrOvrWrist: false })} />
+      {ovr && (
+        <Row label="Where OVR Toolkit shows it">
+          <Choices
+            label="Where OVR Toolkit shows it"
+            value={settings.vrOvrHud ? "hud" : "wrist"}
+            set={(spot) => change({ vrOvrHud: spot === "hud", vrOvrWrist: spot === "wrist" })}
+            options={[
+              ["hud", "In front of you"],
+              ["wrist", "One line on the wrist"],
+            ]}
+          />
+        </Row>
+      )}
+      {settings.vrXs && ovr && (
+        <p className="setting-hint">
+          Each notice shows in one place only: XSOverlay when it is running, OVR Toolkit only when XSOverlay is not. The test notice goes to both, so
+          you can check each one.
+        </p>
+      )}
       {settings.vrXs && (
         <>
-          <Row label="Stays up for" hint="XSOverlay only.">
+          <Row label="Stays up for" hint="For XSOverlay. It also sets how long this app's own panel shows a notice.">
             <div className="choices" role="radiogroup" aria-label="Seconds a notice stays up">
               {[2, 4, 6, 10].map((n) => (
                 <button key={n} role="radio" aria-checked={settings.vrSeconds === n} className={settings.vrSeconds === n ? "on" : ""} onClick={() => change({ vrSeconds: n })}>
@@ -540,7 +560,7 @@ export function VrNoticeSettings({ settings, change }: Props) {
               ))}
             </div>
           </Row>
-          <Row label="How solid it is" hint="XSOverlay only. Lower lets the world show through.">
+          <Row label="How solid it is" hint="For XSOverlay. It also sets how solid this app's own panels and the arm feed are. Lower lets the world show through.">
             <label className="dim">
               <input type="range" min={0.2} max={1} step={0.05} value={settings.vrOpacity} aria-label="How solid a notice is" onChange={(e) => change({ vrOpacity: Number(e.target.value) })} />
               {Math.round(settings.vrOpacity * 100)}%

@@ -59,7 +59,7 @@ export function Search({ onDone }: { onDone: (message: string) => void }) {
   async function wear(a: AvatarCard) {
     setWearing(a.id);
     try {
-      await backend.wearAvatar(a.id);
+      await backend.wearAvatar(a.id, a.name);
       onDone(`You are now wearing ${a.name}.`);
     } catch (err) {
       onDone(`VRChat did not switch your avatar: ${errorText(err)}`);

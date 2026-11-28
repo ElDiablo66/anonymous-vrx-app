@@ -300,8 +300,31 @@ pub fn popup_text(n: &Notice) -> (String, String) {
     }
 }
 
+/// The colour and the word a notice gets on the app's own panel in the headset.
+pub fn popup_kind(n: &Notice) -> (&'static str, &'static str) {
+    match n.kind.as_str() {
+        "friendRequest" => ("invite", "Friend request"),
+        "invite" => ("invite", "Invite"),
+        "requestInvite" => ("invite", "Invite request"),
+        "inviteResponse" | "requestInviteResponse" => ("invite", "Answer"),
+        "boop" => ("invite", "Boop"),
+        _ => ("invite", "From VRChat"),
+    }
+}
+
 pub fn remove(list: &mut Vec<Notice>, id: &str) {
     list.retain(|n| n.id != id);
+}
+
+/// When the newer notifications could not be read, the ones already listed stay: a failed
+/// read says nothing about whether they are gone. Keeps the list newest first.
+pub fn keep_newer_kind(fresh: &mut Vec<Notice>, before: &[Notice]) {
+    for n in before.iter().filter(|n| n.version == 2) {
+        if !fresh.iter().any(|f| f.id == n.id) {
+            fresh.push(n.clone());
+        }
+    }
+    fresh.sort_by(|a, b| b.at.cmp(&a.at));
 }
 
 #[cfg(test)]
@@ -408,5 +431,23 @@ mod tests {
 
         assert!(apply(&mut list, "notification-v2-delete", &json!({ "ids": ["not_g"], "version": 2 })).changed);
         assert!(list.is_empty());
+    }
+
+    #[test]
+    fn a_failed_read_of_the_newer_kind_keeps_the_ones_listed() {
+        let group = json!({ "id": "not_g", "type": "group.announcement", "title": "News", "message": "",
+            "createdAt": "2026-01-05T23:00:00.000Z", "seen": false });
+        let before = from_api(&[invite()], &[group]);
+        assert_eq!(before.len(), 2);
+        // The newer kind could not be read this time: only the classic ones came back.
+        let mut fresh = from_api(&[invite()], &[]);
+        keep_newer_kind(&mut fresh, &before);
+        let ids: Vec<&str> = fresh.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(ids, ["not_g", "not_1"], "kept, once each, newest first");
+        // A classic one that is gone stays gone.
+        let mut fresh = from_api(&[], &[]);
+        keep_newer_kind(&mut fresh, &before);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, "not_g");
     }
 }

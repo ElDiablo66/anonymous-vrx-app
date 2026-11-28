@@ -12,8 +12,9 @@ pub enum AppError {
     TwoFactorRequired,
     #[error("That code was not accepted")]
     BadCode,
-    #[error("VRChat asked us to slow down. Try again in a minute")]
-    RateLimited,
+    /// VRChat answered "too many requests". Holds how many seconds it asked to wait, when known.
+    #[error("{}", wait_words(*.0))]
+    RateLimited(Option<u64>),
     #[error("Not signed in")]
     NotSignedIn,
     #[error("{0}")]
@@ -34,7 +35,7 @@ impl AppError {
             AppError::Unauthorized => "unauthorized",
             AppError::TwoFactorRequired => "twoFactorRequired",
             AppError::BadCode => "badCode",
-            AppError::RateLimited => "rateLimited",
+            AppError::RateLimited(_) => "rateLimited",
             AppError::NotSignedIn => "notSignedIn",
             AppError::CannotDo(_) => "cannotDo",
             AppError::Storage(_) => "storage",
@@ -63,6 +64,16 @@ impl From<reqwest::Error> for AppError {
     fn from(e: reqwest::Error) -> Self {
         // The request URL can carry a session token, so it is left out of the message.
         AppError::Network(e.without_url().to_string())
+    }
+}
+
+/// "Try again in a minute", or in the time VRChat gave.
+fn wait_words(seconds: Option<u64>) -> String {
+    match seconds {
+        Some(0 | 1) => "VRChat asked to wait. Try again in a second".into(),
+        Some(s) if s <= 90 => format!("VRChat asked to wait. Try again in {s} seconds"),
+        Some(s) => format!("VRChat asked to wait. Try again in {} minutes", s.div_ceil(60)),
+        None => "VRChat asked us to slow down. Try again in a minute".into(),
     }
 }
 

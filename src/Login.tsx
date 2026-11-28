@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { backend, errorText, type Me } from "./backend";
 import logo from "./assets/logo.svg";
 
@@ -16,6 +16,11 @@ export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
+  // VRCX on this PC: its history is not brought over by itself, so say where that is done.
+  const [vrcx, setVrcx] = useState(false);
+  useEffect(() => {
+    void backend.vrcxFound().then(setVrcx).catch(() => {});
+  }, []);
 
   async function signIn(e: FormEvent) {
     e.preventDefault();
@@ -112,6 +117,12 @@ export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
               Use a different account
             </button>
           </form>
+        )}
+        {vrcx && (
+          <p className="vrcx-note">
+            VRCX is on this PC. Its history is not brought over by itself. To bring it over, go to Settings, Data and account, Moving over from VRCX. A long history
+            takes a while, and the app can be slow until it is done.
+          </p>
         )}
         {backend.demo && (
           <p className="demo-note">

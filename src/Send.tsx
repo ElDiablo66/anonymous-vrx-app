@@ -1,6 +1,6 @@
 import { useEscape, useVeil } from "./escape";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { backend, errorText, type Friend, type InviteMessage } from "./backend";
+import { backend, errorText, type BackendError, type Friend, type InviteMessage } from "./backend";
 import { colourOf, textureName, textures, textureUrl, useDress } from "./look";
 import { live } from "./settings";
 
@@ -282,12 +282,33 @@ const languageNames: Record<string, string> = {
   tok: "Toki Pona", tur: "Turkish", tws: "Teochew", ukr: "Ukrainian", vie: "Vietnamese", wuu: "Wu Chinese", yue: "Cantonese", zho: "Chinese",
 };
 
+/**
+ * The languages a profile shows: VRChat keeps them as tags, and the newer record repeats them.
+ * All of them: a save that stopped halfway can leave more than three for a moment.
+ */
+function allSpokenOf(raw: Record<string, unknown>): string[] {
+  return [
+    ...new Set([
+      ...(Array.isArray(raw.tags) ? raw.tags : []).filter((t): t is string => typeof t === "string" && t.startsWith("language_")).map((t) => t.slice(9)),
+      ...(Array.isArray(raw.languages) ? raw.languages : []).filter((l): l is string => typeof l === "string").map((l) => l.replace(/^language_/, "")),
+    ]),
+  ];
+}
+
+/** The first three, as the picker shows them. */
+function spokenOf(raw: Record<string, unknown>): string[] {
+  return allSpokenOf(raw).slice(0, 3);
+}
+
 type Look = { iconFrame: string; profileEffect: string; nameplateEffect: string; backgroundType: string; top: string; bottom: string; texture: string };
 
 const hex = (v: unknown, fallback: string) => (typeof v === "string" && /^[0-9a-f]{6}$/i.test(v.replace(/^#/, "")) ? v.replace(/^#/, "").toLowerCase() : fallback);
 
 /** A dusk banner for the effect thumbnails, so their edge glow has something to show against. */
 const FX_BACKDROP = "radial-gradient(120% 90% at 50% 110%, #ff7a59 0%, rgb(255 122 89 / 0) 55%), linear-gradient(170deg, #4b2380 0%, #2a1252 60%, #1a0b33 100%)";
+
+/** Sent on the window after my own profile was saved. */
+export const PROFILE_SAVED = "avrx:profile-saved";
 
 /** My own profile, changed the way VRChat's website changes it: what it says, and how it looks. */
 export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; onClose: () => void; onBack?: () => void; onDone: (message: string) => void }) {
@@ -314,19 +335,14 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
       .then((p) => {
         if (!alive) return;
         const raw = (p.raw ?? {}) as Record<string, unknown>;
-        // Saving writes every field, so nothing may be saved over a profile that did not arrive whole.
-        if (typeof raw.bio !== "string" || !Array.isArray(raw.bioLinks)) {
+        // Nothing may be saved over a profile that did not arrive whole. The bio and its links come
+        // from VRChat's newer profile record, so that record has to have been read.
+        if (!p.recordRead || typeof raw.bio !== "string" || !Array.isArray(raw.bioLinks)) {
           setProblem("VRChat did not send your whole profile, so nothing can be changed safely right now. Close this and try again in a minute.");
           return;
         }
         const had = raw.bioLinks.filter((l): l is string => typeof l === "string" && l !== "");
-        // The same languages the profile shows: VRChat keeps them as tags, and the newer record repeats them.
-        const spoken = [
-          ...new Set([
-            ...(Array.isArray(raw.tags) ? raw.tags : []).filter((t): t is string => typeof t === "string" && t.startsWith("language_")).map((t) => t.slice(9)),
-            ...(Array.isArray(raw.languages) ? raw.languages : []).filter((l): l is string => typeof l === "string").map((l) => l.replace(/^language_/, "")),
-          ]),
-        ];
+        const spoken = spokenOf(raw);
         const kind = typeof raw.backgroundType === "string" ? raw.backgroundType : "default";
         const nowLook: Look = {
           iconFrame: typeof raw.iconFrame === "string" ? raw.iconFrame : "",
@@ -345,9 +361,9 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
         setBio(raw.bio);
         setPronouns(nowPronouns);
         setLinks(nowLinks);
-        setLangs(spoken.slice(0, 3));
+        setLangs(spoken);
         setLook(nowLook);
-        setFirst({ bio: raw.bio, pronouns: nowPronouns, links: nowLinks, langs: spoken.slice(0, 3), look: nowLook });
+        setFirst({ bio: raw.bio, pronouns: nowPronouns, links: nowLinks, langs: spoken, look: nowLook });
         setLoaded(true);
       })
       .catch((err) => alive && setProblem(`Your profile could not be read: ${errorText(err)}`));
@@ -365,7 +381,9 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
 
   // What has changed since the profile was read; leaving with changes asks first.
   const cleanLinks = links.map((l) => l.trim()).filter(Boolean);
-  const aboutChanged = !!first && (bio !== first.bio || pronouns.trim() !== first.pronouns.trim() || cleanLinks.join("\n") !== first.links.map((l) => l.trim()).filter(Boolean).join("\n"));
+  const bioChanged = !!first && (bio !== first.bio || cleanLinks.join("\n") !== first.links.map((l) => l.trim()).filter(Boolean).join("\n"));
+  const pronounsChanged = !!first && pronouns.trim() !== first.pronouns.trim();
+  const aboutChanged = bioChanged || pronounsChanged;
   const langsChanged = !!first && langs.join() !== first.langs.join();
   const lookChanged = !!first && (["iconFrame", "profileEffect", "nameplateEffect", "backgroundType", "top", "bottom", "texture"] as const).some((k) => look[k] !== first.look[k]);
   const dirty = aboutChanged || langsChanged || lookChanged;
@@ -385,13 +403,35 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
     keepButton.current?.focus();
   }, [leaving]);
 
+  /**
+   * Languages go to VRChat in two steps, so a save that failed can leave them half changed. They
+   * are read again and become what the next save starts from, and the note says what VRChat has
+   * now. The picks stay, so saving again sends only what is still missing.
+   */
+  async function readLanguagesAgain(problem: string) {
+    try {
+      const p = await backend.profile(meId);
+      const now = allSpokenOf((p.raw ?? {}) as Record<string, unknown>);
+      setFirst((old) => (old ? { ...old, langs: now } : old));
+      const named = now.map((c) => languageNames[c] ?? c).join(", ");
+      setProblem(`${problem} Your languages on VRChat now: ${named || "none"}.`);
+    } catch {
+      // The note about the failed save stays as it is.
+    }
+  }
+
   async function save() {
     if (!first) return;
     setBusy(true);
     setProblem("");
+    // Set while the languages are being saved, so a failure there reads them again.
+    let atLanguages = false;
     try {
-      if (aboutChanged) await backend.updateProfile(bio, pronouns.trim(), cleanLinks);
+      // The bio with its links, and the pronouns, go only when they changed.
+      if (aboutChanged) await backend.updateProfile(bioChanged ? { bio, links: cleanLinks } : null, pronounsChanged ? pronouns.trim() : null);
+      atLanguages = true;
       if (langsChanged) await backend.updateLanguages(langs.filter((c) => !first.langs.includes(c)), first.langs.filter((c) => !langs.includes(c)));
+      atLanguages = false;
       // Only what changed goes to VRChat, so nothing I did not touch is written over.
       const changes: Record<string, unknown> = {};
       for (const key of ["iconFrame", "profileEffect", "nameplateEffect"] as const) if (look[key] !== first.look[key]) changes[key] = look[key];
@@ -402,10 +442,17 @@ export function EditProfile({ meId, onClose, onBack, onDone }: { meId: string; o
         if (look.backgroundType === "texture") changes.backgroundTextureId = look.texture;
       }
       if (Object.keys(changes).length > 0) await backend.updateLook(changes);
-      onDone(aboutChanged || langsChanged || Object.keys(changes).length > 0 ? "Your profile is changed." : "Nothing was changed.");
+      const changed = aboutChanged || langsChanged || Object.keys(changes).length > 0;
+      // An open profile window of mine reads itself again, so it shows what VRChat now has.
+      if (changed) window.dispatchEvent(new Event(PROFILE_SAVED));
+      onDone(changed ? "Your profile is changed." : "Nothing was changed.");
       onClose();
     } catch (err) {
       setProblem(errorText(err));
+      // Not after VRChat asked to wait: then nothing more is sent, not even a read. Save stays
+      // off until the read is back, so a second save starts from what VRChat really has.
+      const waited = (err as Partial<BackendError> | null)?.kind === "rateLimited" || /\(.*429|asked to wait/i.test(errorText(err));
+      if (atLanguages && langsChanged && !waited) await readLanguagesAgain(errorText(err));
       setBusy(false);
     }
   }

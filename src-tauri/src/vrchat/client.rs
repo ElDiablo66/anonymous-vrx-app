@@ -3,7 +3,7 @@
 //! Every request goes through one gate that spaces calls out, and a 429
 //! answer makes the client wait before it tries again.
 
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use base64::Engine;
@@ -11,7 +11,7 @@ use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use reqwest::header::{HeaderMap, AUTHORIZATION, COOKIE, RETRY_AFTER, SET_COOKIE};
 use reqwest::{Method, StatusCode};
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use tokio::time::Instant;
 
 use crate::error::{AppError, AppResult};
@@ -62,6 +62,11 @@ pub struct Timing {
     /// Longest single wait after a 429.
     pub max_wait: Duration,
     pub attempts: u32,
+    /// Longest an action I asked for (a boop, an avatar switch) waits behind a slowdown before
+    /// it gives up and says how long is left.
+    pub action_wait: Duration,
+    /// How long an action VRChat turned down with a 429 is held back when no Retry-After came.
+    pub action_hold: Duration,
 }
 
 impl Default for Timing {
@@ -71,7 +76,111 @@ impl Default for Timing {
             backoff: Duration::from_secs(5),
             max_wait: Duration::from_secs(120),
             attempts: 3,
+            action_wait: Duration::from_secs(10),
+            action_hold: Duration::from_secs(60),
         }
+    }
+}
+
+/// The longest wait VRChat may ask for that is kept. Anything longer is taken as an hour.
+const LONGEST_ASKED: Duration = Duration::from_secs(3600);
+
+/// How many signed pictures are fetched from VRChat's API at the same time.
+const PICTURES_AT_ONCE: usize = 3;
+
+/// The wait VRChat gave in a 429 answer, when it gave one in whole seconds.
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    headers
+        .get(RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(Duration::from_secs)
+}
+
+/// Whether an address that came from outside (a picture, a download, an avatar database) is one
+/// this app will ask. Only https, and never a server on this PC or on the home network, so data
+/// from a third party cannot point the app at a local service. Plain http to this same PC is let
+/// through only when `local_ok` is set, which is the case only when the client itself talks to a
+/// stand-in server on this PC, as the tests do.
+pub fn address_allowed(url: &str, local_ok: bool) -> bool {
+    if url.len() > 2000 || url.chars().any(|c| c.is_control() || c == ' ') {
+        return false;
+    }
+    let Ok(parsed) = reqwest::Url::parse(url) else { return false };
+    let Some(host) = parsed.host_str() else { return false };
+    let host = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
+    match parsed.scheme() {
+        "https" => !is_local_host(&host) || local_ok,
+        "http" => local_ok && host == "127.0.0.1",
+        _ => false,
+    }
+}
+
+/// True for names and numbers that lead to this PC or the home network.
+fn is_local_host(host: &str) -> bool {
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => local_v4(ip),
+        Ok(std::net::IpAddr::V6(ip)) => {
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return local_v4(v4);
+            }
+            let first = ip.segments()[0];
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80
+        }
+        Err(_) => false,
+    }
+}
+
+fn local_v4(ip: std::net::Ipv4Addr) -> bool {
+    ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast()
+}
+
+/// Follows at most ten redirects, and only to addresses `address_allowed` lets through, so a
+/// server cannot send the app on to a local service either.
+fn redirects(local_ok: bool) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else if address_allowed(attempt.url().as_str(), local_ok) {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
+/// How a request waits for its turn at the gate.
+#[derive(Clone, Copy, PartialEq)]
+enum Turn {
+    /// Something I asked for: it does not queue behind reads and never waits long.
+    Action,
+    /// A read: it takes its turn a gap after the last one and waits out a slowdown of up to
+    /// `max_wait`. A longer one is handed back at once with the time left.
+    Read,
+    /// Signing out: it takes its turn like a read but waits out a slowdown of any length, so
+    /// VRChat is still told.
+    Patient,
+}
+
+/// Seconds, rounded up, so "wait 0 seconds" never shows.
+fn whole_seconds(d: Duration) -> u64 {
+    d.as_secs() + u64::from(d.subsec_nanos() > 0)
+}
+
+/// What a 429 on an action holds back. VRChat limits switching avatars as a whole, so every
+/// avatar switch shares one hold; anything else is held for its own address only, so booping
+/// one friend too often never stops booping another.
+fn hold_key(path: &str) -> String {
+    if path.starts_with("/avatars/") && path.ends_with("/select") {
+        "/avatars/*/select".into()
+    } else {
+        path.split('?').next().unwrap_or(path).to_string()
     }
 }
 
@@ -82,6 +191,20 @@ pub struct ApiClient {
     base: String,
     session: RwLock<Session>,
     next_slot: Mutex<Instant>,
+    /// The same spacing for the public avatar databases, kept apart from VRChat's.
+    db_next_slot: Mutex<Instant>,
+    /// Actions VRChat answered with a 429, by `hold_key`, and when they may be sent again.
+    held: std::sync::Mutex<std::collections::HashMap<String, Instant>>,
+    /// Until when everything is held back because a read met a 429. Kept apart from the gate
+    /// itself, so a line of ordinary requests is never taken for a slowdown.
+    slowed_until: std::sync::Mutex<Instant>,
+    /// Until when signing in and sending a code are held back because VRChat answered one of
+    /// them with a 429. Kept apart from `held`, so signing out or a new sign-in never clears it.
+    sign_in_held: std::sync::Mutex<Option<Instant>>,
+    /// Keeps signed picture fetches to a few at a time.
+    pictures: Semaphore,
+    /// True only when the client talks to a stand-in server on this PC, as the tests do.
+    local_ok: bool,
     status_url: String,
     timing: Timing,
 }
@@ -92,14 +215,17 @@ impl ApiClient {
     }
 
     pub fn with_base(base: &str, timing: Timing) -> AppResult<Self> {
+        let local_ok = base.starts_with("http://127.0.0.1:");
         let http = reqwest::Client::builder()
             .user_agent(user_agent())
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(30))
+            .redirect(redirects(local_ok))
             .build()?;
         let slow = reqwest::Client::builder()
             .user_agent(user_agent())
             .connect_timeout(Duration::from_secs(15))
+            .redirect(redirects(local_ok))
             .build()?;
         Ok(Self {
             http,
@@ -107,6 +233,12 @@ impl ApiClient {
             base: base.trim_end_matches('/').to_string(),
             session: RwLock::new(Session::default()),
             next_slot: Mutex::new(Instant::now()),
+            db_next_slot: Mutex::new(Instant::now()),
+            held: std::sync::Mutex::new(std::collections::HashMap::new()),
+            slowed_until: std::sync::Mutex::new(Instant::now()),
+            sign_in_held: std::sync::Mutex::new(None),
+            pictures: Semaphore::new(PICTURES_AT_ONCE),
+            local_ok,
             status_url: if base == DEFAULT_BASE {
                 "https://status.vrchat.com/api/v2/status.json".to_string()
             } else {
@@ -124,9 +256,11 @@ impl ApiClient {
         *self.session.write().unwrap() = session;
     }
 
-    /// Forgets the sign-in but keeps the "remember this device" cookie.
+    /// Forgets the sign-in but keeps the "remember this device" cookie. Waits VRChat asked for
+    /// on single actions belonged to that sign-in and go with it.
     pub fn clear_auth(&self) {
         self.session.write().unwrap().auth = None;
+        self.held.lock().unwrap().clear();
     }
 
     pub fn auth_token(&self) -> Option<String> {
@@ -164,13 +298,81 @@ impl ApiClient {
         }
     }
 
-    async fn wait_for_slot(&self) {
-        let mut next = self.next_slot.lock().await;
-        let now = Instant::now();
-        if *next > now {
-            tokio::time::sleep_until(*next).await;
+    /// Spaces out requests to the public avatar databases. They are other servers, so a
+    /// slowdown VRChat asked for does not hold them up.
+    async fn space_out(&self) {
+        let start = {
+            let mut next = self.db_next_slot.lock().await;
+            let start = (*next).max(Instant::now());
+            *next = start + self.timing.gap;
+            start
+        };
+        tokio::time::sleep_until(start).await;
+    }
+
+    /// Waits for this request's moment to go. Reads take turns, a gap apart, and also wait out
+    /// a slowdown VRChat asked for, including one that starts while they wait. An action I asked
+    /// for does not queue behind reads, and it never waits long without a word: when the
+    /// slowdown has more than `action_wait` left, it gives up and gives back the time left.
+    /// A read does the same past `max_wait`, since VRChat may ask for many minutes.
+    /// The gate is never held while waiting, so nobody waits behind a sleeper they cannot see.
+    async fn wait_for_slot(&self, turn: Turn) -> Result<(), Duration> {
+        loop {
+            let start = {
+                let mut next = self.next_slot.lock().await;
+                let now = Instant::now();
+                let slowed = *self.slowed_until.lock().unwrap();
+                let left = slowed.saturating_duration_since(now);
+                if turn == Turn::Action {
+                    if left > self.timing.action_wait {
+                        return Err(left);
+                    }
+                    now.max(slowed)
+                } else {
+                    if turn == Turn::Read && left > self.timing.max_wait {
+                        return Err(left);
+                    }
+                    let start = (*next).max(now).max(slowed);
+                    *next = start + self.timing.gap;
+                    start
+                }
+            };
+            tokio::time::sleep_until(start).await;
+            if *self.slowed_until.lock().unwrap() <= Instant::now() {
+                return Ok(());
+            }
         }
-        *next = Instant::now() + self.timing.gap;
+    }
+
+    /// How long is left of a wait VRChat asked for on signing in, when one is running.
+    fn sign_in_wait(&self) -> Option<Duration> {
+        let mut held = self.sign_in_held.lock().unwrap();
+        let left = held.map(|until| until.saturating_duration_since(Instant::now())).filter(|left| !left.is_zero());
+        if left.is_none() {
+            *held = None;
+        }
+        left
+    }
+
+    /// Holds signing in and sending a code back for the time VRChat asked, or a minute.
+    fn hold_sign_in(&self, asked: Option<Duration>) -> AppError {
+        let pause = asked.unwrap_or(self.timing.action_hold).min(LONGEST_ASKED);
+        let mut held = self.sign_in_held.lock().unwrap();
+        let until = Instant::now() + pause;
+        *held = Some(held.map_or(until, |was| was.max(until)));
+        AppError::RateLimited(Some(whole_seconds(pause).max(1)))
+    }
+
+    /// How long is left of a slowdown VRChat asked for, when one is running.
+    fn slowdown_left(&self) -> Option<Duration> {
+        let left = self.slowed_until.lock().unwrap().saturating_duration_since(Instant::now());
+        (!left.is_zero()).then_some(left)
+    }
+
+    /// Holds every read back for `pause`. A longer wait already set by another answer is kept.
+    fn slow_down(&self, pause: Duration) {
+        let mut slowed = self.slowed_until.lock().unwrap();
+        *slowed = (*slowed).max(Instant::now() + pause);
     }
 
     async fn send(
@@ -180,12 +382,50 @@ impl ApiClient {
         basic: Option<&str>,
         body: Option<&Value>,
     ) -> AppResult<(StatusCode, Value)> {
+        self.send_with(method, path, basic, body, None).await
+    }
+
+    /// `send`, with the sign-in cookie given instead of the current one when `cookie` is set.
+    /// Signing out uses that, so a sign-out still waiting its turn never carries a newer sign-in.
+    async fn send_with(
+        &self,
+        method: Method,
+        path: &str,
+        basic: Option<&str>,
+        body: Option<&Value>,
+        cookie: Option<&str>,
+    ) -> AppResult<(StatusCode, Value)> {
         let url = format!("{}{}", self.base, path);
+        // Anything but a read is something I asked for. It is sent once: never again by itself
+        // after a 429, and never after a long wait I cannot see.
+        let action = method != Method::GET;
+        // Signing out waits its turn like a read, so VRChat is told even during a slowdown.
+        let turn = if !action {
+            Turn::Read
+        } else if path == "/logout" {
+            Turn::Patient
+        } else {
+            Turn::Action
+        };
+        let key = format!("{method} {}", hold_key(path));
         let mut wait = self.timing.backoff;
         for attempt in 1..=self.timing.attempts {
-            self.wait_for_slot().await;
+            if action {
+                let now = Instant::now();
+                let held = {
+                    let mut held = self.held.lock().unwrap();
+                    held.retain(|_, until| *until > now);
+                    held.get(&key).map(|until| *until - now)
+                };
+                if let Some(left) = held {
+                    return Err(AppError::RateLimited(Some(whole_seconds(left))));
+                }
+            }
+            if let Err(left) = self.wait_for_slot(turn).await {
+                return Err(AppError::RateLimited(Some(whole_seconds(left))));
+            }
             let mut req = self.http.request(method.clone(), &url);
-            if let Some(cookie) = self.cookie_header() {
+            if let Some(cookie) = cookie.map(str::to_string).or_else(|| self.cookie_header()) {
                 req = req.header(COOKIE, cookie);
             }
             if let Some(b) = basic {
@@ -197,31 +437,51 @@ impl ApiClient {
             let resp = req.send().await?;
             let status = resp.status();
             if status == StatusCode::TOO_MANY_REQUESTS {
+                let asked = retry_after(resp.headers());
                 // A sign-in carries the password, so it is sent once and never repeated here.
-                if basic.is_some() || attempt == self.timing.attempts {
-                    return Err(AppError::RateLimited);
+                // Signing in then waits out VRChat's time, so pressing Sign in again inside it
+                // is answered here and nothing goes out.
+                if basic.is_some() {
+                    return Err(self.hold_sign_in(asked));
                 }
-                let asked = resp
-                    .headers()
-                    .get(RETRY_AFTER)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.trim().parse::<u64>().ok())
-                    .map(Duration::from_secs);
-                let pause = asked.unwrap_or(wait).min(self.timing.max_wait);
-                // Hold every other request back for the same time.
-                {
-                    let mut next = self.next_slot.lock().await;
-                    *next = Instant::now() + pause;
+                if action {
+                    // A code VRChat turned down for coming too often holds signing in back too.
+                    if path.starts_with("/auth/twofactorauth/") {
+                        self.hold_sign_in(asked);
+                    }
+                    // VRChat limits some actions on their own, like booping the same person
+                    // again soon or switching avatars quickly. Only that action waits, for
+                    // VRChat's own time up to an hour, and it says how long; reads and other
+                    // actions go on as before.
+                    let pause = asked.unwrap_or(self.timing.action_hold).min(LONGEST_ASKED);
+                    self.held.lock().unwrap().insert(key, Instant::now() + pause);
+                    return Err(AppError::RateLimited(Some(whole_seconds(pause).max(1))));
+                }
+                // Every other request waits the same time, the last try included. The time
+                // VRChat gave is kept in full, up to an hour; only the app's own guess, when
+                // VRChat gave none, stays under `max_wait`.
+                let pause = match asked {
+                    Some(asked) => asked.min(LONGEST_ASKED),
+                    None => wait.min(self.timing.max_wait),
+                };
+                self.slow_down(pause);
+                // A wait longer than this request is willing to sleep is handed back at once,
+                // so nothing goes to VRChat again inside the time it asked for.
+                if attempt == self.timing.attempts || pause > self.timing.max_wait {
+                    return Err(AppError::RateLimited(asked.map(|a| whole_seconds(a.min(LONGEST_ASKED)))));
                 }
                 wait = (wait * 2).min(self.timing.max_wait);
                 continue;
             }
-            self.remember_cookies(resp.headers());
+            // A sign-out sent with an older cookie must not change the current sign-in.
+            if cookie.is_none() {
+                self.remember_cookies(resp.headers());
+            }
             let text = resp.text().await?;
             let json = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
             return Ok((status, json));
         }
-        Err(AppError::RateLimited)
+        Err(AppError::RateLimited(None))
     }
 
     fn api_error(status: StatusCode, body: &Value) -> AppError {
@@ -257,6 +517,10 @@ impl ApiClient {
             utf8_percent_encode(password, COMPONENT)
         );
         let basic = base64::engine::general_purpose::STANDARD.encode(pair);
+        // Inside a wait VRChat asked for, the password is not sent again.
+        if let Some(left) = self.sign_in_wait() {
+            return Err(AppError::RateLimited(Some(whole_seconds(left).max(1))));
+        }
         // A stale auth cookie would win over the new credentials.
         self.clear_auth();
         let (status, body) = self.send(Method::GET, "/auth/user", Some(&basic), None).await?;
@@ -277,6 +541,9 @@ impl ApiClient {
             "otp" => "/auth/twofactorauth/otp/verify",
             other => return Err(AppError::Parse(format!("unknown code method {other}"))),
         };
+        if let Some(left) = self.sign_in_wait() {
+            return Err(AppError::RateLimited(Some(whole_seconds(left).max(1))));
+        }
         let body = serde_json::json!({ "code": code.trim() });
         let (status, json) = self.send(Method::POST, path, None, Some(&body)).await?;
         if status == StatusCode::BAD_REQUEST {
@@ -514,10 +781,14 @@ impl ApiClient {
         self.act(Method::POST, "/auth/user/playermoderations".into(), Some(serde_json::json!({ "moderated": user_id, "type": kind }))).await
     }
 
-    /// Writes part of my profile record: languages, the frame, effects and background. Only the
-    /// keys in `body` change.
-    pub async fn update_profile_record(&self, user_id: &str, body: Value) -> AppResult<()> {
-        self.act(Method::PUT, format!("/profile/{}", Self::part(user_id)), Some(body)).await
+    /// Writes part of my profile record: the bio and its links, the frame, effects and
+    /// background. Only the keys in `body` change. Gives back the record as VRChat now has it.
+    pub async fn update_profile_record(&self, user_id: &str, body: Value) -> AppResult<Value> {
+        let (status, answer) = self.send(Method::PUT, &format!("/profile/{}", Self::part(user_id)), None, Some(&body)).await?;
+        if !status.is_success() {
+            return Err(Self::api_error(status, &answer));
+        }
+        Ok(answer)
     }
 
     /// Adds tags to my account (`add`) or takes them off. Languages live here as `language_xxx`.
@@ -551,17 +822,42 @@ impl ApiClient {
 
     pub async fn picture_as(&self, url: &str, signed: bool) -> AppResult<(String, Vec<u8>)> {
         const LIMIT: usize = 40 * 1024 * 1024;
-        let allowed = url.starts_with("https://") || url.starts_with("http://127.0.0.1:");
-        if !allowed || url.len() > 2000 || url.chars().any(|c| c.is_control() || c == ' ') {
+        if !address_allowed(url, self.local_ok) {
             return Err(AppError::CannotDo("That is not a picture address this app will fetch.".into()));
         }
+        // Pictures come from many servers, so a failure is not put down to VRChat.
+        let failed = |e: reqwest::Error| AppError::CannotDo(format!("The picture could not be fetched ({}).", e.without_url()));
         let mut request = self.http.get(url);
-        if signed && url.starts_with(&format!("{}/", self.base)) {
+        // A signed picture is a request to VRChat's API like any other: it waits out a slowdown
+        // VRChat asked for, takes its turn a gap apart, and only a few go at once.
+        let mut _turn = None;
+        let to_vrchat = signed && url.starts_with(&format!("{}/", self.base));
+        if to_vrchat {
+            if let Some(left) = self.slowdown_left() {
+                return Err(AppError::RateLimited(Some(whole_seconds(left).max(1))));
+            }
+            _turn = self.pictures.acquire().await.ok();
+            if let Some(left) = self.slowdown_left() {
+                return Err(AppError::RateLimited(Some(whole_seconds(left).max(1))));
+            }
+            if let Err(left) = self.wait_for_slot(Turn::Read).await {
+                return Err(AppError::RateLimited(Some(whole_seconds(left).max(1))));
+            }
             if let Some(cookie) = self.cookie_header() {
                 request = request.header(COOKIE, cookie);
             }
         }
-        let reply = request.send().await?;
+        let reply = request.send().await.map_err(failed)?;
+        if to_vrchat && reply.status() == StatusCode::TOO_MANY_REQUESTS {
+            // Held the same way a read is, and not asked again from here.
+            let asked = retry_after(reply.headers());
+            let pause = match asked {
+                Some(asked) => asked.min(LONGEST_ASKED),
+                None => self.timing.backoff.min(self.timing.max_wait),
+            };
+            self.slow_down(pause);
+            return Err(AppError::RateLimited(Some(whole_seconds(pause).max(1))));
+        }
         if !reply.status().is_success() {
             return Err(AppError::CannotDo(format!("The picture could not be fetched ({}).", reply.status().as_u16())));
         }
@@ -578,7 +874,7 @@ impl ApiClient {
         if !kind.starts_with("image/") {
             return Err(AppError::CannotDo("That address did not answer with a picture.".into()));
         }
-        let bytes = reply.bytes().await?;
+        let bytes = reply.bytes().await.map_err(failed)?;
         if bytes.len() > LIMIT {
             return Err(AppError::CannotDo("That picture is too large to save.".into()));
         }
@@ -604,20 +900,29 @@ impl ApiClient {
         Ok(body)
     }
 
+    /// An avatar database that did not answer. It is a third party, so VRChat is not named.
+    fn database_silent(e: reqwest::Error) -> AppError {
+        AppError::CannotDo(format!("The avatar search service did not answer ({}).", e.without_url()))
+    }
+
+    /// An avatar database that answered with something that is not a list of avatars.
+    fn database_odd(e: reqwest::Error) -> AppError {
+        AppError::CannotDo(format!("The avatar search service sent something unexpected ({}).", e.without_url()))
+    }
+
     /// Asks a public avatar database one question (`fileId` or `authorId`).
     /// Nothing about the signed-in account is sent.
     pub async fn ask_avatar_database(&self, provider: &str, key: &str, value: &str) -> AppResult<Value> {
-        let allowed = provider.starts_with("https://") || provider.starts_with("http://127.0.0.1:");
-        if !allowed || provider.contains(['?', '#', ' ']) || !matches!(key, "fileId" | "authorId") {
+        if !address_allowed(provider, self.local_ok) || provider.contains(['?', '#', ' ']) || !matches!(key, "fileId" | "authorId") {
             return Err(AppError::CannotDo("The avatar search address must be a plain https address.".into()));
         }
-        self.wait_for_slot().await;
+        self.space_out().await;
         let url = format!("{provider}?{key}={}", Self::part(value));
-        let resp = self.http.get(url).send().await?;
+        let resp = self.http.get(url).send().await.map_err(Self::database_silent)?;
         if !resp.status().is_success() {
             return Ok(Value::Array(Vec::new()));
         }
-        resp.json().await.map_err(|e| AppError::Parse(e.without_url().to_string()))
+        resp.json().await.map_err(Self::database_odd)
     }
 
     /// Adds something to a favourite group. `kind` is `world`, `avatar` or `friend`.
@@ -689,20 +994,16 @@ impl ApiClient {
     /// VRChat cookie or other account detail is sent, only the search text.
     pub async fn search_avatars(&self, provider: &str, query: &str) -> AppResult<Vec<Value>> {
         // Plain http is only let through for a server on this same PC, which is what the tests use.
-        let allowed = provider.starts_with("https://") || provider.starts_with("http://127.0.0.1:");
-        if !allowed || provider.contains(['?', '#', ' ']) {
+        if !address_allowed(provider, self.local_ok) || provider.contains(['?', '#', ' ']) {
             return Err(AppError::CannotDo("The avatar search address must be a plain https address.".into()));
         }
-        self.wait_for_slot().await;
+        self.space_out().await;
         let url = format!("{provider}?search={}&n=60", Self::part(query));
-        let resp = self.http.get(url).send().await?;
+        let resp = self.http.get(url).send().await.map_err(Self::database_silent)?;
         if !resp.status().is_success() {
-            return Err(AppError::Api {
-                status: resp.status().as_u16(),
-                message: "the avatar search service refused the request".into(),
-            });
+            return Err(AppError::CannotDo(format!("The avatar search service refused the search ({}).", resp.status().as_u16())));
         }
-        let body: Value = resp.json().await.map_err(|e| AppError::Parse(e.without_url().to_string()))?;
+        let body: Value = resp.json().await.map_err(Self::database_odd)?;
         Ok(body.as_array().cloned().unwrap_or_default())
     }
 
@@ -781,11 +1082,48 @@ impl ApiClient {
         Ok(body)
     }
 
-    pub async fn logout(&self) -> AppResult<()> {
-        if self.auth_token().is_some() {
-            let _ = self.send(Method::PUT, "/logout", None, None).await;
-        }
+    /// Signs out here at once. VRChat is told in the background: during a slowdown that waits
+    /// its turn like a read, and it carries the cookie of the sign-in that is leaving, so a new
+    /// sign-in made in the meantime is never sent along or undone.
+    pub async fn logout(self: &Arc<Self>) -> AppResult<()> {
+        let leaving = self.auth_token().is_some().then(|| self.cookie_header()).flatten();
         self.clear_auth();
+        if let Some(cookie) = leaving {
+            let client = self.clone();
+            tokio::spawn(async move {
+                let _ = client.send_with(Method::PUT, "/logout", None, None, Some(&cookie)).await;
+            });
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::address_allowed;
+
+    #[test]
+    fn outside_addresses_never_lead_to_this_pc_or_the_home_network() {
+        assert!(address_allowed("https://api.vrchat.cloud/api/1/file/file_1/1/file", false));
+        assert!(address_allowed("https://images.example.org/pic.png", false));
+        for url in [
+            "http://127.0.0.1:8080/admin/delete?all=1",
+            "http://images.example.org/pic.png",
+            "https://localhost/pic.png",
+            "https://127.0.0.1:8443/pic.png",
+            "https://192.168.1.20/pic.png",
+            "https://10.0.0.1/pic.png",
+            "https://169.254.169.254/latest",
+            "https://[::1]/pic.png",
+            "https://[fd00::1]/pic.png",
+            "https://[::ffff:127.0.0.1]/pic.png",
+            "file:///c:/secret.txt",
+            "https://example.org/a b.png",
+        ] {
+            assert!(!address_allowed(url, false), "{url}");
+        }
+        // Only a client that itself talks to a stand-in server on this PC may use one.
+        assert!(address_allowed("http://127.0.0.1:8080/pic.png", true));
+        assert!(!address_allowed("http://192.168.1.20/pic.png", true));
     }
 }

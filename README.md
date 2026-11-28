@@ -93,7 +93,7 @@ VRChat forgets most of what happened. The app keeps it in a file on your PC: eve
 | Right-click a friend | Ask for an invite, invite them to your world, or boop, from anywhere they are listed |
 | Friend map | One bubble per instance with the friends in it and their names, your favourites and your own instance marked, and lines between friends you often saw together. A list beside it has every instance with its Join button |
 | Friend web | Which of your friends are friends with each other, drawn as a town: each circle of friends is a district, friendships between two circles are a bridge, and a list names the circles and the friends who hold them together. The app asks VRChat about each friend only when you press the button, one at a time with a pause, and keeps the answer on your PC |
-| Room alarm (Beta) | New and not yet tried on many full instances. On a full instance, press "Tell me when there is room" in its window or "Full, wait" on the map. The app asks VRChat about that instance every 45 seconds and tells you when a place is free, with a Join button. It watches three instances at most and stops after an hour. A setting lets it join by itself |
+| Room alarm | On a full instance, press "Tell me when there is room" in its window or "Full, wait" on the map. The app asks VRChat about that instance every 45 seconds and tells you when a place is free, with a Join button. When a friend is in that instance, its card on Around shows the new count at the same time. It watches three instances at most and stops after an hour. A setting lets it join by itself (Beta) |
 
 #### Everyone
 
@@ -174,7 +174,8 @@ VRChat forgets most of what happened. The app keeps it in a file on your PC: eve
 | Status by rules | Rules change your VRChat status for you: at certain hours, in Invite, Friends, group or Public instances, in worlds whose name has a word you pick, or when enough friends are in your instance. The first rule that fits decides, and the status you had before comes back afterwards. A status you set yourself, in the app or in VRChat, stays until no rule fits any more. A list in Settings shows what the rules saw and did. The app changes status once a minute at most |
 | Moving over from VRCX | Copies the friend activity, friend log, world visits, avatars you wore, notes, avatar tags and local favourites VRCX recorded for your account into this app. VRCX's file is only read, a backup is made first, and running it again adds only what is new |
 | Keeping up with VRCX | With the switch on, the app looks at start and once an hour whether VRCX has written anything new and brings over only that, with a backup at most once a day |
-| Notifications in the headset (beta) | While VRChat runs, notifications also show in VR through XSOverlay or OVR Toolkit when one of them is running. Nothing leaves the PC. New, with little testing in a headset: tell me what you see if it misbehaves. The app has no SteamVR overlay of its own yet |
+| Notifications in the headset (beta) | While VRChat runs, notifications also show in VR through XSOverlay or OVR Toolkit when one of them is running. Each one shows in one place only. Nothing leaves the PC. New, with little testing in a headset: tell me what you see if it misbehaves |
+| This app in SteamVR (beta) | The app's own panels. A notice in front of you, over the middle so it stays clear of XSOverlay's. A feed on the arm with the clock, friends in VRChat, the six newest feed entries and the batteries. It lies sideways on the arm and turns with the wrist; when XSOverlay's wrist panel is on the same hand, it reads XSOverlay's own settings and sits just above that panel. A tab in SteamVR's dashboard with the feed and these settings, so they can be changed with the pointer. Alerts when a controller or tracker drops to 20% and 10%, loses tracking or switches off, and when SteamVR is closing, read from SteamVR on this PC; several losing tracking at once make one notice. When XSOverlay is on as well, a notice goes to one of them, never both. The app loads SteamVR's own `openvr_api.dll` only while SteamVR runs and one of these is switched on. Only lightly tried in a headset, so where a panel floats may still be off |
 | VRChat's cache | Shows how full VRChat's download cache is, clears old versions or all of it while the game is closed (by hand, or each time VRChat closes), and sets the size limit in VRChat's `config.json` |
 | Drawing without the graphics card | A switch for PCs where the window flickers or where VRChat should keep all the graphics memory. Counts from the next start |
 | Backups | History and settings go to a folder in Documents, by hand or by itself once a day (the newest 7 automatic ones are kept, you can change that). The sign-in is never part of a backup |
@@ -201,9 +202,10 @@ VRChat forgets most of what happened. The app keeps it in a file on your PC: eve
 
 ## How it treats VRChat's servers
 
-- Every request carries a User-Agent that names this app and its version.
+- Every request carries a User-Agent that names this app, its version and the address of this repository.
 - All requests go through one gate that spaces them out.
-- A 429 answer pauses everything, honours `Retry-After` and gives up after three tries.
+- A 429 answer to a read pauses all requests, honours `Retry-After` and gives up after three tries.
+- A 429 answer to something you did (a boop, an avatar switch, an invite) is never sent again by itself. Only that action waits, for VRChat's own time up to an hour, and the app says how long. A sign-in is never repeated.
 - The friend list is fetched once at sign-in. After that, changes come from VRChat's websocket.
 - World names, favourites and group data are cached, so the same question is not asked twice.
 - World history makes no requests at all. It comes from log files already on your disk.
@@ -224,10 +226,18 @@ npm install
 ```
 
 ```powershell
-npm run tauri build
+npx tauri build --config src-tauri/self-build.conf.json
 ```
 
-The installer lands in `src-tauri/target/release/bundle/nsis/`. Use `npm run tauri dev` for live reload, or `npm run dev` to open the interface in a browser tab on made-up demo data. The tests, the rules for pull requests and a map of the source are in [CONTRIBUTING.md](CONTRIBUTING.md).
+If you will share your build, run this in the same PowerShell window before the build command:
+
+```powershell
+$env:CARGO_ENCODED_RUSTFLAGS = "--remap-path-prefix=$env:USERPROFILE=~"
+```
+
+Without it the program carries the path of your Windows home folder in its error messages, and the crash log shows it. Use `CARGO_ENCODED_RUSTFLAGS`, not `RUSTFLAGS`: Cargo splits `RUSTFLAGS` at spaces, so a home folder with a space in its name would break the build.
+
+My release build also signs the installer for the app's updater, and that step needs my private key. The small `self-build.conf.json` file turns the step off, so your build works without it. The installer lands in `src-tauri/target/release/bundle/nsis/`. Use `npm run tauri dev` for live reload, or `npm run dev` to open the interface in a browser tab on made-up demo data. The tests, the rules for pull requests and a map of the source are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licence and credits
 

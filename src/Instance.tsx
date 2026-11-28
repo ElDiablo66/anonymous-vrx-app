@@ -83,7 +83,11 @@ export function InstancePanel({
   const tone = full ? "full" : crowded || share >= 0.85 ? "busy" : "open";
   const about = tidy(str(world?.description));
   const author = tidy(str(world?.authorName));
-  const elsewhere = Array.isArray(world?.instances) ? Math.max(0, (world.instances as unknown[]).length - 1) : 0;
+  // VRChat lists only public instances for a world, so this one is often not among them.
+  // Each entry is [instance id, people]; only the ones that are not this instance count.
+  const elsewhere = Array.isArray(world?.instances)
+    ? (world.instances as unknown[]).filter((x) => Array.isArray(x) && typeof x[0] === "string" && `${worldId}:${x[0]}` !== location).length
+    : 0;
 
   return (
     <div className="veil" {...veil}>

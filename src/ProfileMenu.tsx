@@ -255,7 +255,7 @@ export function ProfileMenu({ userId, name, friend, onDone }: { userId: string; 
                 label="Stop their avatar touching yours"
                 on={has("interactOff")}
                 busy={locked}
-                set={(on) => void toggle("interactOff", on, on ? `${name}'s avatar can no longer touch yours.` : `${name}'s avatar goes by your rank settings again.`)}
+                set={(on) => void toggle("interactOff", on, on ? `${name}'s avatar can no longer touch yours.` : `${name}'s avatar can touch yours again if your interaction settings allow it.`)}
               />
               {has("block") ? (
                 <button className="pmenu-item pmenu-danger pmenu-blockbtn" disabled={locked} onClick={() => void toggle("block", false, `${name} is no longer blocked.`)}>

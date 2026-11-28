@@ -184,7 +184,9 @@ export function FriendFavourite({ userId, name, onDone }: { userId: string; name
       const data = ((!fresh && (await backend.favoritesCached("friend"))) || (await backend.favoritesOf("friend"))) as Json;
       setAll(data);
     } catch {
-      setAll({});
+      // A failed read again (a 429 after a failed move, say) keeps what the card last knew, so the
+      // friend is not shown as no favourite. Only a first read that fails leaves the card empty.
+      setAll((old) => old ?? {});
     }
   }
 
@@ -216,8 +218,33 @@ export function FriendFavourite({ userId, name, onDone }: { userId: string; name
       await load(true);
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
+      // A failed remove or move can still have changed something, and VRChat gives a put-back
+      // entry a new id, so the card is read again to show the real state.
+      await load(true).catch(() => {});
     } finally {
       setBusy(false);
+    }
+  }
+
+  // VRChat can answer a removal without removing anything (a hold after a 429, say), so the
+  // count it returns is checked before the page says it worked.
+  async function removeFavourite(entryId: string) {
+    if ((await backend.removeFavorites([entryId])) === 0) throw new Error("VRChat did not remove it. Try again in a moment.");
+  }
+
+  // VRChat has no move, so the friend is taken out and put in again. When the new group does not
+  // take them, they go back where they were, and when that fails too I am told plainly.
+  async function moveFavourite(entryId: string, to: string, from: string) {
+    if ((await backend.removeFavorites([entryId])) === 0) throw new Error("VRChat did not take them out of their group, so nothing was moved. Try again in a moment.");
+    try {
+      await backend.addFavorite("friend", userId, to);
+    } catch (err) {
+      const back = await backend.addFavorite("friend", userId, from).then(
+        () => true,
+        () => false,
+      );
+      if (!back) throw new Error(`${name} is no longer a favourite. VRChat took them out of ${label(from)}, refused the new group, and refused to put them back. Add them again by hand.`);
+      throw err;
     }
   }
 
@@ -228,7 +255,7 @@ export function FriendFavourite({ userId, name, onDone }: { userId: string; name
         <div className="fav-card">
           <div className="fav-now">
             <span className="fav-in">In {label(current)}</span>
-            <button className="plain" disabled={busy} onClick={() => void act(() => backend.removeFavorites([str(mine.id)]), `${name} is no longer a favourite.`)}>
+            <button className="plain" disabled={busy} onClick={() => void act(() => removeFavourite(str(mine.id)), `${name} is no longer a favourite.`)}>
               Remove
             </button>
           </div>
@@ -249,16 +276,7 @@ export function FriendFavourite({ userId, name, onDone }: { userId: string; name
                   disabled={busy || !moveTo || (capacity > 0 && count(moveTo) >= capacity)}
                   title="VRChat keeps a friend in one favourite group, so this takes them out of the old one and puts them in the new one"
                   onClick={() =>
-                    void act(async () => {
-                      await backend.removeFavorites([str(mine.id)]);
-                      try {
-                        await backend.addFavorite("friend", userId, moveTo);
-                      } catch (err) {
-                        // Put back where they were, so a failed move does not drop the favourite.
-                        await backend.addFavorite("friend", userId, current).catch(() => {});
-                        throw err;
-                      }
-                    }, `${name} moved to ${label(moveTo)}.`)
+                    void act(() => moveFavourite(str(mine.id), moveTo, current), `${name} moved to ${label(moveTo)}.`)
                   }
                 >
                   Move

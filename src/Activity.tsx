@@ -2,12 +2,17 @@ import { openProfile } from "./Profile";
 import { useState, type ReactNode } from "react";
 import type { FeedItem, Friend, World, FriendDay } from "./backend";
 import { Avatar, clock, dayLabel, tidy } from "./bits";
+import { statusNames, type StatusValue } from "./statusrules";
 
 function placeName(item: FeedItem, worlds: Map<string, World>): string {
   if (item.location === "private") return "a private world";
   if (item.worldId) return tidy(worlds.get(item.worldId)?.name ?? "a world");
   return "";
 }
+
+/** The app's own name for a status the feed keeps in VRChat's words, such as "Do not disturb" for busy. */
+const statusLabel = (status: string) =>
+  Object.hasOwn(statusNames, status) ? statusNames[status as StatusValue] : !status || status === "offline" ? "Offline" : status;
 
 const statusKey = (status: string) => ({ "join me": "join", active: "online", "ask me": "ask", busy: "busy" })[status] ?? "offline";
 
@@ -24,8 +29,8 @@ export function sentence(item: FeedItem, worlds: Map<string, World>): ReactNode 
     case "status":
       return (
         <>
-          {who} switched from <i className={`tone-dot tone-${statusKey(item.previous)}`} /> {item.previous} to{" "}
-          <i className={`tone-dot tone-${statusKey(item.detail)}`} /> {item.detail}
+          {who} switched from <i className={`tone-dot tone-${statusKey(item.previous)}`} /> {statusLabel(item.previous)} to{" "}
+          <i className={`tone-dot tone-${statusKey(item.detail)}`} /> {statusLabel(item.detail)}
         </>
       );
     case "statusText":

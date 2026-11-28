@@ -1,7 +1,7 @@
 import { useEscape, useVeil } from "./escape";
 import { colourOf, profileBackground, useDress } from "./look";
 import { ProfileMenu } from "./ProfileMenu";
-import { openSend } from "./Send";
+import { openSend, PROFILE_SAVED } from "./Send";
 import { Habits } from "./Habits";
 import { type CSSProperties, useEffect, useState, type ReactNode } from "react";
 import { backend, errorText, type Friend, type Profile, type World } from "./backend";
@@ -287,6 +287,22 @@ export function ProfilePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  // My own window reads my profile again after it was saved, so the new bio shows at once.
+  useEffect(() => {
+    if (!isMe) return;
+    let alive = true;
+    const again = () =>
+      void backend
+        .profile(userId)
+        .then((p) => alive && setProfile(p))
+        .catch(() => {});
+    window.addEventListener(PROFILE_SAVED, again);
+    return () => {
+      alive = false;
+      window.removeEventListener(PROFILE_SAVED, again);
+    };
+  }, [userId, isMe]);
+
   // Escape goes back one window when there is one to go back to; Close puts them all away.
   useEscape(() => (onBack ? onBack() : onClose()));
   const veil = useVeil(onClose);
@@ -514,7 +530,7 @@ export function ProfilePanel({
               {[str(a.releaseStatus), pc && `PC ${pc}`, quest && `Quest ${quest}`].filter(Boolean).join(", ")}
             </span>
             <div className="wayback">
-              <button className="go" disabled={busy} onClick={() => void act(() => backend.wearAvatar(id), `You are now wearing ${str(a.name)}.`)}>
+              <button className="go" disabled={busy} onClick={() => void act(() => backend.wearAvatar(id, str(a.name)), `You are now wearing ${str(a.name)}.`)}>
                 Wear
               </button>
               <button onClick={() => copy(id, "Avatar ID copied.")}>Copy ID</button>
@@ -663,7 +679,7 @@ export function ProfilePanel({
                     <span className="wayback">
                       <button onClick={() => openThing("avatar", wearingId)}>Open</button>
                       {!isMe && (
-                        <button disabled={busy} onClick={() => void act(() => backend.wearAvatar(wearingId), `You are now wearing ${str(wearing.name)}.`)}>
+                        <button disabled={busy} onClick={() => void act(() => backend.wearAvatar(wearingId, str(wearing.name)), `You are now wearing ${str(wearing.name)}.`)}>
                           Wear
                         </button>
                       )}

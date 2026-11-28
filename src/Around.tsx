@@ -7,7 +7,7 @@ import { toggleWait, useWaiting } from "./Queue";
 import { parsePlace } from "./place";
 import { FriendChip } from "./App";
 import { whereText } from "./Everyone";
-import { FriendMap } from "./FriendMap";
+import { FriendMap, NO_HOST, inviteHost } from "./FriendMap";
 import { FriendWeb } from "./FriendWeb";
 
 interface Room {
@@ -122,7 +122,8 @@ export function Around({
   const waiting = useWaiting();
 
   async function getIn(room: Room) {
-    const host = room.people[0];
+    const host = inviteHost(room);
+    if (!host) return;
     setBusy(room.location);
     try {
       await backend.requestInvite(host.id);
@@ -283,6 +284,7 @@ export function Around({
         const place = room.people[0].place;
         const count = instances.get(room.location);
         const ask = askFirst.has(place.access ?? "");
+        const host = ask ? inviteHost(room) : null;
         return (
           <article className="room" key={room.location}>
             <div
@@ -334,14 +336,20 @@ export function Around({
             </div>
             <div className="room-foot">
               {ask ? (
-                <button
-                  className="room-go"
-                  disabled={busy === room.location}
-                  title={`Sends ${room.people[0].displayName} a request to invite you`}
-                  onClick={() => void getIn(room)}
-                >
-                  Ask <span className="who">{room.people[0].displayName}</span> for an invite
-                </button>
+                host ? (
+                  <button
+                    className="room-go"
+                    disabled={busy === room.location}
+                    title={`Sends ${host.displayName} a request to invite you`}
+                    onClick={() => void getIn(room)}
+                  >
+                    Ask <span className="who">{host.displayName}</span> for an invite
+                  </button>
+                ) : (
+                  <button className="room-go" disabled title={NO_HOST}>
+                    Only the person who opened it can invite you
+                  </button>
+                )
               ) : (
                 <WayBack location={room.location} onDone={onDone} />
               )}

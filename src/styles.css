@@ -258,6 +258,13 @@ button {
   margin-top: 22px;
 }
 
+.vrcx-note {
+  margin-top: 22px;
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .demo-strip {
   margin: 0 28px 4px;
 }

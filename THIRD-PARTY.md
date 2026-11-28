@@ -17,6 +17,6 @@ The Rust crates and npm packages are listed with their versions in `src-tauri/Ca
 - VRChat's web API and websocket. Not an official interface for outside tools; VRChat's Terms of Service and Community Guidelines apply to anyone using the app.
 - Avatar search asks community avatar databases chosen in Settings. Only the search words are sent.
 
-## Still open
+## This repository
 
-- This repository has no licence file of its own yet.
+Anonymous VRX itself is under the GNU General Public License version 3 only (GPL-3.0-only). The full text is in [LICENSE](LICENSE). The licence texts of the fonts and libraries above ship with the installer, in its `licences` folder.

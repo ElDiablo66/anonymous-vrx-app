@@ -1,13 +1,14 @@
 //! The photos VRChat's camera saves on this PC.
 //!
 //! VRChat writes them to `Pictures\VRChat\<year-month>\` with the moment they were taken in
-//! the file name, for example `VRChat_2026-10-16_21-12-13.235_2048x1440.png`. Nothing here
+//! the file name, for example `VRChat_2026-10-16_21-12-13.235_2048x1440.png`. VRChat's own
+//! `config.json` can move them elsewhere with `picture_output_folder`. Nothing here
 //! changes a photo: the files are only listed, and the app looks up in its own world history
 //! where I was at that moment.
 
 use std::path::{Path, PathBuf};
 
-use chrono::{Local, NaiveDateTime, SecondsFormat, TimeZone, Utc};
+use chrono::{DateTime, Local, LocalResult, NaiveDateTime, SecondsFormat, TimeZone, Utc};
 use serde::Serialize;
 
 /// One photo file and when it was taken.
@@ -49,9 +50,45 @@ pub fn parse_name(name: &str) -> Option<(NaiveDateTime, u32, u32)> {
     time.map(|t| (t, w, h))
 }
 
-fn to_utc(local: NaiveDateTime) -> Option<String> {
-    let at = Local.from_local_datetime(&local).earliest()?;
-    Some(at.with_timezone(&Utc).to_rfc3339_opts(SecondsFormat::Secs, true))
+/// How close the file's own save time must be to the second pass of the repeated hour for the
+/// photo to count as taken then. VRChat writes the file as the photo is taken, so it is seconds
+/// apart; a file changed much later says nothing about which pass it was.
+const SAVED_WITHIN: i64 = 10 * 60;
+
+/// Picks between the two moments a local time in the hour the autumn clock change repeats can
+/// mean. The file's save time (`saved`, when Windows gives one) settles it when it lies near the
+/// second moment; otherwise the first is kept, as before.
+fn pick(first: DateTime<Utc>, second: DateTime<Utc>, saved: Option<DateTime<Utc>>) -> DateTime<Utc> {
+    match saved {
+        Some(saved) if (saved - second).num_seconds().abs() <= SAVED_WITHIN => second,
+        _ => first,
+    }
+}
+
+/// The photo's local time in UTC. `saved` gives the file's save time, and is only asked for a
+/// time in the repeated hour. A time the spring clock change skips cannot be a real photo's, so
+/// that file is left out.
+fn to_utc(local: NaiveDateTime, saved: impl FnOnce() -> Option<DateTime<Utc>>) -> Option<String> {
+    let at = match Local.from_local_datetime(&local) {
+        LocalResult::Single(at) => at.with_timezone(&Utc),
+        LocalResult::Ambiguous(first, second) => pick(first.with_timezone(&Utc), second.with_timezone(&Utc), saved()),
+        LocalResult::None => return None,
+    };
+    Some(at.to_rfc3339_opts(SecondsFormat::Secs, true))
+}
+
+/// The photo folder named by `picture_output_folder` in VRChat's `config.json` inside `game`,
+/// when it is set and the folder is there. Nothing otherwise, and nothing for a file that
+/// cannot be read, so the usual folder is used then.
+pub fn picture_folder(game: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(game.join("config.json")).ok()?;
+    let config: serde_json::Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()?;
+    let folder = config.get("picture_output_folder")?.as_str()?.trim();
+    if folder.is_empty() {
+        return None;
+    }
+    let folder = PathBuf::from(folder);
+    (folder.is_absolute() && folder.is_dir()).then_some(folder)
 }
 
 /// Every VRChat photo under `root`, newest first.
@@ -73,7 +110,8 @@ pub fn scan(root: &Path) -> Vec<Photo> {
                 }
                 let name = entry.file_name().to_string_lossy().into_owned();
                 let Some((local, width, height)) = parse_name(&name) else { continue };
-                let Some(taken_at) = to_utc(local) else { continue };
+                let saved = || entry.metadata().ok()?.modified().ok().map(DateTime::<Utc>::from);
+                let Some(taken_at) = to_utc(local, saved) else { continue };
                 found.push(Photo { path: path.to_string_lossy().into_owned(), file: name, taken_at, width, height });
             }
         }
@@ -101,6 +139,21 @@ mod tests {
     }
 
     #[test]
+    fn the_repeated_hour_follows_the_files_save_time() {
+        let at = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        // 02:30 local on the autumn night, in a zone going from UTC+2 to UTC+1.
+        let first = at("2026-10-25T00:30:00Z");
+        let second = at("2026-10-25T01:30:00Z");
+        // Saved seconds after the second pass: the second.
+        assert_eq!(pick(first, second, Some(at("2026-10-25T01:30:04Z"))), second);
+        // Saved right after the first pass: the first.
+        assert_eq!(pick(first, second, Some(at("2026-10-25T00:30:04Z"))), first);
+        // No save time, or one from much later (an edited file): the first, as before.
+        assert_eq!(pick(first, second, None), first);
+        assert_eq!(pick(first, second, Some(at("2026-11-02T12:00:00Z"))), first);
+    }
+
+    #[test]
     fn lists_newest_first_and_skips_other_files() {
         let root = std::env::temp_dir().join(format!("avrx-photos-{}", std::process::id()));
         let month = root.join("2026-10");
@@ -113,5 +166,28 @@ mod tests {
         assert_eq!(photos.len(), 2);
         assert!(photos[0].file.contains("2026-10-17"));
         assert!(photos[0].taken_at.ends_with('Z'));
+    }
+
+    #[test]
+    fn uses_the_photo_folder_vrchat_was_told_to_use() {
+        let game = std::env::temp_dir().join(format!("avrx-photo-config-{}", std::process::id()));
+        let own = game.join("Camera roll");
+        std::fs::create_dir_all(&own).unwrap();
+        // No config.json, or one without the setting: the usual folder.
+        assert_eq!(picture_folder(&game), None);
+        std::fs::write(game.join("config.json"), "{ \"cache_size\": 40 }").unwrap();
+        assert_eq!(picture_folder(&game), None);
+        // A folder that is there is used, written the way VRChat's file has it.
+        let named = serde_json::json!({ "picture_output_folder": own.to_string_lossy() }).to_string();
+        std::fs::write(game.join("config.json"), format!("\u{feff}{named}")).unwrap();
+        assert_eq!(picture_folder(&game), Some(own.clone()));
+        // A folder that is not there, an empty one or a broken file: the usual folder.
+        std::fs::write(game.join("config.json"), r#"{ "picture_output_folder": "Z:\\gone\\nowhere" }"#).unwrap();
+        assert_eq!(picture_folder(&game), None);
+        std::fs::write(game.join("config.json"), r#"{ "picture_output_folder": "  " }"#).unwrap();
+        assert_eq!(picture_folder(&game), None);
+        std::fs::write(game.join("config.json"), "{ oops").unwrap();
+        assert_eq!(picture_folder(&game), None);
+        let _ = std::fs::remove_dir_all(&game);
     }
 }

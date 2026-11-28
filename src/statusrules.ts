@@ -77,7 +77,7 @@ export interface Scene {
   friendsHere: number;
 }
 
-const minutesOf = (clockText: string): number => Number(clockText.slice(0, 2)) * 60 + Number(clockText.slice(3, 5));
+const minutesOf = (clockText: string): number => Number(String(clockText ?? "").slice(0, 2)) * 60 + Number(String(clockText ?? "").slice(3, 5));
 
 export function fits(rule: StatusRule, scene: Scene): boolean {
   if (!rule.on) return false;
@@ -94,7 +94,8 @@ export function fits(rule: StatusRule, scene: Scene): boolean {
     return scene.access === "public";
   }
   if (rule.when === "world") {
-    const words = rule.words.trim().toLowerCase();
+    // Rules are cleaned when settings are read; a hand-edited one without words still must not stop the window.
+    const words = String(rule.words ?? "").trim().toLowerCase();
     return words !== "" && scene.world.toLowerCase().includes(words);
   }
   return scene.friendsHere >= rule.count;

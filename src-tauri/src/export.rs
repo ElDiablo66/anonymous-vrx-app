@@ -73,6 +73,14 @@ fn minutes(from: &str, to: Option<&str>) -> String {
     (((b - a).num_seconds().max(0) as f64) / 60.0).round().to_string()
 }
 
+/// Whole minutes from a count of seconds kept as text, the way `minutes` rounds them.
+fn kept_minutes(seconds: &str) -> String {
+    match seconds.trim().parse::<i64>() {
+        Ok(n) => ((n.max(0) as f64) / 60.0).round().to_string(),
+        Err(_) => String::new(),
+    }
+}
+
 fn kind_word(kind: &str) -> String {
     match kind {
         "online" => "Came online",
@@ -271,16 +279,22 @@ fn write_into(folder: &Path, store: &Store, wanted: &[&str]) -> AppResult<Vec<Ex
                     &["Worn (UTC)", "Worn (local)", "Until (UTC)", "Until (local)", "Minutes", "Avatar ID", "Avatar", "Author ID", "Author", "Public or private"],
                 )?;
                 store.each_row(
-                    "SELECT worn_at, ended_at, avatar_id, name, author_id, author_name, release_status FROM avatar_history ORDER BY id",
+                    "SELECT worn_at, ended_at, avatar_id, name, author_id, author_name, release_status, imported_seconds FROM avatar_history ORDER BY id",
                     |r| {
                         let t = |i: usize| r[i].clone().unwrap_or_default();
                         let until = r[1].clone();
+                        // A row brought over from VRCX starts and ends at the same moment and
+                        // keeps its whole time apart, so its minutes come from that total.
+                        let worn = match r[7].as_deref() {
+                            Some(kept) => kept_minutes(kept),
+                            None => minutes(&t(0), until.as_deref()),
+                        };
                         s.line(&[
                             Text(t(0)),
                             Text(local(&t(0))),
                             Text(until.clone().unwrap_or_default()),
                             Text(until.as_deref().map(local).unwrap_or_default()),
-                            Num(minutes(&t(0), until.as_deref())),
+                            Num(worn),
                             Text(t(2)),
                             Text(t(3)),
                             Text(t(4)),
@@ -312,6 +326,8 @@ fn write_into(folder: &Path, store: &Store, wanted: &[&str]) -> AppResult<Vec<Ex
     let about = "Anonymous VRX history export.\r\n\r\n\
 Each file opens in Excel, LibreOffice or Google Sheets. Times are given twice: in UTC, the way the\r\n\
 app keeps them, and in this PC's own time.\r\n\r\n\
+Avatars brought over from VRCX have one line each, dated when last worn, with the total time\r\n\
+VRCX kept in Minutes.\r\n\r\n\
 These files hold real names, user ids and instance addresses of the people you met. Keep them\r\n\
 private, the same as a backup. Hide names in the app only covers the screen, not these files.\r\n\r\n\
 Text that starts with = + - or @ has an apostrophe in front, so a spreadsheet shows it as text\r\n\
@@ -341,6 +357,10 @@ mod tests {
         assert_eq!(field(&Num("-5".into())), "-5");
         assert_eq!(minutes("2026-01-05T20:00:00Z", Some("2026-01-05T20:30:40Z")), "31");
         assert_eq!(minutes("2026-01-05T20:00:00Z", None), "");
+        assert_eq!(kept_minutes("5400"), "90");
+        assert_eq!(kept_minutes("89"), "1");
+        assert_eq!(kept_minutes("-3"), "0");
+        assert_eq!(kept_minutes(""), "");
     }
 
     #[test]
@@ -367,6 +387,14 @@ mod tests {
             (at("20:00:12"), LogEvent::Video { url: "https://www.youtube.com/watch?v=AbCdEfGhIjK".into() }),
         ];
         store.record_log(&events, true, "log:test", 1).unwrap();
+        // One avatar brought over from VRCX, with 90 minutes kept apart, and one worn here.
+        store
+            .run_sql(
+                "INSERT INTO avatar_history (avatar_id, name, worn_at, ended_at, imported_seconds)
+                 VALUES ('avtr_fox', 'Sunset Fox', '2025-03-01T20:00:00.000Z', '2025-03-01T20:00:00.000Z', 5400),
+                        ('avtr_owl', 'Owl', '2026-01-05T20:00:00.000Z', '2026-01-05T20:30:00.000Z', NULL);",
+            )
+            .unwrap();
 
         let root = std::env::temp_dir().join(format!("anonymous-vrx-export-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -391,6 +419,11 @@ mod tests {
         assert!(visits.contains(",,,Quiet Pier,wrld_a,"), "{visits}");
         assert!(visits.contains(",Europe,wrld_a:1~region(eu),1"), "{visits}");
         assert!(root.join(&info.name).join("about this export.txt").is_file());
+        let worn = fs::read_to_string(root.join(&info.name).join("avatars worn.csv")).unwrap();
+        let line = |id: &str| worn.lines().find(|l| l.contains(id)).unwrap().to_string();
+        // Minutes is the fifth column; the VRCX row takes its kept time.
+        assert_eq!(line("avtr_fox").split(',').nth(4), Some("90"), "{worn}");
+        assert_eq!(line("avtr_owl").split(',').nth(4), Some("30"), "{worn}");
 
         // Nothing asked for: no folder.
         assert!(create(&root, &store, &[]).is_err());

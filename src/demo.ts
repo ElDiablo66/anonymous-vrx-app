@@ -204,9 +204,9 @@ const demoNames = new Map<string, string>();
 const demoFavFriends = [{ id: "fvrt_f1", favoriteId: "usr_demo_2", tags: ["group_0"] }];
 const demoLocal: LocalFavorite[] = [];
 const demoAvatars: AvatarWorn[] = [
-  { avatarId: "avtr_demo_Robot", name: "Robot", authorId: "usr_demo_me", authorName: "Rook", image: "", releaseStatus: "public", lastWorn: new Date(Date.now() - 20 * 60_000).toISOString(), times: 6, seconds: 5 * 3600, secondsInGame: Math.round((5 * 3600) * 0.7), visits: 4, lastInGame: ago(35) },
-  { avatarId: "avtr_demo_Fox", name: "Sunset Fox", authorId: "usr_demo_4", authorName: "Rook", image: "", releaseStatus: "public", lastWorn: new Date(Date.now() - 26 * 3600_000).toISOString(), times: 2, seconds: 3 * 3600 + 1200, secondsInGame: Math.round((3 * 3600 + 1200) * 0.7), visits: 4, lastInGame: ago(35) },
-  { avatarId: "avtr_demo_Knight", name: "Knight", authorId: "usr_demo_5", authorName: "Tamsin", image: "", releaseStatus: "public", lastWorn: new Date(Date.now() - 5 * 24 * 3600_000).toISOString(), times: 1, seconds: 900, secondsInGame: 630, visits: 4, lastInGame: ago(35) },
+  { avatarId: "avtr_demo_Robot", name: "Robot", authorId: "usr_demo_me", authorName: "Rook", image: "", releaseStatus: "public", lastWorn: new Date(Date.now() - 20 * 60_000).toISOString(), times: 6, seconds: 5 * 3600, secondsInGame: Math.round((5 * 3600) * 0.7), visits: 4, lastInGame: ago(35), importedSeconds: 0, wearing: true },
+  { avatarId: "avtr_demo_Fox", name: "Sunset Fox", authorId: "usr_demo_4", authorName: "Rook", image: "", releaseStatus: "public", lastWorn: new Date(Date.now() - 26 * 3600_000).toISOString(), times: 2, seconds: 3 * 3600 + 1200, secondsInGame: Math.round((3 * 3600 + 1200) * 0.7), visits: 4, lastInGame: ago(35), importedSeconds: 0, wearing: false },
+  { avatarId: "avtr_demo_Knight", name: "Knight", authorId: "usr_demo_5", authorName: "Tamsin", image: "", releaseStatus: "public", lastWorn: new Date(Date.now() - 5 * 24 * 3600_000).toISOString(), times: 1, seconds: 900, secondsInGame: 630, visits: 4, lastInGame: ago(35), importedSeconds: 0, wearing: false },
 ];
 const demoNotes = new Map<string, string>([["usr_demo_1", "Met at the pier. Plays drums."]]);
 
@@ -511,6 +511,16 @@ export const demoBackend: Backend = {
     return Math.max(30, gb);
   },
   async setVrNotices() {},
+  async setVrOverlay() {},
+  async vrOverlayNotice() {},
+  async vrOverlayWrist() {},
+  async vrOverlayDashboard() {},
+  async vrOverlayStatus() {
+    return "Waiting for SteamVR to start.";
+  },
+  async vrOverlayTryNative() {
+    return "The app is not in SteamVR right now. Switch on a panel and start SteamVR first.";
+  },
   async testVrNotice(rules) {
     return [
       ...(rules.xs ? [{ target: "XSOverlay", ok: true, problem: "" }] : []),
@@ -540,6 +550,7 @@ export const demoBackend: Backend = {
       friendsSince: ago(60 * 24 * 400),
       together: { times: 7, seconds: 5 * 3600 + 1260, first: ago(60 * 24 * 40), last: ago(55) },
       feed: feed.filter((i) => i.userId === userId).slice(0, 20),
+      recordRead: true,
       raw: {
         id: userId,
         displayName: f.displayName,

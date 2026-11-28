@@ -51,6 +51,8 @@ export function MyStatus({ me, onSaved, onClose, onEdit }: { me: Me; onSaved: (m
   const nowLabel = now?.[1] ?? (me.status === "offline" ? "Offline or invisible" : me.status);
   const picked = choices.find(([v]) => v === status);
   const changed = status !== (me.status || "active") || text.trim() !== me.statusDescription;
+  // VRChat only takes one of the four, so a status such as offline has to be swapped for one before saving.
+  const canSave = changed && picked !== undefined;
 
   useEscape(onClose);
 
@@ -151,7 +153,7 @@ export function MyStatus({ me, onSaved, onClose, onEdit }: { me: Me; onSaved: (m
             <input ref={field} value={text} maxLength={32} onChange={(e) => {
                 setText(e.target.value);
                 setTouched(true);
-              }} onKeyDown={(e) => e.key === "Enter" && !busy && changed && void save()} placeholder="What you are up to" />
+              }} onKeyDown={(e) => e.key === "Enter" && !busy && canSave && void save()} placeholder="What you are up to" />
             <small aria-live="polite">{32 - text.length}</small>
             {text && (
               <button type="button" className="my-status-clear" aria-label="Clear the status text" onClick={() => {
@@ -184,6 +186,7 @@ export function MyStatus({ me, onSaved, onClose, onEdit }: { me: Me; onSaved: (m
           </div>
         )}
 
+        {changed && !picked && <p className="status-rule-note">Pick a status first.</p>}
         {rule.fit && rule.holding && <p className="status-rule-note">A status rule set this. What you save here stays until no rule fits any more.</p>}
         {problem && (
           <p className="banner" role="alert">
@@ -208,7 +211,7 @@ export function MyStatus({ me, onSaved, onClose, onEdit }: { me: Me; onSaved: (m
           </span>
           <span className="my-status-buttons">
             <button onClick={onClose}>Cancel</button>
-            <button className="go" disabled={busy || !changed} onClick={() => void save()}>
+            <button className="go" disabled={busy || !canSave} onClick={() => void save()}>
               {busy ? "Saving" : "Save"}
             </button>
           </span>

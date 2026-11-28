@@ -63,7 +63,10 @@ export interface Settings {
   profileBackdrop: boolean;
   /** How strong that tint is, 0.1 to 0.9. */
   profileBackdropStrength: number;
-  /** Take over what is new in VRCX's history by itself. */
+  /**
+   * Take over what is new in VRCX's history by itself. Off for new installs: it only starts
+   * after the first full import was made by hand, which can take a while on a long history.
+   */
   vrcxAuto: boolean;
   /** When a full instance I waited for has room: join it by itself, without asking me first. */
   queueJoin: boolean;
@@ -80,6 +83,18 @@ export interface Settings {
   vrWrist: "off" | "left" | "right";
   /** How wide that feed is, in metres. */
   vrWristSize: number;
+  /** Where on the arm the feed sits: up the arm (above XSOverlay's wrist panel), on the back of the wrist, or on its inside. */
+  vrWristSpot: "forearm" | "wrist" | "inside";
+  /** Centimetres along the arm on top of that, towards the elbow when more than 0. */
+  vrWristShift: number;
+  /** Which place a notice tries first when XSOverlay and the app's own panel are both on. */
+  vrRoute: "xs" | "own";
+  /** The app's own notice floats over the middle of the view (clear of XSOverlay's) or under it. */
+  vrNoticeSpot: "above" | "low";
+  /** A tab of the app's own in SteamVR's dashboard. */
+  vrDashboard: boolean;
+  /** SteamVR's own news as notices: battery low, tracking lost, a device switched off, SteamVR closing. */
+  vrDevices: boolean;
   /** `pc` follows Windows; otherwise the day a week starts on in the events calendar. */
   weekStart: "pc" | "mon" | "sun" | "sat";
   /** How many seconds a notice stays up in XSOverlay and in the app's own panel. */
@@ -187,7 +202,8 @@ function read(key: string): string | null {
   }
 }
 
-function load(): Settings {
+/** What every setting is before anything was chosen. */
+function defaultSettings(): Settings {
   // Choices made before the settings screen existed are carried over once.
   const oldSize = Number(read("size-picked"));
   const oldAlerts = read("alerts") !== "off";
@@ -254,7 +270,7 @@ function load(): Settings {
     profileCosmetics: true,
     profileBackdrop: true,
     profileBackdropStrength: 0.5,
-    vrcxAuto: true,
+    vrcxAuto: false,
     queueJoin: false,
     statusRulesOn: false,
     statusRules: [],
@@ -265,40 +281,116 @@ function load(): Settings {
     vrOpacity: 1,
     vrOwn: false,
     vrWrist: "off",
-    vrWristSize: 0.16,
+    vrWristSize: 0.18,
+    vrWristSpot: "forearm",
+    vrWristShift: 0,
+    vrRoute: "own",
+    vrNoticeSpot: "above",
+    vrDashboard: false,
+    vrDevices: false,
     weekStart: "pc",
   };
+  return defaults;
+}
+
+/** A number between two others, both included. Text that looks like a number does not count. */
+const within = (v: unknown, low: number, high: number): boolean => typeof v === "number" && v >= low && v <= high;
+/** Text, or null where the setting allows nothing. */
+const textOrNull = (v: unknown): boolean => v === null || typeof v === "string";
+
+/**
+ * Settings as read from the window's store, the settings file or a restored backup, laid over
+ * `base`, with anything this version does not know put right. Running it twice changes nothing.
+ */
+export function cleanSettings(raw: unknown, base: Settings = defaultSettings()): Settings {
+  const defaults = defaultSettings();
+  const stored = (raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}) as Partial<Settings>;
+  const merged = { ...base, ...stored };
+  // Settings saved before the three-way choice existed keep what they meant.
+  if (stored.discordPrivateMode === undefined && stored.discordPrivate) merged.discordPrivateMode = "show";
+  if (merged.size !== null && !sizes.includes(merged.size)) merged.size = null;
+  // A value this version does not know (an older or newer file, a restored backup) falls
+  // back to the default, so the window never tries to draw a look that is not there.
+  if (typeof merged.background !== "string" || !Object.prototype.hasOwnProperty.call(themeColours, merged.background)) merged.background = defaults.background;
+  if (!["off", "ask", "auto"].includes(merged.rejoin)) merged.rejoin = defaults.rejoin;
+  if (!["auto", "desktop", "vr"].includes(merged.launchMode)) merged.launchMode = defaults.launchMode;
+  if (!merged.alertPeople || typeof merged.alertPeople !== "object") merged.alertPeople = {};
+  if (!Array.isArray(merged.alertGroupsOff)) merged.alertGroupsOff = [];
+  if (!merged.feedHidden || typeof merged.feedHidden !== "object") merged.feedHidden = {};
+  if (!["auto", "tell", "off"].includes(merged.updates)) merged.updates = defaults.updates;
+  if (!["pc", "12", "24"].includes(merged.timeFormat)) merged.timeFormat = defaults.timeFormat;
+  if (!["words", "iso"].includes(merged.dateFormat)) merged.dateFormat = defaults.dateFormat;
+  if (!["rank", "person", "plain"].includes(merged.nameColours)) merged.nameColours = defaults.nameColours;
+  if (!merged.rankColours || typeof merged.rankColours !== "object") merged.rankColours = {};
+  if (typeof merged.headingFont !== "string" || !merged.headingFont.trim()) merged.headingFont = defaults.headingFont;
+  if (typeof merged.textFont !== "string" || !merged.textFont.trim()) merged.textFont = defaults.textFont;
+  if (!within(merged.profileBackdropStrength, 0.1, 0.9)) merged.profileBackdropStrength = defaults.profileBackdropStrength;
+  if (!within(merged.vrSeconds, 1, 30)) merged.vrSeconds = defaults.vrSeconds;
+  if (!within(merged.vrOpacity, 0.2, 1)) merged.vrOpacity = defaults.vrOpacity;
+  if (!["off", "left", "right"].includes(merged.vrWrist)) merged.vrWrist = defaults.vrWrist;
+  if (!within(merged.vrWristSize, 0.08, 0.4)) merged.vrWristSize = defaults.vrWristSize;
+  // The arm picture grew from 720 to 1024 px in 0.1.10, so the sizes saved before then move up one step.
+  merged.vrWristSize = ({ 0.12: 0.14, 0.16: 0.18, 0.22: 0.24 } as Record<number, number>)[merged.vrWristSize] ?? merged.vrWristSize;
+  if (!["forearm", "wrist", "inside"].includes(merged.vrWristSpot)) merged.vrWristSpot = defaults.vrWristSpot;
+  if (!within(merged.vrWristShift, -6, 12)) merged.vrWristShift = defaults.vrWristShift;
+  if (!["xs", "own"].includes(merged.vrRoute)) merged.vrRoute = defaults.vrRoute;
+  if (!["above", "low"].includes(merged.vrNoticeSpot)) merged.vrNoticeSpot = defaults.vrNoticeSpot;
+  if (typeof merged.vrDashboard !== "boolean") merged.vrDashboard = defaults.vrDashboard;
+  if (typeof merged.vrDevices !== "boolean") merged.vrDevices = defaults.vrDevices;
+  if (!["pc", "mon", "sun", "sat"].includes(merged.weekStart)) merged.weekStart = defaults.weekStart;
+  if (!["ask", "tray", "quit"].includes(merged.onClose)) merged.onClose = defaults.onClose;
+  if (!["roomy", "tight"].includes(merged.rows)) merged.rows = defaults.rows;
+  if (!["rows", "tight"].includes(merged.cardPacking)) merged.cardPacking = defaults.cardPacking;
+  if (!["hush", "none", "show"].includes(merged.discordPrivateMode)) merged.discordPrivateMode = defaults.discordPrivateMode;
+  if (!["plain", "night"].includes(merged.discordStyle)) merged.discordStyle = defaults.discordStyle;
+  // The look is drawn from these, so one of the wrong kind would stop the window from drawing.
+  if (!textOrNull(merged.accent)) merged.accent = null;
+  if (!textOrNull(merged.accent2)) merged.accent2 = null;
+  if (!textOrNull(merged.textColor)) merged.textColor = null;
+  if (!textOrNull(merged.softTextColor)) merged.softTextColor = null;
+  if (typeof merged.bgA !== "string") merged.bgA = defaults.bgA;
+  if (typeof merged.bgB !== "string") merged.bgB = defaults.bgB;
+  if (!within(merged.imageDim, 0, 0.85)) merged.imageDim = defaults.imageDim;
+  merged.statusRules = cleanRules(merged.statusRules);
+  return merged;
+}
+
+/**
+ * Where the window keeps, per account, the time the next automatic VRCX look reads from. It is
+ * only there once the first full import was made by hand, so the automatic look never reads a
+ * whole long history in the background by itself.
+ */
+export const vrcxMarkKey = (meId: string) => `vrcx-mark:${meId}`;
+/** VRCX's file stamp at the last look, so a file that has not changed is not read again. */
+export const vrcxSeenKey = (meId: string) => `vrcx-seen:${meId}`;
+
+/** Whether this account's VRCX history was brought over once already, so the automatic look may run. */
+export function vrcxImportedBefore(meId: string): boolean {
   try {
-    const stored = JSON.parse(read("settings") ?? "{}") as Partial<Settings>;
-    const merged = { ...defaults, ...stored };
-    // Settings saved before the three-way choice existed keep what they meant.
-    if (stored.discordPrivateMode === undefined && stored.discordPrivate) merged.discordPrivateMode = "show";
-    if (merged.size !== null && !sizes.includes(merged.size)) merged.size = null;
-    // A value this version does not know (an older or newer file, a restored backup) falls
-    // back to the default, so the window never tries to draw a look that is not there.
-    if (!(merged.background in themeColours)) merged.background = defaults.background;
-    if (!["off", "ask", "auto"].includes(merged.rejoin)) merged.rejoin = defaults.rejoin;
-    if (!["auto", "desktop", "vr"].includes(merged.launchMode)) merged.launchMode = defaults.launchMode;
-    if (!merged.alertPeople || typeof merged.alertPeople !== "object") merged.alertPeople = {};
-    if (!Array.isArray(merged.alertGroupsOff)) merged.alertGroupsOff = [];
-    if (!merged.feedHidden || typeof merged.feedHidden !== "object") merged.feedHidden = {};
-    if (!["auto", "tell", "off"].includes(merged.updates)) merged.updates = defaults.updates;
-    if (!["pc", "12", "24"].includes(merged.timeFormat)) merged.timeFormat = defaults.timeFormat;
-    if (!["words", "iso"].includes(merged.dateFormat)) merged.dateFormat = defaults.dateFormat;
-    if (!["rank", "person", "plain"].includes(merged.nameColours)) merged.nameColours = defaults.nameColours;
-    if (!merged.rankColours || typeof merged.rankColours !== "object") merged.rankColours = {};
-    if (typeof merged.headingFont !== "string" || !merged.headingFont.trim()) merged.headingFont = defaults.headingFont;
-    if (typeof merged.textFont !== "string" || !merged.textFont.trim()) merged.textFont = defaults.textFont;
-    if (!(merged.profileBackdropStrength >= 0.1 && merged.profileBackdropStrength <= 0.9)) merged.profileBackdropStrength = defaults.profileBackdropStrength;
-    if (!(merged.vrSeconds >= 1 && merged.vrSeconds <= 30)) merged.vrSeconds = defaults.vrSeconds;
-    if (!(merged.vrOpacity >= 0.2 && merged.vrOpacity <= 1)) merged.vrOpacity = defaults.vrOpacity;
-    if (!["off", "left", "right"].includes(merged.vrWrist)) merged.vrWrist = defaults.vrWrist;
-    if (!(merged.vrWristSize >= 0.08 && merged.vrWristSize <= 0.4)) merged.vrWristSize = defaults.vrWristSize;
-    if (!["pc", "mon", "sun", "sat"].includes(merged.weekStart)) merged.weekStart = defaults.weekStart;
-    merged.statusRules = cleanRules(merged.statusRules);
-    return merged;
+    return !!localStorage.getItem(vrcxMarkKey(meId));
   } catch {
-    return defaults;
+    return false;
+  }
+}
+
+/**
+ * Notes a VRCX import that went through: the next automatic look reads only what VRCX wrote from
+ * two days before this one started, and skips the file while its stamp stays `stamp`.
+ */
+export function noteVrcxImport(meId: string, started: number, stamp: string) {
+  try {
+    if (stamp) localStorage.setItem(vrcxSeenKey(meId), stamp);
+    localStorage.setItem(vrcxMarkKey(meId), new Date(started - 2 * 86_400_000).toISOString());
+  } catch {
+    // Without storage nothing is noted, and the automatic look does not run.
+  }
+}
+
+function load(): Settings {
+  try {
+    return cleanSettings(JSON.parse(read("settings") ?? "{}"));
+  } catch {
+    return defaultSettings();
   }
 }
 
@@ -310,7 +402,7 @@ export function live(): Settings {
 
 /** A font name as CSS wants it: quoted, with nothing that could end the quote. */
 function fontName(name: string): string {
-  return `"${name.replace(/["\\;{}<>]/g, "").trim().slice(0, 80)}"`;
+  return `"${String(name).replace(/["\\;{}<>]/g, "").trim().slice(0, 80)}"`;
 }
 
 /** Every avatar database a search asks: the main one first, then the extra ones switched on. */
@@ -347,7 +439,9 @@ const IMAGE_KEY = "background-picture";
 
 function applyTheme(s: Settings, picture: string) {
   const root = document.documentElement;
-  const base = themeColours[s.background];
+  // Settings are cleaned when they are read, but a look this version does not know must never
+  // stop the window from drawing, so the defaults stand in here as well.
+  const base = themeColours[s.background] ?? themeColours.sunset;
   const accent = s.accent ?? base.accent;
   const accent2 = s.accent2 ?? base.accent2;
   root.dataset.bg = s.background;
@@ -370,8 +464,8 @@ function applyTheme(s: Settings, picture: string) {
   root.dataset.slant = s.headingSlant ? "on" : "off";
   root.dataset.names = s.nameColours;
   for (const key of Object.keys(rankDefaults) as RankKey[]) {
-    const own = s.rankColours[key];
-    set(`--rank-${key}`, own && /^#[0-9a-f]{6}$/i.test(own) ? own : null);
+    const own = (s.rankColours ?? {})[key];
+    set(`--rank-${key}`, typeof own === "string" && /^#[0-9a-f]{6}$/i.test(own) ? own : null);
   }
 }
 
@@ -432,8 +526,10 @@ export function useSettings() {
       .then((text) => {
         if (!alive) return;
         if (text) {
-          const kept = JSON.parse(text) as Partial<Settings>;
-          setSettings((old) => ({ ...old, ...kept }));
+          const kept: unknown = JSON.parse(text);
+          // The file gets the same checks and moves to newer values as the window's own store,
+          // or an old or unknown value in it would come back at every start.
+          setSettings((old) => cleanSettings(kept, old));
         }
       })
       .catch(() => {})
@@ -447,19 +543,24 @@ export function useSettings() {
     };
   }, []);
 
+  /** Writes the given settings to the window's store and, once it was read, to the file. */
+  const write = (s: Settings): Promise<void> => {
+    const text = JSON.stringify(s);
+    try {
+      localStorage.setItem("settings", text);
+    } catch {
+      // Without storage the choices last until the window closes.
+    }
+    // Not before the file was read, or the defaults would overwrite it.
+    return fileRead.current ? backend.saveSettings(text).catch(() => {}) : Promise.resolve();
+  };
+  const latest = useRef(settings);
+  latest.current = settings;
+
   // Saved a moment after the last change, so dragging a colour does not write a file
   // dozens of times a second. Closing the window saves at once.
   useEffect(() => {
-    const save = () => {
-      const text = JSON.stringify(settings);
-      try {
-        localStorage.setItem("settings", text);
-      } catch {
-        // Without storage the choices last until the window closes.
-      }
-      // Not before the file was read, or the defaults would overwrite it.
-      if (fileRead.current) void backend.saveSettings(text).catch(() => {});
-    };
+    const save = () => void write(settings);
     const later = window.setTimeout(save, 350);
     window.addEventListener("pagehide", save);
     return () => {
@@ -502,5 +603,15 @@ export function useSettings() {
   };
 
   const change = (patch: Partial<Settings>) => setSettings((old) => ({ ...old, ...patch }));
-  return { settings, change, size, fitted, picture, setPicture };
+  /**
+   * Makes a change and writes everything at once, without the usual short wait. For the moment
+   * before the app quits, when the wait would never end. Done when the file is written.
+   */
+  const saveNow = (patch: Partial<Settings> = {}): Promise<void> => {
+    const next = { ...latest.current, ...patch };
+    latest.current = next;
+    setSettings((old) => ({ ...old, ...patch }));
+    return write(next);
+  };
+  return { settings, change, saveNow, size, fitted, picture, setPicture };
 }

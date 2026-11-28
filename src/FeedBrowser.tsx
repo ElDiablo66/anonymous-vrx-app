@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { backend, type FeedItem, type Friend, type World } from "./backend";
+import { useEffect, useRef, useState } from "react";
+import { backend, errorText, type FeedItem, type Friend, type World } from "./backend";
 import { Avatar, clock, dayLabel } from "./bits";
 import { filters, sentence } from "./Activity";
 import { openProfile } from "./Profile";
@@ -13,6 +13,10 @@ export function FeedBrowser({ friends, worlds }: { friends: Map<string, Friend>;
   const [day, setDay] = useState("");
   const [items, setItems] = useState<FeedItem[] | null>(null);
   const [more, setMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [olderProblem, setOlderProblem] = useState("");
+  // Goes up each time the list is read afresh, so older entries for a list that was replaced are dropped.
+  const reads = useRef(0);
 
   const kinds = filters.find((f) => f.id === filter)?.kinds ?? [];
   // The end of the chosen day on this PC's clock, as the UTC time the feed is stored in.
@@ -33,10 +37,18 @@ export function FeedBrowser({ friends, worlds }: { friends: Map<string, Friend>;
         .searchFeed(query, kinds, undefined, until, PAGE)
         .then((list) => {
           if (!alive) return;
+          reads.current += 1;
           setItems(list);
+          setOlderProblem("");
           setMore(list.length === PAGE);
         })
-        .catch(() => alive && setItems([]));
+        .catch(() => {
+          if (!alive) return;
+          // The empty list replaces the old one too, so older entries still being read for it are dropped.
+          reads.current += 1;
+          setItems([]);
+          setMore(false);
+        });
     }, 250);
     return () => {
       alive = false;
@@ -59,10 +71,25 @@ export function FeedBrowser({ friends, worlds }: { friends: Map<string, Friend>;
   }, [plain]);
 
   async function loadOlder() {
-    if (!items || items.length === 0) return;
-    const older = await backend.searchFeed(query, kinds, items[items.length - 1].id, until, PAGE);
-    setItems([...items, ...older]);
-    setMore(older.length === PAGE);
+    if (!items || items.length === 0 || loading) return;
+    const read = reads.current;
+    setLoading(true);
+    setOlderProblem("");
+    try {
+      const older = await backend.searchFeed(query, kinds, items[items.length - 1].id, until, PAGE);
+      if (read !== reads.current) return;
+      // New entries may have slid in at the top while this ran, so add to the list as it is now.
+      setItems((old) => {
+        const base = old ?? [];
+        const seen = new Set(base.map((i) => i.id));
+        return [...base, ...older.filter((o) => !seen.has(o.id))];
+      });
+      setMore(older.length === PAGE);
+    } catch (err) {
+      setOlderProblem(`Could not read older entries. Try again. ${errorText(err)}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   let lastDay = "";
@@ -131,9 +158,14 @@ export function FeedBrowser({ friends, worlds }: { friends: Map<string, Friend>;
           })}
         </ol>
       )}
+      {olderProblem && (
+        <p className="setting-hint" role="status">
+          {olderProblem}
+        </p>
+      )}
       {more && (
-        <button className="older" onClick={() => void loadOlder()}>
-          Show older
+        <button className="older" disabled={loading} onClick={() => void loadOlder()}>
+          {loading ? "Reading" : "Show older"}
         </button>
       )}
     </div>

@@ -103,7 +103,8 @@ CREATE TABLE IF NOT EXISTS avatar_history (
     image          TEXT NOT NULL DEFAULT '',
     release_status TEXT NOT NULL DEFAULT '',
     worn_at        TEXT NOT NULL,
-    ended_at       TEXT
+    ended_at       TEXT,
+    imported_seconds INTEGER
 );
 CREATE INDEX IF NOT EXISTS avatar_history_avatar ON avatar_history(avatar_id);
 CREATE TABLE IF NOT EXISTS local_favorites (
@@ -128,6 +129,9 @@ CREATE INDEX IF NOT EXISTS sightings_user ON sightings(user_id, id);
 CREATE INDEX IF NOT EXISTS sightings_name ON sightings(display_name, user_id);
 CREATE INDEX IF NOT EXISTS visits_world ON visits(world_id);
 CREATE INDEX IF NOT EXISTS visits_name ON visits(world_name);
+-- Finds the stay a moment falls in (a photo, a video) without reading every stay. The schema
+-- runs on every open, so an older history file gets it the first time it is opened.
+CREATE INDEX IF NOT EXISTS visits_joined ON visits(joined_at, id);
 CREATE TABLE IF NOT EXISTS videos (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     visit_id     INTEGER,
@@ -139,6 +143,10 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 CREATE INDEX IF NOT EXISTS videos_visit ON videos(visit_id);
 CREATE INDEX IF NOT EXISTS feed_friend_added ON feed(user_id, at) WHERE kind = 'friendAdded';
+-- Let a VRCX import find the entries one person already has of one kind, and the stays
+-- already here in one instance, without reading the whole list for every line it brings.
+CREATE INDEX IF NOT EXISTS feed_user_kind ON feed(user_id, kind, at);
+CREATE INDEX IF NOT EXISTS visits_location ON visits(location, joined_at);
 CREATE TABLE IF NOT EXISTS video_titles (
     video_id   TEXT PRIMARY KEY,
     title      TEXT NOT NULL DEFAULT '',
@@ -241,7 +249,14 @@ pub struct AvatarWorn {
     pub last_worn: String,
     pub times: i64,
     /// Time between switching to it and switching away, each stay capped at 12 hours.
+    /// Only wearings this app recorded.
     pub seconds: i64,
+    /// The total wear time VRCX had noted for it when it was brought over. VRCX keeps no
+    /// times for that, so it says nothing about which world stays it was worn in and is kept
+    /// apart from the numbers below.
+    pub imported_seconds: i64,
+    /// Whether it is the avatar being worn now, as far as this app knows.
+    pub wearing: bool,
     /// The part of that time I was inside a world, from the world history. This is the wear
     /// time people mean: hours with VRChat closed do not count.
     pub seconds_in_game: i64,
@@ -413,20 +428,28 @@ fn visit_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Visit> {
 
 /// Ends every visit that is still open. With no time given, a visit ends at
 /// the last thing seen in it, which is the best guess after a crash.
+///
+/// A stay never ends before it began. When the clocks go back, a log line read after the
+/// change can carry an earlier time than the join; the end is then kept at the join.
 fn close_visits(db: &Connection, at: Option<&str>) -> rusqlite::Result<()> {
     match at {
         Some(at) => {
             db.execute(
-                "UPDATE sightings SET left_at = ?1 WHERE left_at IS NULL
-                 AND visit_id IN (SELECT id FROM visits WHERE left_at IS NULL)",
+                "UPDATE sightings SET left_at = CASE WHEN julianday(?1) < julianday(joined_at) THEN joined_at ELSE ?1 END
+                 WHERE left_at IS NULL AND visit_id IN (SELECT id FROM visits WHERE left_at IS NULL)",
                 params![at],
             )?;
-            db.execute("UPDATE visits SET left_at = ?1 WHERE left_at IS NULL", params![at])?;
+            db.execute(
+                "UPDATE visits SET left_at = CASE WHEN julianday(?1) < julianday(joined_at) THEN joined_at ELSE ?1 END
+                 WHERE left_at IS NULL",
+                params![at],
+            )?;
         }
         None => {
             db.execute(
                 "UPDATE visits SET left_at = COALESCE(
-                    (SELECT MAX(COALESCE(s.left_at, s.joined_at)) FROM sightings s WHERE s.visit_id = visits.id),
+                    (SELECT MAX(COALESCE(s.left_at, s.joined_at)) FROM sightings s WHERE s.visit_id = visits.id
+                     AND julianday(COALESCE(s.left_at, s.joined_at)) >= julianday(visits.joined_at)),
                     joined_at)
                  WHERE left_at IS NULL",
                 [],
@@ -439,6 +462,49 @@ fn close_visits(db: &Connection, at: Option<&str>) -> rusqlite::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Gives an older history file the `imported_seconds` column on avatar_history, once.
+///
+/// Before it, an avatar brought over from VRCX was written as made-up wearings of twelve hours
+/// each, ending when it was last put on. Those claimed world stays they had nothing to do with.
+/// They are told apart from wearings this app recorded by how they end: a wearing recorded
+/// here always ends at the moment the next avatar was put on, so another avatar's row starts
+/// at exactly that time. Rows with no such neighbour are folded into one imported row per
+/// avatar, keeping their total time.
+fn upgrade_avatar_history(db: &Connection) -> rusqlite::Result<()> {
+    let has_column: i64 = db.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('avatar_history') WHERE name = 'imported_seconds'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_column > 0 {
+        return Ok(());
+    }
+    let tx = db.unchecked_transaction()?;
+    tx.execute_batch(
+        "ALTER TABLE avatar_history ADD COLUMN imported_seconds INTEGER;
+         CREATE TEMP TABLE guessed AS
+             SELECT h.id, h.avatar_id, h.worn_at, h.ended_at FROM avatar_history h
+             WHERE h.ended_at IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM avatar_history o WHERE o.worn_at = h.ended_at AND o.avatar_id != h.avatar_id);
+         CREATE TEMP TABLE brought AS
+             SELECT g.avatar_id,
+                    (SELECT COALESCE(MAX(name), '') FROM avatar_history WHERE avatar_id = g.avatar_id) AS name,
+                    (SELECT COALESCE(MAX(author_id), '') FROM avatar_history WHERE avatar_id = g.avatar_id) AS author_id,
+                    (SELECT COALESCE(MAX(author_name), '') FROM avatar_history WHERE avatar_id = g.avatar_id) AS author_name,
+                    (SELECT COALESCE(MAX(image), '') FROM avatar_history WHERE avatar_id = g.avatar_id) AS image,
+                    (SELECT COALESCE(MAX(release_status), '') FROM avatar_history WHERE avatar_id = g.avatar_id) AS release_status,
+                    strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(g.ended_at))) AS last,
+                    CAST(ROUND(SUM(MAX(0, (julianday(g.ended_at) - julianday(g.worn_at)) * 86400))) AS INTEGER) AS seconds
+             FROM guessed g GROUP BY g.avatar_id;
+         DELETE FROM avatar_history WHERE id IN (SELECT id FROM guessed);
+         INSERT INTO avatar_history (avatar_id, name, author_id, author_name, image, release_status, worn_at, ended_at, imported_seconds)
+             SELECT avatar_id, name, author_id, author_name, image, release_status, last, last, seconds FROM brought ORDER BY julianday(last);
+         DROP TABLE guessed;
+         DROP TABLE brought;",
+    )?;
+    tx.commit()
 }
 
 fn now() -> String {
@@ -470,11 +536,27 @@ fn world_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<World> {
 
 impl Store {
     pub fn open(path: &Path) -> AppResult<Store> {
-        let db = Connection::open(path)?;
+        let mut db = Connection::open(path)?;
+        // A VRCX import writes through a second connection to the same file. A write that finds
+        // the file busy waits for it up to ten seconds instead of failing at once.
+        db.busy_timeout(std::time::Duration::from_secs(10))?;
+        // A transaction takes the write lock when it begins. One that read first and wanted to
+        // write later could otherwise fail outright when the other connection wrote in between,
+        // because waiting would not help it.
+        db.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
         add_fold(&db)?;
         db.pragma_update(None, "journal_mode", "WAL")?;
+        // After a big write the log file is cut back to this size, so it does not stay as
+        // large as the biggest job ever was while the app is open.
+        db.pragma_update(None, "journal_size_limit", 64 * 1024 * 1024)?;
         db.execute_batch(SCHEMA)?;
-        Ok(Store { db })
+        upgrade_avatar_history(&db)?;
+        let store = Store { db };
+        // An import that was cut off before it put the lists back in order of time is finished
+        // here. When nothing was left undone this is one quick look. If the file is busy just
+        // then, the history still opens and the next import finishes the job instead.
+        let _ = store.finish_renumber();
+        Ok(store)
     }
 
     /// Opens a history file that must already exist, without changing it.
@@ -491,6 +573,14 @@ impl Store {
         add_fold(&db)?;
         db.execute_batch(SCHEMA)?;
         Ok(Store { db })
+    }
+
+    /// Runs plain SQL on a test store, for tests in other files that need rows no public
+    /// function writes.
+    #[cfg(test)]
+    pub fn run_sql(&self, sql: &str) -> AppResult<()> {
+        self.db.execute_batch(sql)?;
+        Ok(())
     }
 
     /// Replaces the cached friend list with the given one.
@@ -758,11 +848,15 @@ impl Store {
         let mut args: Vec<String> = vec![before.unwrap_or(i64::MAX).to_string(), until.unwrap_or("9999").to_string()];
         let q = query.trim();
         if !q.is_empty() {
-            let pattern = like_pattern(q);
-            sql.push_str(" AND (display_name LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\' OR previous LIKE ? ESCAPE '\\'");
+            // fold() and the lower-case pattern ignore case in every alphabet, as the other
+            // history searches do; LIKE alone only folds A to Z.
+            let pattern = like_pattern(&q.to_lowercase());
+            sql.push_str(
+                " AND (fold(display_name) LIKE ? ESCAPE '\\' OR fold(detail) LIKE ? ESCAPE '\\' OR fold(previous) LIKE ? ESCAPE '\\'",
+            );
             args.extend([pattern.clone(), pattern.clone(), pattern.clone()]);
             // World names live in their own table; match those worlds by id.
-            let mut stmt = self.db.prepare("SELECT world_id FROM worlds WHERE name LIKE ?1 ESCAPE '\\' LIMIT 40")?;
+            let mut stmt = self.db.prepare("SELECT world_id FROM worlds WHERE fold(name) LIKE ?1 ESCAPE '\\' LIMIT 40")?;
             let ids = stmt
                 .query_map(params![pattern], |r| r.get::<_, String>(0))?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -830,43 +924,22 @@ impl Store {
         Ok(())
     }
 
-    /// Avatars I wore, most recent first, one row per avatar.
+    /// Avatars I wore, one row per avatar: the one on now first, then by when each was last
+    /// put on. That time decides, not the order rows were written in, because history brought
+    /// over from VRCX is written after wearings this app already recorded.
     pub fn avatar_history(&self, limit: u32) -> AppResult<Vec<AvatarWorn>> {
         let mut stmt = self.db.prepare(
             "SELECT avatar_id, MAX(name), MAX(author_id), MAX(author_name), MAX(image), MAX(release_status),
                     MAX(worn_at), COUNT(*),
-                    CAST(SUM(MIN(43200, MAX(0,
-                        (julianday(COALESCE(ended_at, ?1)) - julianday(worn_at)) * 86400))) AS INTEGER)
-             FROM avatar_history GROUP BY avatar_id ORDER BY MAX(id) DESC LIMIT ?2",
+                    CAST(SUM(CASE WHEN imported_seconds IS NULL THEN MIN(43200, MAX(0,
+                        (julianday(COALESCE(ended_at, ?1)) - julianday(worn_at)) * 86400)) ELSE 0 END) AS INTEGER),
+                    COALESCE(SUM(imported_seconds), 0),
+                    MAX(ended_at IS NULL AND imported_seconds IS NULL)
+             FROM avatar_history GROUP BY avatar_id
+             ORDER BY MAX(ended_at IS NULL AND imported_seconds IS NULL) DESC, MAX(julianday(worn_at)) DESC, MAX(id) DESC
+             LIMIT ?2",
         )?;
-        // For each avatar, the seconds its wearing times overlap my stays in worlds. A stay or
-        // a wearing that was never closed runs until now, and each overlap counts 12 hours at most.
-        let mut in_game = std::collections::HashMap::new();
-        {
-            let mut overlap = self.db.prepare(
-                "SELECT h.avatar_id,
-                        CAST(ROUND(SUM(MIN(43200, MAX(0,
-                            (MIN(julianday(COALESCE(h.ended_at, ?1)), julianday(COALESCE(v.left_at, ?1)))
-                             - MAX(julianday(h.worn_at), julianday(v.joined_at))) * 86400)))) AS INTEGER)
-                        , COUNT(DISTINCT v.id),
-                        strftime('%Y-%m-%dT%H:%M:%SZ', MAX(MIN(julianday(COALESCE(h.ended_at, ?1)), julianday(COALESCE(v.left_at, ?1)))))
-                 FROM avatar_history h
-                 JOIN visits v
-                   ON julianday(v.joined_at) < julianday(COALESCE(h.ended_at, ?1))
-                  AND julianday(COALESCE(v.left_at, ?1)) > julianday(h.worn_at)
-                 GROUP BY h.avatar_id",
-            )?;
-            let found = overlap.query_map(params![now()], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    (r.get::<_, Option<i64>>(1)?.unwrap_or(0), r.get::<_, i64>(2)?, r.get::<_, Option<String>>(3)?.unwrap_or_default()),
-                ))
-            })?;
-            for row in found {
-                let (id, facts) = row?;
-                in_game.insert(id, facts);
-            }
-        }
+        let in_game = self.avatar_time_in_worlds(&now())?;
         let rows = stmt.query_map(params![now(), limit.clamp(1, 1000)], |r| {
             let avatar_id: String = r.get(0)?;
             let (seconds_in_game, visits, last_in_game) = in_game.get(&avatar_id).cloned().unwrap_or_default();
@@ -883,9 +956,75 @@ impl Store {
                 last_worn: r.get(6)?,
                 times: r.get(7)?,
                 seconds: r.get::<_, Option<i64>>(8)?.unwrap_or(0),
+                imported_seconds: r.get(9)?,
+                wearing: r.get::<_, i64>(10)? != 0,
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// For each avatar, the seconds its wearing times overlap my stays in worlds, how many
+    /// stays that was, and the last moment of overlap. A stay or a wearing that was never
+    /// closed runs until `now`, and each overlap counts 12 hours at most. Rows brought over
+    /// from VRCX carry no real wearing times, so they claim no stays.
+    ///
+    /// Joining every wearing to every stay in SQL took seconds on a long history, so the stays
+    /// are sorted once by when they began and each wearing looks only at the stays that can
+    /// touch it. Times are turned into day numbers by SQLite itself, as the join did.
+    fn avatar_time_in_worlds(&self, now: &str) -> AppResult<std::collections::HashMap<String, (i64, i64, String)>> {
+        use std::collections::{HashMap, HashSet};
+        // A stay of more than a day is rare (one never closed, a crash); those are checked
+        // against every wearing, the rest only when they began at most a day before it.
+        const DAY: f64 = 1.0;
+        let mut short: Vec<(f64, f64, i64)> = Vec::new();
+        let mut long: Vec<(f64, f64, i64)> = Vec::new();
+        {
+            let mut stmt = self.db.prepare("SELECT id, julianday(joined_at), julianday(COALESCE(left_at, ?1)) FROM visits")?;
+            let mut rows = stmt.query(params![now])?;
+            while let Some(r) = rows.next()? {
+                // A time SQLite cannot read never overlaps anything, as in the join.
+                let (Some(from), Some(to)) = (r.get::<_, Option<f64>>(1)?, r.get::<_, Option<f64>>(2)?) else { continue };
+                let stay = (from, to, r.get::<_, i64>(0)?);
+                if to - from > DAY {
+                    long.push(stay);
+                } else {
+                    short.push(stay);
+                }
+            }
+        }
+        short.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Per avatar: the summed seconds, the stays it touched and the latest end of an overlap.
+        let mut found: HashMap<String, (f64, HashSet<i64>, f64)> = HashMap::new();
+        let mut stmt = self.db.prepare(
+            "SELECT avatar_id, julianday(worn_at), julianday(COALESCE(ended_at, ?1)) FROM avatar_history WHERE imported_seconds IS NULL",
+        )?;
+        let mut rows = stmt.query(params![now])?;
+        while let Some(r) = rows.next()? {
+            let (Some(on), Some(off)) = (r.get::<_, Option<f64>>(1)?, r.get::<_, Option<f64>>(2)?) else { continue };
+            let avatar: String = r.get(0)?;
+            // Short stays that ended after `on` began after `on` minus a day; the small margin
+            // keeps a stay of exactly one day that rounding pushed a hair over the line.
+            let first = short.partition_point(|s| s.0 < on - DAY - 1e-6);
+            let past = short.partition_point(|s| s.0 < off);
+            for &(from, to, id) in short[first..past].iter().chain(long.iter()) {
+                if !(from < off && to > on) {
+                    continue;
+                }
+                let end = off.min(to);
+                let seconds = ((end - on.max(from)) * 86400.0).clamp(0.0, 43200.0);
+                let entry = found.entry(avatar.clone()).or_insert_with(|| (0.0, HashSet::new(), f64::MIN));
+                entry.0 += seconds;
+                entry.1.insert(id);
+                entry.2 = entry.2.max(end);
+            }
+        }
+        let mut stamp = self.db.prepare("SELECT strftime('%Y-%m-%dT%H:%M:%SZ', ?1)")?;
+        let mut out = HashMap::new();
+        for (avatar, (seconds, stays, last)) in found {
+            let last: Option<String> = stamp.query_row(params![last], |r| r.get(0))?;
+            out.insert(avatar, (seconds.round() as i64, stays.len() as i64, last.unwrap_or_default()));
+        }
+        Ok(out)
     }
 
     /// How many separate visits I shared with each person, from the game log.
@@ -1526,8 +1665,10 @@ impl Store {
                     changed |= done > 0;
                 }
                 LogEvent::PlayerLeft { name, id } => {
+                    // Never before they arrived, the same as a stay (see close_visits).
                     let done = tx.execute(
-                        "UPDATE sightings SET left_at = ?1 WHERE left_at IS NULL
+                        "UPDATE sightings SET left_at = CASE WHEN julianday(?1) < julianday(joined_at) THEN joined_at ELSE ?1 END
+                         WHERE left_at IS NULL
                          AND visit_id = (SELECT id FROM visits WHERE left_at IS NULL ORDER BY id DESC LIMIT 1)
                          AND ((?2 <> '' AND user_id = ?2) OR (?2 = '' AND display_name = ?3))",
                         params![at, id, name],
@@ -1746,6 +1887,95 @@ impl Store {
     }
 }
 
+/// A VRCX import writes in pieces, each its own transaction, so the app's own writes wait for
+/// one piece at most, not for the whole import. A piece takes rows in steps of this many until
+/// it has held the write lock for `PIECE_TIME`, then lets go for `PIECE_PAUSE`.
+const IMPORT_ROWS: i64 = 1000;
+const PIECE_TIME: std::time::Duration = std::time::Duration::from_millis(200);
+const PIECE_PAUSE: std::time::Duration = std::time::Duration::from_millis(120);
+
+/// Settings rows that say an import added feed entries or stays and the list may still have
+/// to be numbered again in order of time. Every piece that adds rows sets its row in the same
+/// write, and the renumber removes it in its own write. When a run stops in between, because
+/// the app was closed, it crashed or the file stayed busy, the next import or the next time
+/// the history is opened finds the row and finishes the job.
+const RENUMBER_FEED: &str = "vrcx_import_renumber_feed";
+const RENUMBER_VISITS: &str = "vrcx_import_renumber_visits";
+
+#[cfg(test)]
+thread_local! {
+    /// A test sets this to make the next import stop after its pieces are written and before
+    /// the renumber, the way a run stops when the app is closed at that moment.
+    static STOP_BEFORE_RENUMBER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Tells whether a list read by id, from just after `last_id` on, has an entry older than the
+/// one before it.
+fn out_of_order(db: &Connection, table: &str, column: &str, last_id: i64) -> AppResult<bool> {
+    Ok(db.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM (SELECT julianday({column}) AS t, LAG(julianday({column})) OVER (ORDER BY id) AS p
+                                          FROM {table} WHERE id > ?1) WHERE t < p)"
+        ),
+        params![last_id],
+        |r| r.get(0),
+    )?)
+}
+
+/// Numbers the whole feed again in order of time, inside the caller's write, and removes the
+/// mark that said it was needed.
+fn renumber_feed(db: &Connection) -> AppResult<()> {
+    // The sorted copy is a temporary table, so the list is not written to the file twice.
+    // The feed's own indexes are dropped while it is filled again and then built anew from the
+    // schema: building one in a single pass is much quicker than keeping it up to date row by
+    // row, and this write is the longest the app's own writes wait for.
+    let indexes: Vec<String> = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'feed' AND sql IS NOT NULL")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    for index in &indexes {
+        db.execute_batch(&format!("DROP INDEX \"{}\";", index.replace('"', "\"\"")))?;
+    }
+    db.execute_batch(
+        "DROP TABLE IF EXISTS temp.feed_sorted;
+         CREATE TEMP TABLE feed_sorted AS SELECT at, user_id, display_name, kind, detail, previous, location FROM feed ORDER BY at, id;
+         DELETE FROM feed;
+         DELETE FROM sqlite_sequence WHERE name = 'feed';
+         INSERT INTO feed (at, user_id, display_name, kind, detail, previous, location)
+             SELECT at, user_id, display_name, kind, detail, previous, location FROM temp.feed_sorted ORDER BY rowid;
+         DROP TABLE temp.feed_sorted;",
+    )?;
+    db.execute_batch(SCHEMA)?;
+    db.execute("DELETE FROM settings WHERE key = ?1", params![RENUMBER_FEED])?;
+    Ok(())
+}
+
+/// Numbers all stays again in order of time, inside the caller's write, so the people seen and
+/// the videos played in each keep pointing at their stay, and removes the mark that said it
+/// was needed.
+fn renumber_visits(db: &Connection) -> AppResult<()> {
+    db.execute_batch(
+        "DROP TABLE IF EXISTS visit_order;
+         DROP TABLE IF EXISTS visits_sorted;
+         CREATE TABLE visit_order (was INTEGER PRIMARY KEY, now INTEGER NOT NULL);
+         INSERT INTO visit_order (was, now) SELECT id, ROW_NUMBER() OVER (ORDER BY joined_at, id) FROM visits;
+         CREATE TABLE visits_sorted AS SELECT o.now AS id, v.location, v.world_id, v.world_name, v.joined_at, v.left_at
+             FROM visits v JOIN visit_order o ON o.was = v.id;
+         UPDATE sightings SET visit_id = (SELECT now FROM visit_order WHERE was = sightings.visit_id)
+             WHERE visit_id IN (SELECT was FROM visit_order);
+         UPDATE videos SET visit_id = (SELECT now FROM visit_order WHERE was = videos.visit_id)
+             WHERE visit_id IN (SELECT was FROM visit_order);
+         DELETE FROM visits;
+         DELETE FROM sqlite_sequence WHERE name = 'visits';
+         INSERT INTO visits (id, location, world_id, world_name, joined_at, left_at)
+             SELECT id, location, world_id, world_name, joined_at, left_at FROM visits_sorted ORDER BY id;
+         DROP TABLE visits_sorted;
+         DROP TABLE visit_order;",
+    )?;
+    db.execute("DELETE FROM settings WHERE key = ?1", params![RENUMBER_VISITS])?;
+    Ok(())
+}
+
 /// What was brought over from another app's history, counted by kind.
 #[derive(Clone, Debug, Default, serde::Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -1768,6 +1998,40 @@ pub struct BroughtOver {
 }
 
 impl Store {
+    /// Finishes putting the feed and the stays back in order of time when an import stopped
+    /// after writing rows but before numbering the list again. When no import left that job
+    /// behind this is one quick look and writes nothing.
+    fn finish_renumber(&self) -> AppResult<()> {
+        use rusqlite::{Transaction, TransactionBehavior};
+        let marked = |db: &Connection, key: &str| -> AppResult<bool> {
+            Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)", params![key], |r| r.get(0))?)
+        };
+        if !marked(&self.db, RENUMBER_FEED)? && !marked(&self.db, RENUMBER_VISITS)? {
+            return Ok(());
+        }
+        let tx = Transaction::new_unchecked(&self.db, TransactionBehavior::Immediate)?;
+        type Renumber = fn(&Connection) -> AppResult<()>;
+        let lists: [(&str, &str, &str, Renumber); 2] =
+            [(RENUMBER_FEED, "feed", "at", renumber_feed), (RENUMBER_VISITS, "visits", "joined_at", renumber_visits)];
+        for (key, table, column, renumber) in lists {
+            // Looked at again inside the write, in case another connection finished it meanwhile.
+            if !marked(&tx, key)? {
+                continue;
+            }
+            // A list that is already in order only loses its mark: reading it through once is
+            // much quicker than writing all of it again.
+            if out_of_order(&tx, table, column, 0)? {
+                renumber(&tx)?;
+            } else {
+                tx.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+            }
+        }
+        tx.commit()?;
+        // A passive fold never waits for anyone, so the app's own writes are not held up.
+        let _ = self.db.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+        Ok(())
+    }
+
     /// Copies the history VRCX kept for this account into this one. `other` is VRCX's own
     /// database file, opened read-only and never changed. Only the tables of `my_id` are
     /// read, so another account's history in the same file stays where it is.
@@ -1782,7 +2046,14 @@ impl Store {
     ///
     /// `since` (a time as VRCX writes it, "2026-11-25T03:12:45.123Z") reads only what VRCX
     /// recorded from then on, which keeps the hourly look short however long the history is.
+    ///
+    /// The app runs it on a connection of its own, so it never holds up the one the rest of
+    /// the app uses. It first gathers what is new while only reading the history, then writes
+    /// it in short pieces, each its own transaction (see `IMPORT_ROWS`).
     pub fn import_vrcx(&self, other: &Path, my_id: &str, history_only: bool, since: Option<&str>) -> AppResult<BroughtOver> {
+        use rusqlite::{Transaction, TransactionBehavior};
+        use std::collections::hash_map::Entry;
+        use std::collections::{BTreeSet, HashMap, HashSet};
         // Only a plain time may go into the questions below.
         let from = match since.filter(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_digit() || "-:.TZ ".contains(c))) {
             Some(t) => format!("WHERE created_at >= '{t}'"),
@@ -1800,47 +2071,88 @@ impl Store {
             return Err(AppError::CannotDo("That is not an account id.".into()));
         }
         let text = |r: &rusqlite::Row<'_>, i: usize| -> String { r.get::<_, Option<String>>(i).ok().flatten().unwrap_or_default() };
+        // A time as whole seconds, worked out by SQLite in the question itself so it is the same
+        // number the duplicate check always used. Empty when SQLite cannot read the time.
+        let secs = |r: &rusqlite::Row<'_>, i: usize| -> Option<i64> { r.get::<_, Option<i64>>(i).ok().flatten() };
+        // A run that was cut off earlier may have left a list out of order; that is put right
+        // first, so this run starts from a history read newest-id first as it should be.
+        self.finish_renumber()?;
+        // The run reads and writes many pages of the history and of its own temporary tables;
+        // a larger page cache for this connection saves reading the same pages from disk again.
+        self.db.execute_batch("PRAGMA cache_size = -65536; PRAGMA temp.cache_size = -65536;")?;
         let mut done = BroughtOver::default();
-        let tx = self.db.unchecked_transaction()?;
 
-        // One feed entry, unless this history already has it.
-        let add = |at: &str, user: &str, name: &str, kind: &str, detail: &str, previous: &str, location: &str| -> AppResult<bool> {
+        // First everything new is gathered in this connection's own temporary tables. That
+        // only reads the history, as it stood when the run began, so the rest of the app keeps
+        // writing to it meanwhile.
+        let gather = Transaction::new_unchecked(&self.db, TransactionBehavior::Deferred)?;
+        // Where both lists end before anything is added, to tell afterwards whether the new
+        // entries landed after everything already here or in among it.
+        let end = |sql: &str| -> AppResult<(i64, Option<f64>)> { Ok(gather.query_row(sql, [], |r| Ok((r.get(0)?, r.get(1)?)))?) };
+        let (feed_last_id, feed_last_at) = end("SELECT COALESCE(MAX(id), 0), julianday(MAX(at)) FROM feed")?;
+        let (visits_last_id, visits_last_at) = end("SELECT COALESCE(MAX(id), 0), MAX(julianday(joined_at)) FROM visits")?;
+        gather.execute_batch(
+            "DROP TABLE IF EXISTS temp.import_feed;
+             DROP TABLE IF EXISTS temp.import_feed_sorted;
+             DROP TABLE IF EXISTS temp.import_visits;
+             DROP TABLE IF EXISTS temp.import_people;
+             DROP TABLE IF EXISTS temp.import_seen;
+             CREATE TEMP TABLE import_feed (at TEXT, user_id TEXT, display_name TEXT, kind TEXT, detail TEXT, previous TEXT, location TEXT, secs INTEGER);
+             CREATE INDEX temp.import_feed_key ON import_feed(user_id, kind, secs);
+             CREATE TEMP TABLE import_visits (location TEXT, world_id TEXT, world_name TEXT, joined_at TEXT, left_at TEXT, secs INTEGER);
+             CREATE INDEX temp.import_visits_key ON import_visits(location, secs);
+             CREATE TEMP TABLE import_people (visit INTEGER, user_id TEXT, display_name TEXT, joined_at TEXT, left_at TEXT);
+             CREATE INDEX temp.import_people_visit ON import_people(visit);
+             CREATE TEMP TABLE import_seen (location TEXT, created_at TEXT, type TEXT, display_name TEXT, user_id TEXT);",
+        )?;
+
+        // The times one person already has entries of one kind at, in whole seconds, read once
+        // per person and kind through the index and kept for the run, with this run's own
+        // entries added as they are taken. A line is skipped when one of these is within five
+        // seconds of it. A time SQLite cannot read matches nothing, as before.
+        let mut feed_times: HashMap<(String, String), BTreeSet<i64>> = HashMap::new();
+        let mut add = |at: &str, at_secs: Option<i64>, user: &str, name: &str, kind: &str, detail: &str, previous: &str, location: &str| -> AppResult<bool> {
             if at.is_empty() || user.is_empty() {
                 return Ok(false);
             }
-            let known: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM feed WHERE user_id = ?1 AND kind = ?2
-                 AND ABS(CAST(strftime('%s', at) AS INTEGER) - CAST(strftime('%s', ?3) AS INTEGER)) <= 5",
-                params![user, kind, at],
-                |r| r.get(0),
-            )?;
-            if known > 0 {
-                return Ok(false);
+            if let Some(s) = at_secs {
+                let times = match feed_times.entry((user.to_string(), kind.to_string())) {
+                    Entry::Occupied(e) => e.into_mut(),
+                    Entry::Vacant(e) => {
+                        let mut stmt = gather.prepare_cached("SELECT CAST(strftime('%s', at) AS INTEGER) FROM feed WHERE user_id = ?1 AND kind = ?2")?;
+                        let known = stmt.query_map(params![user, kind], |r| r.get::<_, Option<i64>>(0))?.collect::<Result<Vec<_>, _>>()?;
+                        e.insert(known.into_iter().flatten().collect())
+                    }
+                };
+                if times.range(s - 5..=s + 5).next().is_some() {
+                    return Ok(false);
+                }
+                times.insert(s);
             }
-            tx.execute(
-                "INSERT INTO feed (at, user_id, display_name, kind, detail, previous, location) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![at, user, name, kind, detail, previous, location],
-            )?;
+            gather
+                .prepare_cached("INSERT INTO import_feed (at, user_id, display_name, kind, detail, previous, location, secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)")?
+                .execute(params![at, user, name, kind, detail, previous, location, at_secs])?;
             Ok(true)
         };
+        const SECS: &str = "CAST(strftime('%s', created_at) AS INTEGER)";
 
         let table = format!("{prefix}_feed_gps");
         if has(&table) {
-            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, location, previous_location FROM \"{table}\" {from} ORDER BY created_at"))?;
+            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, location, previous_location, {SECS} FROM \"{table}\" {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
-                if add(&text(r, 0), &text(r, 1), &text(r, 2), "location", "", &text(r, 4), &text(r, 3))? {
+                if add(&text(r, 0), secs(r, 5), &text(r, 1), &text(r, 2), "location", "", &text(r, 4), &text(r, 3))? {
                     done.feed += 1;
                 }
             }
         }
         let table = format!("{prefix}_feed_online_offline");
         if has(&table) {
-            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, type, location FROM \"{table}\" {from} ORDER BY created_at"))?;
+            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, type, location, {SECS} FROM \"{table}\" {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
                 let kind = if text(r, 3).eq_ignore_ascii_case("online") { "online" } else { "offline" };
-                if add(&text(r, 0), &text(r, 1), &text(r, 2), kind, "", "", &text(r, 4))? {
+                if add(&text(r, 0), secs(r, 5), &text(r, 1), &text(r, 2), kind, "", "", &text(r, 4))? {
                     done.feed += 1;
                 }
             }
@@ -1848,40 +2160,40 @@ impl Store {
         let table = format!("{prefix}_feed_status");
         if has(&table) {
             let mut rows = old.prepare(&format!(
-                "SELECT created_at, user_id, display_name, status, status_description, previous_status, previous_status_description FROM \"{table}\" {from} ORDER BY created_at"
+                "SELECT created_at, user_id, display_name, status, status_description, previous_status, previous_status_description, {SECS} FROM \"{table}\" {from} ORDER BY created_at"
             ))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
-                let (at, user, name) = (text(r, 0), text(r, 1), text(r, 2));
+                let (at, at_secs, user, name) = (text(r, 0), secs(r, 7), text(r, 1), text(r, 2));
                 let (status, words, was, were) = (text(r, 3), text(r, 4), text(r, 5), text(r, 6));
-                if !status.is_empty() && status != was && add(&at, &user, &name, "status", &status, &was, "")? {
+                if !status.is_empty() && status != was && add(&at, at_secs, &user, &name, "status", &status, &was, "")? {
                     done.feed += 1;
                 }
-                if words != were && add(&at, &user, &name, "statusText", &words, &were, "")? {
+                if words != were && add(&at, at_secs, &user, &name, "statusText", &words, &were, "")? {
                     done.feed += 1;
                 }
             }
         }
         let table = format!("{prefix}_feed_avatar");
         if has(&table) {
-            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name FROM \"{table}\" {from} ORDER BY created_at"))?;
+            let mut rows = old.prepare(&format!("SELECT created_at, user_id, display_name, {SECS} FROM \"{table}\" {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
-                if add(&text(r, 0), &text(r, 1), &text(r, 2), "avatar", "", "", "")? {
+                if add(&text(r, 0), secs(r, 3), &text(r, 1), &text(r, 2), "avatar", "", "", "")? {
                     done.feed += 1;
                 }
             }
         }
         let table = format!("{prefix}_friend_log_history");
         if has(&table) {
-            let mut rows = old.prepare(&format!("SELECT created_at, type, user_id, display_name, previous_display_name FROM \"{table}\" {from} ORDER BY created_at"))?;
+            let mut rows = old.prepare(&format!("SELECT created_at, type, user_id, display_name, previous_display_name, {SECS} FROM \"{table}\" {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
-                let (at, kind, user, name, was) = (text(r, 0), text(r, 1), text(r, 2), text(r, 3), text(r, 4));
+                let (at, at_secs, kind, user, name, was) = (text(r, 0), secs(r, 5), text(r, 1), text(r, 2), text(r, 3), text(r, 4));
                 let added = match kind.as_str() {
-                    "Friend" => add(&at, &user, &name, "friendAdded", "", "", "")?,
-                    "Unfriend" => add(&at, &user, &name, "friendRemoved", "", "", "")?,
-                    "DisplayName" => add(&at, &user, &name, "name", &name, &was, "")?,
+                    "Friend" => add(&at, at_secs, &user, &name, "friendAdded", "", "", "")?,
+                    "Unfriend" => add(&at, at_secs, &user, &name, "friendRemoved", "", "", "")?,
+                    "DisplayName" => add(&at, at_secs, &user, &name, "name", &name, &was, "")?,
                     _ => false,
                 };
                 if added {
@@ -1890,9 +2202,12 @@ impl Store {
             }
         }
 
-        // Visits, each with the people the game log saw there.
+        // Visits. A stay is skipped when this history, or this run, already has one in the same
+        // instance within ten seconds; the times per instance are read once, like the feed's.
+        let mut stay_times: HashMap<String, BTreeSet<i64>> = HashMap::new();
+        let mut places: HashSet<String> = HashSet::new();
         if has("gamelog_location") {
-            let mut rows = old.prepare(&format!("SELECT created_at, location, world_id, world_name, time FROM gamelog_location {from} ORDER BY created_at"))?;
+            let mut rows = old.prepare(&format!("SELECT created_at, location, world_id, world_name, time, {SECS} FROM gamelog_location {from} ORDER BY created_at"))?;
             let mut it = rows.query([])?;
             while let Some(r) = it.next()? {
                 let (joined, location, world_id, world_name) = (text(r, 0), text(r, 1), text(r, 2), text(r, 3));
@@ -1900,206 +2215,353 @@ impl Store {
                 if joined.is_empty() || location.is_empty() {
                     continue;
                 }
-                let known: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM visits WHERE location = ?1
-                     AND ABS(CAST(strftime('%s', joined_at) AS INTEGER) - CAST(strftime('%s', ?2) AS INTEGER)) <= 10",
-                    params![location, joined],
-                    |r| r.get(0),
-                )?;
-                if known > 0 {
-                    continue;
+                let joined_secs = secs(r, 5);
+                if let Some(s) = joined_secs {
+                    let times = match stay_times.entry(location.clone()) {
+                        Entry::Occupied(e) => e.into_mut(),
+                        Entry::Vacant(e) => {
+                            let mut stmt = gather.prepare_cached("SELECT CAST(strftime('%s', joined_at) AS INTEGER) FROM visits WHERE location = ?1")?;
+                            let known = stmt.query_map(params![location], |r| r.get::<_, Option<i64>>(0))?.collect::<Result<Vec<_>, _>>()?;
+                            e.insert(known.into_iter().flatten().collect())
+                        }
+                    };
+                    if times.range(s - 10..=s + 10).next().is_some() {
+                        continue;
+                    }
+                    times.insert(s);
                 }
                 // VRCX keeps how long the stay lasted; a stay it never closed ends where it began.
-                let left: String = tx.query_row(
-                    "SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?1, ?2)",
+                let left: String = gather.prepare_cached("SELECT strftime('%Y-%m-%dT%H:%M:%fZ', ?1, ?2)")?.query_row(
                     params![joined, format!("+{:.3} seconds", stayed_ms as f64 / 1000.0)],
                     |r| r.get(0),
                 )?;
-                tx.execute(
-                    "INSERT INTO visits (location, world_id, world_name, joined_at, left_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![location, world_id, world_name, joined, left],
-                )?;
-                let visit = tx.last_insert_rowid();
+                gather
+                    .prepare_cached("INSERT INTO import_visits (location, world_id, world_name, joined_at, left_at, secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")?
+                    .execute(params![location, world_id, world_name, joined, left, joined_secs])?;
+                places.insert(location);
                 done.visits += 1;
-                if !has("gamelog_join_leave") {
-                    continue;
+            }
+        }
+
+        // The people the game log saw in those stays. VRCX's file need not have an index on
+        // where a line was written, so asking it once per stay read the whole list each time.
+        // Its lines are read once instead, those for the instances being brought over are kept
+        // here with an index, and each stay then finds its own.
+        if !places.is_empty() && has("gamelog_join_leave") {
+            {
+                let mut keep = gather.prepare("INSERT INTO import_seen (location, created_at, type, display_name, user_id) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+                let mut rows = old.prepare(&format!("SELECT location, created_at, type, display_name, user_id FROM gamelog_join_leave {from}"))?;
+                let mut it = rows.query([])?;
+                while let Some(p) = it.next()? {
+                    let location = text(p, 0);
+                    if places.contains(&location) {
+                        keep.execute(params![location, text(p, 1), text(p, 2), text(p, 3), text(p, 4)])?;
+                    }
                 }
-                let mut seen = old.prepare(
-                    "SELECT created_at, type, display_name, user_id FROM gamelog_join_leave
-                     WHERE location = ?1 AND created_at >= ?2 AND created_at <= ?3 ORDER BY created_at",
-                )?;
-                let mut people = seen.query(params![location, joined, left])?;
-                while let Some(p) = people.next()? {
+            }
+            gather.execute_batch("CREATE INDEX temp.import_seen_at ON import_seen(location, created_at);")?;
+            let mut stays = gather.prepare("SELECT rowid, location, joined_at, left_at FROM import_visits ORDER BY rowid")?;
+            let mut seen = gather.prepare(
+                "SELECT created_at, type, display_name, user_id FROM import_seen
+                 WHERE location = ?1 AND created_at >= ?2 AND created_at <= ?3 ORDER BY created_at, rowid",
+            )?;
+            let mut put = gather.prepare("INSERT INTO import_people (visit, user_id, display_name, joined_at, left_at) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+            let mut it = stays.query([])?;
+            while let Some(v) = it.next()? {
+                let (visit, location, joined, left): (i64, String, String, String) = (v.get(0)?, v.get(1)?, v.get(2)?, v.get(3)?);
+                // Each join is a new sighting; a leave closes the latest open one of that name.
+                // Whoever is still there when the stay ends leaves with it.
+                let mut people: Vec<(String, String, String, Option<String>)> = Vec::new();
+                let mut lines = seen.query(params![location, joined, left])?;
+                while let Some(p) = lines.next()? {
                     let (at, kind, name, user) = (text(p, 0), text(p, 1), text(p, 2), text(p, 3));
                     if name.is_empty() {
                         continue;
                     }
                     if kind == "OnPlayerJoined" {
-                        tx.execute(
-                            "INSERT INTO sightings (visit_id, user_id, display_name, joined_at) VALUES (?1, ?2, ?3, ?4)",
-                            params![visit, user, name, at],
-                        )?;
-                        done.people += 1;
+                        people.push((user, name, at, None));
                     } else if kind == "OnPlayerLeft" {
-                        tx.execute(
-                            "UPDATE sightings SET left_at = ?1 WHERE id = (
-                                SELECT id FROM sightings WHERE visit_id = ?2 AND left_at IS NULL AND display_name = ?3 ORDER BY id DESC LIMIT 1)",
-                            params![at, visit, name],
-                        )?;
+                        if let Some(open) = people.iter_mut().rev().find(|p| p.1 == name && p.3.is_none()) {
+                            open.3 = Some(at);
+                        }
                     }
                 }
-                tx.execute("UPDATE sightings SET left_at = ?1 WHERE visit_id = ?2 AND left_at IS NULL", params![left, visit])?;
+                for (user, name, at, gone) in &people {
+                    put.execute(params![visit, user, name, at, gone.as_deref().unwrap_or(&left)])?;
+                }
+                done.people += people.len();
             }
         }
+        gather.commit()?;
 
-        // The avatars I wore. VRCX keeps one line per avatar: when it was last put on, and the
-        // time it was worn in total. An avatar this app already knows is left alone, so a later
-        // look never adds the same hours twice. The total is laid out as wearings of at most
-        // twelve hours each, ending when it was last put on, because that is the most this
-        // app counts for one wearing.
-        let worn = format!("{prefix}_avatar_history");
-        if has(&worn) {
-            let known = has("cache_avatar");
-            let mut rows = old.prepare(&format!("SELECT avatar_id, created_at, time FROM \"{worn}\" {from} ORDER BY created_at"))?;
-            let mut it = rows.query([])?;
-            while let Some(r) = it.next()? {
-                let (id, at) = (text(r, 0), text(r, 1));
-                let millis = r.get::<_, Option<i64>>(2).ok().flatten().unwrap_or(0).max(0);
-                let Ok(last) = chrono::DateTime::parse_from_rfc3339(&at) else {
-                    continue;
-                };
-                if !id.starts_with("avtr_") {
-                    continue;
+        // Then it goes into the history in pieces, each in its own short write, so a write the
+        // app makes meanwhile waits for one piece at most. If the run stops half way, what was
+        // written stays, and the next run skips it as already here.
+        // Between two pieces the run waits a moment. A write that found the file busy tries
+        // again at least every tenth of a second, so it gets in during that pause instead of
+        // waiting until the whole import is done. A history kept in memory has nobody else
+        // writing to it, so it goes straight on.
+        let shared = self.db.path().is_some_and(|p| !p.is_empty());
+        let wrote = std::cell::Cell::new(false);
+        let write = || {
+            if shared && wrote.replace(true) {
+                std::thread::sleep(PIECE_PAUSE);
+            }
+            Transaction::new_unchecked(&self.db, TransactionBehavior::Immediate)
+        };
+        {
+            let tx = write()?;
+            // Entries and stays the app wrote itself while the run was reading count as already
+            // here, by the same rules.
+            {
+                let mut fresh = tx.prepare("SELECT user_id, kind, CAST(strftime('%s', at) AS INTEGER) FROM feed WHERE id > ?1")?;
+                let mut rows = fresh.query(params![feed_last_id])?;
+                while let Some(r) = rows.next()? {
+                    let (user, kind, s): (String, String, Option<i64>) = (r.get(0)?, r.get(1)?, r.get(2)?);
+                    let Some(s) = s else { continue };
+                    let gone = tx.execute("DELETE FROM import_feed WHERE user_id = ?1 AND kind = ?2 AND secs BETWEEN ?3 - 5 AND ?3 + 5", params![user, kind, s])?;
+                    if matches!(kind.as_str(), "friendAdded" | "friendRemoved" | "name") {
+                        done.friend_log -= gone.min(done.friend_log);
+                    } else {
+                        done.feed -= gone.min(done.feed);
+                    }
                 }
-                let already: i64 = tx.query_row("SELECT COUNT(*) FROM avatar_history WHERE avatar_id = ?1", params![id], |c| c.get(0))?;
-                if already > 0 {
-                    continue;
+                let mut fresh = tx.prepare("SELECT location, CAST(strftime('%s', joined_at) AS INTEGER) FROM visits WHERE id > ?1")?;
+                let mut rows = fresh.query(params![visits_last_id])?;
+                while let Some(r) = rows.next()? {
+                    let (location, s): (String, Option<i64>) = (r.get(0)?, r.get(1)?);
+                    let Some(s) = s else { continue };
+                    let staged: Vec<i64> = tx
+                        .prepare_cached("SELECT rowid FROM import_visits WHERE location = ?1 AND secs BETWEEN ?2 - 10 AND ?2 + 10")?
+                        .query_map(params![location, s], |r| r.get(0))?
+                        .collect::<Result<_, _>>()?;
+                    for visit in staged {
+                        let people = tx.execute("DELETE FROM import_people WHERE visit = ?1", params![visit])?;
+                        tx.execute("DELETE FROM import_visits WHERE rowid = ?1", params![visit])?;
+                        done.people -= people.min(done.people);
+                        done.visits -= 1.min(done.visits);
+                    }
                 }
-                let (name, author_id, author, image, status) = if known {
-                    old.query_row("SELECT name, author_id, author_name, thumbnail_image_url, release_status FROM cache_avatar WHERE id = ?1", params![id], |c| {
-                        let get = |i: usize| c.get::<_, Option<String>>(i).map(Option::unwrap_or_default);
-                        Ok((get(0)?, get(1)?, get(2)?, get(3)?, get(4)?))
-                    })
-                    .unwrap_or_default()
-                } else {
-                    Default::default()
-                };
-                const PIECE: i64 = 12 * 3600 * 1000;
-                let stamp = |t: chrono::DateTime<chrono::FixedOffset>| t.with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
-                // Newest piece first; an avatar with no time noted still gets its one line.
-                let mut left = millis.min(200 * PIECE);
-                let mut end = last;
-                loop {
-                    let piece = left.min(PIECE);
-                    let start = end - chrono::Duration::milliseconds(piece);
+            }
+
+            // The avatars I wore. VRCX keeps one line per avatar: when it was last put on, and the
+            // time it was worn in total. An avatar this app already knows is left alone, so a later
+            // look never adds the same hours twice. Each one gets a single row at the moment it
+            // was last put on, with the total kept as imported time. VRCX does not say when those
+            // hours were, so they are never matched against world stays.
+            let worn = format!("{prefix}_avatar_history");
+            if has(&worn) {
+                let known = has("cache_avatar");
+                let mut rows = old.prepare(&format!("SELECT avatar_id, created_at, time FROM \"{worn}\" {from} ORDER BY created_at"))?;
+                let mut it = rows.query([])?;
+                while let Some(r) = it.next()? {
+                    let (id, at) = (text(r, 0), text(r, 1));
+                    let millis = r.get::<_, Option<i64>>(2).ok().flatten().unwrap_or(0).max(0);
+                    let Ok(last) = chrono::DateTime::parse_from_rfc3339(&at) else {
+                        continue;
+                    };
+                    if !id.starts_with("avtr_") {
+                        continue;
+                    }
+                    let already: i64 = tx.query_row("SELECT COUNT(*) FROM avatar_history WHERE avatar_id = ?1", params![id], |c| c.get(0))?;
+                    if already > 0 {
+                        continue;
+                    }
+                    let (name, author_id, author, image, status) = if known {
+                        old.query_row("SELECT name, author_id, author_name, thumbnail_image_url, release_status FROM cache_avatar WHERE id = ?1", params![id], |c| {
+                            let get = |i: usize| c.get::<_, Option<String>>(i).map(Option::unwrap_or_default);
+                            Ok((get(0)?, get(1)?, get(2)?, get(3)?, get(4)?))
+                        })
+                        .unwrap_or_default()
+                    } else {
+                        Default::default()
+                    };
+                    let stamp = last.with_timezone(&chrono::Utc).format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
                     tx.execute(
-                        "INSERT INTO avatar_history (avatar_id, name, author_id, author_name, image, release_status, worn_at, ended_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                        params![id, name, author_id, author, image, status, stamp(start), stamp(end)],
+                        "INSERT INTO avatar_history (avatar_id, name, author_id, author_name, image, release_status, worn_at, ended_at, imported_seconds)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8)",
+                        params![id, name, author_id, author, image, status, stamp, millis / 1000],
                     )?;
-                    left -= piece;
-                    end = start;
-                    if left <= 0 {
-                        break;
+                    done.avatars += 1;
+                }
+            }
+
+            // My own tags on avatars. One I already have here is kept.
+            if !history_only && has("avatar_tags") {
+                let mut rows = old.prepare("SELECT avatar_id, tag FROM avatar_tags")?;
+                let mut it = rows.query([])?;
+                while let Some(r) = it.next()? {
+                    let (id, tag) = (text(r, 0), text(r, 1));
+                    let tag = tag.trim();
+                    if !id.starts_with("avtr_") || tag.is_empty() || tag.chars().count() > 40 {
+                        continue;
                     }
+                    done.tags += tx.execute("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)", params![id, tag])?;
                 }
-                done.avatars += 1;
             }
-        }
 
-        // My own tags on avatars. One I already have here is kept.
-        if !history_only && has("avatar_tags") {
-            let mut rows = old.prepare("SELECT avatar_id, tag FROM avatar_tags")?;
-            let mut it = rows.query([])?;
-            while let Some(r) = it.next()? {
-                let (id, tag) = (text(r, 0), text(r, 1));
-                let tag = tag.trim();
-                if !id.starts_with("avtr_") || tag.is_empty() || tag.chars().count() > 40 {
+            // Notes on people, worlds and avatars. One I already wrote here is kept.
+            for (table, key) in [("memos", "user_id"), ("world_memos", "world_id"), ("avatar_memos", "avatar_id")] {
+                if history_only || !has(table) {
                     continue;
                 }
-                done.tags += tx.execute("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)", params![id, tag])?;
+                let mut rows = old.prepare(&format!("SELECT {key}, memo, edited_at FROM {table}"))?;
+                let mut it = rows.query([])?;
+                while let Some(r) = it.next()? {
+                    let (id, memo, at) = (text(r, 0), text(r, 1), text(r, 2));
+                    if id.is_empty() || memo.trim().is_empty() {
+                        continue;
+                    }
+                    let at = if at.is_empty() { now() } else { at };
+                    done.notes += tx.execute("INSERT OR IGNORE INTO notes (user_id, note, updated_at) VALUES (?1, ?2, ?3)", params![id, memo, at])?;
+                }
             }
-        }
 
-        // Notes on people, worlds and avatars. One I already wrote here is kept.
-        for (table, key) in [("memos", "user_id"), ("world_memos", "world_id"), ("avatar_memos", "avatar_id")] {
-            if history_only || !has(table) {
-                continue;
-            }
-            let mut rows = old.prepare(&format!("SELECT {key}, memo, edited_at FROM {table}"))?;
-            let mut it = rows.query([])?;
-            while let Some(r) = it.next()? {
-                let (id, memo, at) = (text(r, 0), text(r, 1), text(r, 2));
-                if id.is_empty() || memo.trim().is_empty() {
+            // The favourites VRCX kept only on this PC, with the name and picture it had for each.
+            for (table, key, cache, kind) in [("favorite_world", "world_id", "cache_world", "world"), ("favorite_avatar", "avatar_id", "cache_avatar", "avatar")] {
+                if history_only || !has(table) {
                     continue;
                 }
-                let at = if at.is_empty() { now() } else { at };
-                done.notes += tx.execute("INSERT OR IGNORE INTO notes (user_id, note, updated_at) VALUES (?1, ?2, ?3)", params![id, memo, at])?;
+                let named = has(cache);
+                let mut rows = old.prepare(&format!("SELECT {key}, created_at FROM {table}"))?;
+                let mut it = rows.query([])?;
+                while let Some(r) = it.next()? {
+                    let (id, at) = (text(r, 0), text(r, 1));
+                    if id.is_empty() {
+                        continue;
+                    }
+                    let (name, author, image) = if named {
+                        old.query_row(&format!("SELECT name, author_name, thumbnail_image_url FROM {cache} WHERE id = ?1"), params![id], |c| {
+                            Ok((
+                                c.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                                c.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                                c.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                            ))
+                        })
+                        .unwrap_or_default()
+                    } else {
+                        Default::default()
+                    };
+                    let at = if at.is_empty() { now() } else { at };
+                    done.favourites += tx.execute(
+                        "INSERT OR IGNORE INTO local_favorites (kind, item_id, name, author_name, image, added_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![kind, id, name, author, image, at],
+                    )?;
+                }
             }
+            tx.commit()?;
         }
 
-        // The favourites VRCX kept only on this PC, with the name and picture it had for each.
-        for (table, key, cache, kind) in [("favorite_world", "world_id", "cache_world", "world"), ("favorite_avatar", "avatar_id", "cache_avatar", "avatar")] {
-            if history_only || !has(table) {
-                continue;
+        // New feed entries go in after the rest, sorted among themselves, a piece at a time.
+        let feed_oldest_new: Option<f64> = self.db.query_row("SELECT MIN(julianday(at)) FROM import_feed", [], |r| r.get(0))?;
+        self.db.execute_batch(
+            "CREATE TEMP TABLE import_feed_sorted AS
+                 SELECT at, user_id, display_name, kind, detail, previous, location FROM import_feed ORDER BY julianday(at), rowid;",
+        )?;
+        let total: i64 = self.db.query_row("SELECT COALESCE(MAX(rowid), 0) FROM import_feed_sorted", [], |r| r.get(0))?;
+        let mut upto = 0;
+        while upto < total {
+            let tx = write()?;
+            // The mark goes into the same write as the rows, so it is on the file whenever they are.
+            tx.prepare_cached("INSERT INTO settings (key, value) VALUES (?1, '1') ON CONFLICT(key) DO NOTHING")?
+                .execute(params![RENUMBER_FEED])?;
+            let began = std::time::Instant::now();
+            while upto < total && began.elapsed() < PIECE_TIME {
+                tx.prepare_cached(
+                    "INSERT INTO feed (at, user_id, display_name, kind, detail, previous, location)
+                         SELECT at, user_id, display_name, kind, detail, previous, location FROM import_feed_sorted
+                         WHERE rowid > ?1 AND rowid <= ?2 ORDER BY rowid",
+                )?
+                .execute(params![upto, upto + IMPORT_ROWS])?;
+                upto += IMPORT_ROWS;
             }
-            let named = has(cache);
-            let mut rows = old.prepare(&format!("SELECT {key}, created_at FROM {table}"))?;
-            let mut it = rows.query([])?;
-            while let Some(r) = it.next()? {
-                let (id, at) = (text(r, 0), text(r, 1));
-                if id.is_empty() {
-                    continue;
-                }
-                let (name, author, image) = if named {
-                    old.query_row(&format!("SELECT name, author_name, thumbnail_image_url FROM {cache} WHERE id = ?1"), params![id], |c| {
-                        Ok((
-                            c.get::<_, Option<String>>(0)?.unwrap_or_default(),
-                            c.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                            c.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                        ))
-                    })
-                    .unwrap_or_default()
-                } else {
-                    Default::default()
+            tx.commit()?;
+        }
+
+        // The stays, each with the people seen in it, a piece at a time in the order they were read.
+        let mut after = 0i64;
+        let mut more: bool = self.db.query_row("SELECT EXISTS(SELECT 1 FROM import_visits)", [], |r| r.get(0))?;
+        while more {
+            let tx = write()?;
+            tx.prepare_cached("INSERT INTO settings (key, value) VALUES (?1, '1') ON CONFLICT(key) DO NOTHING")?
+                .execute(params![RENUMBER_VISITS])?;
+            let began = std::time::Instant::now();
+            while began.elapsed() < PIECE_TIME {
+                type Staged = (i64, String, String, String, String, String);
+                let rows: Vec<Staged> = tx
+                    .prepare_cached("SELECT rowid, location, world_id, world_name, joined_at, left_at FROM import_visits WHERE rowid > ?1 ORDER BY rowid LIMIT ?2")?
+                    .query_map(params![after, IMPORT_ROWS / 4], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))?
+                    .collect::<Result<_, _>>()?;
+                let Some(last) = rows.last() else {
+                    more = false;
+                    break;
                 };
-                let at = if at.is_empty() { now() } else { at };
-                done.favourites += tx.execute(
-                    "INSERT OR IGNORE INTO local_favorites (kind, item_id, name, author_name, image, added_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![kind, id, name, author, image, at],
-                )?;
+                after = last.0;
+                for (staged, location, world_id, world_name, joined, left) in &rows {
+                    tx.prepare_cached("INSERT INTO visits (location, world_id, world_name, joined_at, left_at) VALUES (?1, ?2, ?3, ?4, ?5)")?
+                        .execute(params![location, world_id, world_name, joined, left])?;
+                    let visit = tx.last_insert_rowid();
+                    tx.prepare_cached(
+                        "INSERT INTO sightings (visit_id, user_id, display_name, joined_at, left_at)
+                             SELECT ?1, user_id, display_name, joined_at, left_at FROM import_people WHERE visit = ?2 ORDER BY rowid",
+                    )?
+                    .execute(params![visit, staged])?;
+                }
             }
+            tx.commit()?;
         }
 
-        // Older entries were just added with the newest ids. Both lists are read newest id
-        // first, so they are numbered again in order of time. People keep pointing at their visit.
-        if done.feed + done.friend_log > 0 {
-            tx.execute_batch(
-                "CREATE TABLE feed_sorted AS SELECT at, user_id, display_name, kind, detail, previous, location FROM feed ORDER BY at, id;
-                 DELETE FROM feed;
-                 DELETE FROM sqlite_sequence WHERE name = 'feed';
-                 INSERT INTO feed (at, user_id, display_name, kind, detail, previous, location)
-                     SELECT at, user_id, display_name, kind, detail, previous, location FROM feed_sorted ORDER BY rowid;
-                 DROP TABLE feed_sorted;",
-            )?;
+        #[cfg(test)]
+        if STOP_BEFORE_RENUMBER.with(|stop| stop.get()) {
+            return Err(AppError::CannotDo("The import stopped before the lists were put in order.".into()));
         }
-        if done.visits > 0 {
-            tx.execute_batch(
-                "CREATE TABLE visit_order AS SELECT id AS was, ROW_NUMBER() OVER (ORDER BY joined_at, id) AS now FROM visits;
-                 CREATE TABLE visits_sorted AS SELECT o.now AS id, v.location, v.world_id, v.world_name, v.joined_at, v.left_at
-                     FROM visits v JOIN visit_order o ON o.was = v.id;
-                 UPDATE sightings SET visit_id = (SELECT now FROM visit_order WHERE was = sightings.visit_id)
-                     WHERE visit_id IN (SELECT was FROM visit_order);
-                 UPDATE videos SET visit_id = (SELECT now FROM visit_order WHERE was = videos.visit_id)
-                     WHERE visit_id IN (SELECT was FROM visit_order);
-                 DELETE FROM visits;
-                 DELETE FROM sqlite_sequence WHERE name = 'visits';
-                 INSERT INTO visits (id, location, world_id, world_name, joined_at, left_at)
-                     SELECT id, location, world_id, world_name, joined_at, left_at FROM visits_sorted ORDER BY id;
-                 DROP TABLE visits_sorted;
-                 DROP TABLE visit_order;",
-            )?;
+
+        // Both lists are read newest id first, so the ids have to follow time. When something
+        // new is older than what was already here, the list is numbered again in order of time,
+        // and people keep pointing at their visit. That rewrites the whole list, which takes long
+        // on a big history, so it is skipped when everything new came after what was there.
+        // Something the app wrote itself between two pieces can also sit out of order among the
+        // new ones; that is checked only for what was added, which is quick.
+        let visits_oldest_new: Option<f64> =
+            self.db.query_row("SELECT MIN(julianday(joined_at)) FROM visits WHERE id > ?1", params![visits_last_id], |r| r.get(0))?;
+        let older = |new: Option<f64>, last: Option<f64>| matches!((new, last), (Some(new), Some(last)) if new < last);
+        let resort_feed = older(feed_oldest_new, feed_last_at) || out_of_order(&self.db, "feed", "at", feed_last_id)?;
+        let resort_visits = older(visits_oldest_new, visits_last_at) || out_of_order(&self.db, "visits", "joined_at", visits_last_id)?;
+        if resort_feed {
+            let tx = write()?;
+            renumber_feed(&tx)?;
+            tx.commit()?;
         }
-        tx.commit()?;
+        if resort_visits {
+            let tx = write()?;
+            renumber_visits(&tx)?;
+            tx.commit()?;
+        }
+        // A list the new rows left in order needs no renumber, so its mark is taken off. A run
+        // that added nothing has no mark to take off and writes nothing here.
+        let marked: bool = self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE key IN (?1, ?2))",
+            params![RENUMBER_FEED, RENUMBER_VISITS],
+            |r| r.get(0),
+        )?;
+        if marked {
+            let tx = write()?;
+            tx.execute("DELETE FROM settings WHERE key IN (?1, ?2)", params![RENUMBER_FEED, RENUMBER_VISITS])?;
+            tx.commit()?;
+        }
+        self.db.execute_batch(
+            "DROP TABLE IF EXISTS temp.import_feed;
+             DROP TABLE IF EXISTS temp.import_feed_sorted;
+             DROP TABLE IF EXISTS temp.import_visits;
+             DROP TABLE IF EXISTS temp.import_people;
+             DROP TABLE IF EXISTS temp.import_seen;",
+        )?;
+        if resort_feed || resort_visits {
+            // A rewrite leaves a log file as big as the list. A passive fold copies what it can
+            // into the history without waiting for anyone, so the app's own writes are never
+            // held up by it; the log is cut back to its size limit at later folds.
+            let _ = self.db.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+        }
         Ok(done)
     }
 }
@@ -2140,6 +2602,168 @@ mod tests {
         assert_eq!(s.avatar_history(1).unwrap()[0].name, "Robot");
     }
 
+    /// The wear time in worlds as one SQL join worked it out before the sorted sweep took over.
+    fn wear_time_by_join(s: &Store, now: &str) -> std::collections::HashMap<String, (i64, i64, String)> {
+        let mut stmt = s
+            .db
+            .prepare(
+                "SELECT h.avatar_id,
+                        CAST(ROUND(SUM(MIN(43200, MAX(0,
+                            (MIN(julianday(COALESCE(h.ended_at, ?1)), julianday(COALESCE(v.left_at, ?1)))
+                             - MAX(julianday(h.worn_at), julianday(v.joined_at))) * 86400)))) AS INTEGER),
+                        COUNT(DISTINCT v.id),
+                        strftime('%Y-%m-%dT%H:%M:%SZ', MAX(MIN(julianday(COALESCE(h.ended_at, ?1)), julianday(COALESCE(v.left_at, ?1)))))
+                 FROM avatar_history h
+                 JOIN visits v
+                   ON julianday(v.joined_at) < julianday(COALESCE(h.ended_at, ?1))
+                  AND julianday(COALESCE(v.left_at, ?1)) > julianday(h.worn_at)
+                 WHERE h.imported_seconds IS NULL
+                 GROUP BY h.avatar_id",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map(params![now], |r| {
+                Ok((r.get::<_, String>(0)?, (r.get::<_, Option<i64>>(1)?.unwrap_or(0), r.get::<_, i64>(2)?, r.get::<_, Option<String>>(3)?.unwrap_or_default())))
+            })
+            .unwrap();
+        rows.map(Result::unwrap).collect()
+    }
+
+    #[test]
+    fn wear_time_in_worlds_matches_the_old_join() {
+        let s = Store::in_memory().unwrap();
+        // A made-up history with short and long stays, stays never closed, stays inside one
+        // wearing and wearings inside one stay, times written two ways, and one unreadable time.
+        let mut seed: u64 = 7;
+        let mut next = |n: u64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) % n
+        };
+        let start = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let stamp = |t: chrono::DateTime<chrono::Utc>, plain: bool| {
+            if plain { t.format("%Y-%m-%dT%H:%M:%SZ").to_string() } else { t.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string() }
+        };
+        let mut at = start;
+        for i in 0..600 {
+            at += chrono::Duration::seconds(next(4 * 3600) as i64);
+            let length = match next(20) {
+                0 => chrono::Duration::hours(30 + next(50) as i64),
+                1 => chrono::Duration::days(3),
+                _ => chrono::Duration::seconds(60 + next(3 * 3600) as i64),
+            };
+            let left = if next(40) == 0 { "NULL".to_string() } else { format!("'{}'", stamp(at + length, i % 2 == 0)) };
+            s.db.execute_batch(&format!(
+                "INSERT INTO visits (location, world_id, world_name, joined_at, left_at) VALUES ('wrld_{i}:1', 'wrld_{i}', '', '{}', {left});",
+                stamp(at, i % 3 == 0)
+            ))
+            .unwrap();
+        }
+        s.db.execute_batch("INSERT INTO visits (location, world_id, world_name, joined_at, left_at) VALUES ('wrld_bad:1', 'wrld_bad', '', 'not a time', NULL);").unwrap();
+        let mut at = start;
+        for i in 0..400 {
+            at += chrono::Duration::seconds(next(6 * 3600) as i64);
+            let ended = if next(30) == 0 { "NULL".to_string() } else { format!("'{}'", stamp(at + chrono::Duration::seconds(next(20 * 3600) as i64), false)) };
+            let imported = if next(10) == 0 { "3600" } else { "NULL" };
+            s.db.execute_batch(&format!(
+                "INSERT INTO avatar_history (avatar_id, worn_at, ended_at, imported_seconds) VALUES ('avtr_{}', '{}', {ended}, {imported});",
+                next(25),
+                stamp(at, i % 2 == 1)
+            ))
+            .unwrap();
+        }
+        let now = "2026-06-01T00:00:00.000Z";
+        let old = wear_time_by_join(&s, now);
+        let new = s.avatar_time_in_worlds(now).unwrap();
+        assert!(old.len() > 10, "the made-up history overlaps");
+        assert_eq!(new, old);
+    }
+
+    /// 20,000 stays and 2,000 wearings: times the old join against the sweep and checks they
+    /// agree. Run it with `cargo test --release -- --ignored wear_time_at_scale --nocapture`.
+    #[test]
+    #[ignore]
+    fn wear_time_at_scale() {
+        let s = Store::in_memory().unwrap();
+        s.db.execute_batch(
+            "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 19999)
+             INSERT INTO visits (location, world_id, world_name, joined_at, left_at)
+                 SELECT 'wrld_' || i || ':1', 'wrld_' || i, '', strftime('%Y-%m-%dT%H:%M:%fZ', '2024-01-01', '+' || (i * 3600) || ' seconds'),
+                        strftime('%Y-%m-%dT%H:%M:%fZ', '2024-01-01', '+' || (i * 3600 + 2400) || ' seconds') FROM n;
+             WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 1999)
+             INSERT INTO avatar_history (avatar_id, worn_at, ended_at)
+                 SELECT 'avtr_' || (i % 50), strftime('%Y-%m-%dT%H:%M:%fZ', '2024-01-01', '+' || (i * 36000) || ' seconds'),
+                        strftime('%Y-%m-%dT%H:%M:%fZ', '2024-01-01', '+' || (i * 36000 + 36000) || ' seconds') FROM n;",
+        )
+        .unwrap();
+        let now = "2026-06-01T00:00:00.000Z";
+        let began = std::time::Instant::now();
+        let old = wear_time_by_join(&s, now);
+        let join = began.elapsed();
+        let began = std::time::Instant::now();
+        let new = s.avatar_time_in_worlds(now).unwrap();
+        println!("join {join:?}, sweep {:?}", began.elapsed());
+        assert_eq!(new, old);
+    }
+
+    #[test]
+    fn vrcx_duplicates_are_judged_by_the_same_seconds_as_before() {
+        let dir = std::env::temp_dir().join(format!("anonymous-vrx-vrcx-edges-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let other = dir.join("VRCX.sqlite3");
+        {
+            let old = Connection::open(&other).unwrap();
+            old.execute_batch(
+                "CREATE TABLE usrme0000_feed_online_offline (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO usrme0000_feed_online_offline (created_at, user_id, display_name, type, location) VALUES
+                    ('2025-01-02T10:00:05.900Z', 'usr_a', 'Ana', 'Online', ''),
+                    ('2025-01-02T12:00:06.000Z', 'usr_a', 'Ana', 'Online', ''),
+                    ('2025-01-02T12:00:00.000Z', 'usr_a', 'Ana', 'Offline', ''),
+                    ('2025-01-02T11:00:00+01:00', 'usr_b', 'Bo', 'Online', ''),
+                    ('garbled', 'usr_b', 'Bo', 'Online', ''),
+                    ('2025-01-02T14:00:00.000Z', 'usr_c', 'Cy', 'Online', ''),
+                    ('2025-01-02T14:00:04.000Z', 'usr_c', 'Cy', 'Online', '');
+                 CREATE TABLE gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO gamelog_location (created_at, location, world_id, world_name, time) VALUES
+                    ('2025-01-02T10:00:10.000Z', 'wrld_x:1', 'wrld_x', 'Pier', 60000),
+                    ('2025-01-02T10:00:10.000Z', 'wrld_y:1', 'wrld_y', 'Hall', 60000),
+                    ('2025-01-02T10:00:11.000Z', 'wrld_x:1', 'wrld_x', 'Pier', 60000);",
+            )
+            .unwrap();
+        }
+        let s = Store::in_memory().unwrap();
+        s.db.execute_batch(
+            "INSERT INTO feed (at, user_id, display_name, kind) VALUES
+                ('2025-01-02T10:00:00.000Z', 'usr_a', 'Ana', 'online'),
+                ('2025-01-02T12:00:00.000Z', 'usr_a', 'Ana', 'online'),
+                ('2025-01-02T10:00:00Z', 'usr_b', 'Bo', 'online');
+             INSERT INTO visits (location, world_id, world_name, joined_at, left_at) VALUES
+                ('wrld_x:1', 'wrld_x', 'Pier', '2025-01-02T10:00:00.000Z', '2025-01-02T10:30:00.000Z'),
+                ('wrld_y:1', 'wrld_y', 'Hall', '2025-01-02 10:00:00', NULL);",
+        )
+        .unwrap();
+        let got = s.import_vrcx(&other, "usr_me-0000", true, None).unwrap();
+        // Ana online 5.9 s later counts as 5 whole seconds: already here. Six seconds is new, and
+        // an offline is another kind. Bo's time in another zone is the same moment: already here;
+        // a time that cannot be read is always new. Cy's two lines four seconds apart are one.
+        assert_eq!(got.feed, 4);
+        let kept: Vec<(String, String)> = {
+            let mut stmt = s.db.prepare("SELECT user_id, at FROM feed WHERE id > 3 ORDER BY id").unwrap();
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+            rows.map(Result::unwrap).collect()
+        };
+        assert!(kept.contains(&("usr_a".to_string(), "2025-01-02T12:00:06.000Z".to_string())));
+        assert!(kept.contains(&("usr_b".to_string(), "garbled".to_string())));
+        assert_eq!(kept.iter().filter(|k| k.0 == "usr_c").count(), 1);
+        // Ten seconds from a stay in the same instance is the same stay, written either way;
+        // eleven seconds is another one.
+        assert_eq!(got.visits, 1);
+        // A second run finds everything again except the line with no readable time, which
+        // matches nothing, as it never did.
+        assert_eq!(s.import_vrcx(&other, "usr_me-0000", true, None).unwrap(), BroughtOver { feed: 1, ..BroughtOver::default() });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn feed_search_filters_by_text_kind_and_time() {
         let s = Store::in_memory().unwrap();
@@ -2165,6 +2789,27 @@ mod tests {
         assert!(s.feed_search("", &[], None, Some("2000-01-01"), 50).unwrap().is_empty());
         let all = s.feed_search("", &[], None, None, 50).unwrap();
         assert_eq!(s.feed_search("", &[], Some(all[0].id), None, 50).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn feed_search_ignores_case_in_every_alphabet() {
+        let s = Store::in_memory().unwrap();
+        s.save_world(&World { id: "wrld_hall".into(), name: "Зал Über".into(), image: String::new() }).unwrap();
+        for (name, kind, location) in [("Мария", "online", ""), ("Έλενα", "online", ""), ("Pip", "location", "wrld_hall:1")] {
+            s.add_feed(&FeedDraft {
+                user_id: format!("usr_{name}"),
+                display_name: name.into(),
+                kind,
+                detail: String::new(),
+                previous: String::new(),
+                location: location.into(),
+            })
+            .unwrap();
+        }
+        assert_eq!(s.feed_search("мария", &[], None, None, 50).unwrap()[0].display_name, "Мария");
+        assert_eq!(s.feed_search("έλενα", &[], None, None, 50).unwrap()[0].display_name, "Έλενα");
+        assert_eq!(s.feed_search("über", &[], None, None, 50).unwrap()[0].display_name, "Pip", "world names fold too");
+        assert_eq!(s.feed_search("ЗАЛ", &[], None, None, 50).unwrap().len(), 1);
     }
 
     #[test]
@@ -2358,6 +3003,59 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s.together("usr_pip").unwrap().seconds, 3600);
+    }
+
+    #[test]
+    fn a_stay_never_ends_before_it_began() {
+        use crate::gamelog::LogEvent;
+        let s = Store::in_memory().unwrap();
+        let at = |t: &str| format!("2026-10-25T{t}Z");
+        // The clocks went back between the join and the leave, so the leave reads earlier.
+        s.record_log(
+            &[
+                (at("02:10:00"), LogEvent::Joining("wrld_a:1".into())),
+                (at("02:12:00"), LogEvent::PlayerJoined { name: "Pip".into(), id: "usr_pip".into() }),
+                (at("02:05:00"), LogEvent::PlayerLeft { name: "Pip".into(), id: "usr_pip".into() }),
+                (at("02:20:00"), LogEvent::PlayerJoined { name: "Ash".into(), id: "usr_ash".into() }),
+                (at("02:01:00"), LogEvent::LeftRoom),
+            ],
+            true,
+            "log:test",
+            1,
+        )
+        .unwrap();
+        let stay = s.visits(10, None).unwrap().remove(0);
+        assert_eq!(stay.left_at.as_deref(), Some(stay.joined_at.as_str()));
+        let mut people = s.visit_people(stay.id).unwrap();
+        people.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        for p in &people {
+            assert_eq!(p.left_at.as_deref(), Some(p.joined_at.as_str()), "{}", p.display_name);
+        }
+
+        // A stay closed after a crash, where only an earlier time was seen in it.
+        s.record_log(&[(at("03:30:00"), LogEvent::Joining("wrld_b:1".into()))], true, "log:test", 2).unwrap();
+        s.db.execute(
+            "INSERT INTO sightings (visit_id, user_id, display_name, joined_at) VALUES (2, 'usr_old', 'Old', '2026-10-25T02:50:00Z')",
+            [],
+        )
+        .unwrap();
+        s.record_log(&[], true, "log:test", 3).unwrap();
+        let crashed = s.visits(10, None).unwrap().remove(0);
+        assert_eq!((crashed.id, crashed.left_at.as_deref()), (2, Some(at("03:30:00").as_str())));
+    }
+
+    #[test]
+    fn finding_the_stay_at_a_moment_uses_an_index() {
+        let s = Store::in_memory().unwrap();
+        let sql = format!(
+            "EXPLAIN QUERY PLAN SELECT {VISIT_COLUMNS} FROM visits v
+             WHERE v.joined_at <= ?1 ORDER BY v.joined_at DESC, v.id DESC LIMIT 1"
+        );
+        let mut stmt = s.db.prepare(&sql).unwrap();
+        let plan: Vec<String> = stmt.query_map(params!["2026-01-01T00:00:00Z"], |r| r.get::<_, String>(3)).unwrap().map(Result::unwrap).collect();
+        assert!(plan.iter().any(|p| p.contains("visits_joined")), "{plan:?}");
+        // The order comes from the index too, with no sort of every stay.
+        assert!(!plan.iter().any(|p| p.contains("TEMP B-TREE FOR ORDER BY")), "{plan:?}");
     }
 
     #[test]
@@ -2699,15 +3397,25 @@ mod tests {
         let worn = s.avatar_history(10).unwrap();
         let fox = worn.iter().find(|a| a.avatar_id == "avtr_fox").unwrap();
         assert_eq!((fox.name.as_str(), fox.author_name.as_str()), ("Sunset Fox", "Rook"));
-        // The time worn ends when the avatar was last put on.
-        let (start, end): (String, String) = s.db.query_row("SELECT worn_at, ended_at FROM avatar_history WHERE avatar_id = 'avtr_fox'", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-        assert_eq!((start.as_str(), end.as_str()), ("2025-03-01T18:30:00.000Z", "2025-03-01T20:00:00.000Z"));
-        // Thirty hours in total come over as three wearings, none longer than twelve hours.
-        let (pieces, seconds): (i64, i64) = s
+        // One row at the moment it was last put on, with the total kept apart as imported time.
+        let (start, end, kept): (String, String, i64) = s
             .db
-            .query_row("SELECT COUNT(*), CAST(ROUND(SUM((julianday(ended_at) - julianday(worn_at)) * 86400)) AS INTEGER) FROM avatar_history WHERE avatar_id = 'avtr_long'", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_row("SELECT worn_at, ended_at, imported_seconds FROM avatar_history WHERE avatar_id = 'avtr_fox'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .unwrap();
-        assert_eq!((pieces, seconds), (3, 108000));
+        assert_eq!((start.as_str(), end.as_str(), kept), ("2025-03-01T20:00:00.000Z", "2025-03-01T20:00:00.000Z", 5400));
+        assert_eq!((fox.imported_seconds, fox.seconds, fox.last_worn.as_str()), (5400, 0, "2025-03-01T20:00:00.000Z"));
+        let long = worn.iter().find(|a| a.avatar_id == "avtr_long").unwrap();
+        assert_eq!((long.times, long.imported_seconds), (1, 108000));
+        assert!(worn.iter().all(|a| !a.wearing), "nothing brought over is being worn now");
+        // Imported time says nothing about when it was, so it claims no world stays.
+        s.db.execute(
+            "INSERT INTO visits (location, world_id, world_name, joined_at, left_at)
+             VALUES ('wrld_x:1', 'wrld_x', 'Pier', '2025-03-03T08:00:00.000Z', '2025-03-03T21:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+        let long = s.avatar_history(10).unwrap().into_iter().find(|a| a.avatar_id == "avtr_long").unwrap();
+        assert_eq!((long.seconds_in_game, long.visits, long.last_in_game.as_str()), (0, 0, ""));
         // VRCX notes a later wearing by changing the same line; nothing is added for an avatar already here.
         {
             let old = Connection::open(&other).unwrap();
@@ -2719,6 +3427,180 @@ mod tests {
         let quiet = Store::in_memory().unwrap();
         let got = quiet.import_vrcx(&other, "usr_me-0000", true, None).unwrap();
         assert_eq!((got.avatars, got.tags), (3, 0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_avatar_on_now_stays_first_after_a_vrcx_import() {
+        let dir = std::env::temp_dir().join(format!("anonymous-vrx-wearing-first-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let other = dir.join("other.sqlite3");
+        {
+            let old = Connection::open(&other).unwrap();
+            old.execute_batch(
+                "CREATE TABLE usrme0000_avatar_history (avatar_id TEXT PRIMARY KEY, created_at TEXT, time INTEGER);
+                 INSERT INTO usrme0000_avatar_history VALUES ('avtr_old', '2024-05-01T20:00:00.000Z', 3600000), ('avtr_newer', '2026-01-01T09:30:00.000Z', 3600000);",
+            )
+            .unwrap();
+        }
+        let s = Store::in_memory().unwrap();
+        assert!(s.wear_avatar("avtr_before", "2025-12-31T10:00:00.000Z").unwrap());
+        assert!(s.wear_avatar("avtr_now", "2026-01-01T08:00:00.000Z").unwrap());
+        assert_eq!(s.import_vrcx(&other, "usr_me-0000", true, None).unwrap().avatars, 2);
+        let list = s.avatar_history(10).unwrap();
+        let order: Vec<&str> = list.iter().map(|a| a.avatar_id.as_str()).collect();
+        // The one on now leads, then the rest by when each was last put on, not by when it was written.
+        assert_eq!(order, ["avtr_now", "avtr_newer", "avtr_before", "avtr_old"]);
+        assert_eq!(list.iter().filter(|a| a.wearing).count(), 1);
+        assert!(list[0].wearing);
+        // Asking for fewer still keeps the one on now.
+        let two: Vec<String> = s.avatar_history(2).unwrap().into_iter().map(|a| a.avatar_id).collect();
+        assert_eq!(two, ["avtr_now", "avtr_newer"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn older_vrcx_avatar_rows_fold_into_imported_time() {
+        let db = Connection::open_in_memory().unwrap();
+        // The table as it was before imported time had its own column.
+        db.execute_batch(
+            "CREATE TABLE avatar_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, avatar_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '',
+                author_id TEXT NOT NULL DEFAULT '', author_name TEXT NOT NULL DEFAULT '', image TEXT NOT NULL DEFAULT '',
+                release_status TEXT NOT NULL DEFAULT '', worn_at TEXT NOT NULL, ended_at TEXT);
+             INSERT INTO avatar_history (avatar_id, name, worn_at, ended_at) VALUES
+                ('avtr_a', 'A', '2026-01-01T10:00:00.000Z', '2026-01-01T11:00:00.000Z'),
+                ('avtr_b', 'B', '2026-01-01T11:00:00.000Z', '2026-01-01T12:00:00.000Z'),
+                ('avtr_a', 'A', '2026-01-01T12:00:00.000Z', NULL),
+                ('avtr_fox', 'Fox', '2025-03-01T08:00:00.000Z', '2025-03-01T20:00:00.000Z'),
+                ('avtr_fox', 'Fox', '2025-02-28T20:00:00.000Z', '2025-03-01T08:00:00.000Z'),
+                ('avtr_fox', 'Fox', '2025-02-28T14:00:00.000Z', '2025-02-28T20:00:00.000Z'),
+                ('avtr_owl', 'Owl', '2025-03-02T20:00:00.000Z', '2025-03-02T20:00:00.000Z');",
+        )
+        .unwrap();
+        upgrade_avatar_history(&db).unwrap();
+        // A second open finds the column and changes nothing.
+        upgrade_avatar_history(&db).unwrap();
+        let rows = |id: &str| -> Vec<(String, Option<String>, Option<i64>)> {
+            let mut stmt = db.prepare("SELECT worn_at, ended_at, imported_seconds FROM avatar_history WHERE avatar_id = ?1 ORDER BY id").unwrap();
+            let found = stmt.query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+            found
+        };
+        // Wearings this app recorded stay as they were.
+        assert_eq!(rows("avtr_a").len(), 2);
+        assert!(rows("avtr_a").iter().all(|r| r.2.is_none()));
+        assert_eq!(rows("avtr_b"), [("2026-01-01T11:00:00.000Z".to_string(), Some("2026-01-01T12:00:00.000Z".to_string()), None)]);
+        // The made-up pieces become one row with their total.
+        let last = "2025-03-01T20:00:00.000Z".to_string();
+        assert_eq!(rows("avtr_fox"), [(last.clone(), Some(last), Some(30 * 3600))]);
+        assert_eq!(rows("avtr_owl")[0].2, Some(0));
+        let name: String = db.query_row("SELECT name FROM avatar_history WHERE avatar_id = 'avtr_fox'", [], |r| r.get(0)).unwrap();
+        assert_eq!(name, "Fox");
+    }
+
+    #[test]
+    fn an_import_newer_than_everything_keeps_the_ids_already_given() {
+        let dir = std::env::temp_dir().join(format!("anonymous-vrx-append-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let other = dir.join("other.sqlite3");
+        {
+            let old = Connection::open(&other).unwrap();
+            old.execute_batch(
+                "CREATE TABLE usrme0000_feed_gps (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO usrme0000_feed_gps (created_at, user_id, display_name, location, previous_location) VALUES ('2025-01-02T10:00:00.000Z', 'usr_a', 'Ana', 'wrld_x:1', 'private');
+                 CREATE TABLE usrme0000_feed_online_offline (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, type TEXT, location TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO usrme0000_feed_online_offline (created_at, user_id, display_name, type, location) VALUES ('2025-01-02T09:00:00.000Z', 'usr_a', 'Ana', 'Online', 'private');
+                 CREATE TABLE gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO gamelog_location (created_at, location, world_id, world_name, time) VALUES ('2025-01-02T12:00:00.000Z', 'wrld_x:1', 'wrld_x', 'Pier', 3600000);",
+            )
+            .unwrap();
+        }
+        let s = Store::in_memory().unwrap();
+        s.db.execute_batch(
+            "INSERT INTO feed (at, user_id, display_name, kind) VALUES ('2024-06-01T10:00:00.000Z', 'usr_b', 'Bo', 'online');
+             INSERT INTO visits (location, world_id, world_name, joined_at, left_at) VALUES ('wrld_y:1', 'wrld_y', 'Hall', '2024-06-01T10:00:00.000Z', NULL);",
+        )
+        .unwrap();
+        let got = s.import_vrcx(&other, "usr_me-0000", true, None).unwrap();
+        assert_eq!((got.feed, got.visits), (2, 1));
+        let bo: i64 = s.db.query_row("SELECT id FROM feed WHERE user_id = 'usr_b'", [], |r| r.get(0)).unwrap();
+        assert_eq!(bo, 1, "nothing was numbered again");
+        let hall: i64 = s.db.query_row("SELECT id FROM visits WHERE world_id = 'wrld_y'", [], |r| r.get(0)).unwrap();
+        assert_eq!(hall, 1, "the stay already here keeps its number");
+        // The new entries still go in by time, though they came from two tables.
+        let feed = s.feed(50, None).unwrap();
+        assert!(feed.windows(2).all(|w| w[0].at >= w[1].at && w[0].id > w[1].id));
+        assert_eq!(feed[0].kind, "location");
+        assert_eq!(s.setting(RENUMBER_FEED).unwrap(), None, "a list left in order loses its mark");
+        assert_eq!(s.setting(RENUMBER_VISITS).unwrap(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_import_cut_off_before_the_renumber_is_put_in_order_later() {
+        let dir = std::env::temp_dir().join(format!("anonymous-vrx-cut-off-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let other = dir.join("other.sqlite3");
+        {
+            let old = Connection::open(&other).unwrap();
+            old.execute_batch(
+                "CREATE TABLE usrme0000_feed_gps (id INTEGER PRIMARY KEY, created_at TEXT, user_id TEXT, display_name TEXT, location TEXT, world_name TEXT, previous_location TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO usrme0000_feed_gps (created_at, user_id, display_name, location, previous_location) VALUES ('2025-01-02T10:00:00.000Z', 'usr_a', 'Ana', 'wrld_x:1', 'private');
+                 CREATE TABLE gamelog_location (id INTEGER PRIMARY KEY, created_at TEXT, location TEXT, world_id TEXT, world_name TEXT, time INTEGER, group_name TEXT);
+                 INSERT INTO gamelog_location (created_at, location, world_id, world_name, time) VALUES ('2025-01-02T12:00:00.000Z', 'wrld_x:1', 'wrld_x', 'Pier', 3600000);
+                 CREATE TABLE gamelog_join_leave (id INTEGER PRIMARY KEY, created_at TEXT, type TEXT, display_name TEXT, location TEXT, user_id TEXT, time INTEGER);
+                 INSERT INTO gamelog_join_leave (created_at, type, display_name, location, user_id, time) VALUES ('2025-01-02T12:00:05.000Z', 'OnPlayerJoined', 'Ana', 'wrld_x:1', 'usr_a', 0);",
+            )
+            .unwrap();
+        }
+        // The job left undone is finished by the next import, and also by opening the history again.
+        for reopen in [false, true] {
+            let path = dir.join(format!("history-{reopen}.sqlite3"));
+            let s = Store::open(&path).unwrap();
+            // Rows the app recorded itself, newer than everything coming over.
+            s.db.execute_batch(
+                "INSERT INTO feed (at, user_id, display_name, kind) VALUES ('2026-06-01T10:00:00.000Z', 'usr_b', 'Bo', 'online');
+                 INSERT INTO visits (location, world_id, world_name, joined_at, left_at) VALUES ('wrld_y:1', 'wrld_y', 'Hall', '2026-06-01T10:00:00.000Z', '2026-06-01T11:00:00.000Z');",
+            )
+            .unwrap();
+
+            // The run stops after its pieces are written and before the renumber.
+            STOP_BEFORE_RENUMBER.with(|stop| stop.set(true));
+            let cut = s.import_vrcx(&other, "usr_me-0000", true, None);
+            STOP_BEFORE_RENUMBER.with(|stop| stop.set(false));
+            assert!(cut.is_err());
+            // The older rows sit after the newer ones, and the marks that say so are on the file.
+            assert!(out_of_order(&s.db, "feed", "at", 0).unwrap());
+            assert!(out_of_order(&s.db, "visits", "joined_at", 0).unwrap());
+            assert_eq!(s.setting(RENUMBER_FEED).unwrap().as_deref(), Some("1"));
+            assert_eq!(s.setting(RENUMBER_VISITS).unwrap().as_deref(), Some("1"));
+
+            let s = if reopen {
+                drop(s);
+                Store::open(&path).unwrap()
+            } else {
+                assert_eq!(s.import_vrcx(&other, "usr_me-0000", true, None).unwrap(), BroughtOver::default(), "nothing comes over twice");
+                s
+            };
+            assert!(!out_of_order(&s.db, "feed", "at", 0).unwrap(), "the feed is in order again (reopened: {reopen})");
+            assert!(!out_of_order(&s.db, "visits", "joined_at", 0).unwrap(), "the stays are in order again (reopened: {reopen})");
+            assert_eq!(s.setting(RENUMBER_FEED).unwrap(), None);
+            assert_eq!(s.setting(RENUMBER_VISITS).unwrap(), None);
+            let feed = s.feed(10, None).unwrap();
+            assert_eq!(feed.len(), 2);
+            assert_eq!(feed[0].user_id, "usr_b", "the newest entry leads");
+            assert!(feed.windows(2).all(|w| w[0].at >= w[1].at && w[0].id > w[1].id));
+            let visits = s.visits(10, None).unwrap();
+            assert_eq!(visits.iter().map(|v| v.world_name.as_str()).collect::<Vec<_>>(), ["Hall", "Pier"]);
+            let pier = visits.iter().find(|v| v.world_name == "Pier").unwrap();
+            let people = s.visit_people(pier.id).unwrap();
+            assert_eq!(people.len(), 1, "the people seen still point at their stay");
+            assert_eq!(people[0].display_name, "Ana");
+            drop(s);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

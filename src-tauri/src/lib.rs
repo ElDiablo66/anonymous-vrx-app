@@ -5,6 +5,7 @@ pub mod export;
 pub mod gamecache;
 pub mod gamelog;
 pub mod hub;
+pub mod overlay;
 pub mod photos;
 pub mod secrets;
 pub mod stats;
@@ -30,7 +31,7 @@ use vrchat::people::{AvatarCard, Person, WorldCard};
 /// Used in the User-Agent, the credential store entry and file names.
 pub const APP_SLUG: &str = "anonymous-vrx";
 /// Shown to VRChat in the User-Agent so they can tell what this client is.
-pub const APP_CONTACT: &str = "personal desktop build";
+pub const APP_CONTACT: &str = "https://github.com/ElDiablo66/anonymous-vrx-app";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,17 +81,20 @@ async fn logout(hub: State<'_, Arc<Hub>>) -> AppResult<()> {
     hub.sign_out().await
 }
 
-#[tauri::command]
+// Commands that read the history or the hub's shared state are marked `async`, so they run
+// on the background pool instead of the window's own thread. A command that has to wait for
+// the history (a long import or another long job holding it) then never freezes the window.
+#[tauri::command(async)]
 fn get_friends(hub: State<'_, Arc<Hub>>) -> Vec<Friend> {
     hub.friends()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_favorites(hub: State<'_, Arc<Hub>>) -> Favorites {
     hub.favorites()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_notices(hub: State<'_, Arc<Hub>>) -> Vec<Notice> {
     hub.notices()
 }
@@ -198,10 +202,15 @@ async fn invite_to_group(hub: State<'_, Arc<Hub>>, group_id: String, user_id: St
     hub.invite_to_group(&group_id, &user_id).await
 }
 
-/// Changes my bio, my pronouns and the links on my profile.
+/// Changes my bio with its links, and my pronouns. What is left out stays as it is.
 #[tauri::command]
-async fn update_profile(hub: State<'_, Arc<Hub>>, bio: String, pronouns: String, links: Vec<String>) -> AppResult<()> {
-    hub.update_profile(&bio, &pronouns, &links).await
+async fn update_profile(hub: State<'_, Arc<Hub>>, bio: Option<String>, links: Option<Vec<String>>, pronouns: Option<String>) -> AppResult<()> {
+    let about = match (&bio, &links) {
+        (Some(bio), Some(links)) => Some((bio.as_str(), links.as_slice())),
+        (None, None) => None,
+        _ => return Err(AppError::CannotDo("The bio and its links go together.".into())),
+    };
+    hub.update_profile(about, pronouns.as_deref()).await
 }
 
 fn pictures_root(app: &AppHandle) -> AppResult<std::path::PathBuf> {
@@ -323,7 +332,7 @@ async fn load_picture(hub: State<'_, Arc<Hub>>, url: String) -> AppResult<String
 }
 
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_favorites_cached(hub: State<'_, Arc<Hub>>, kind: String) -> Option<serde_json::Value> {
     hub.favorites_cached(&kind)
 }
@@ -333,17 +342,17 @@ async fn group_action(hub: State<'_, Arc<Hub>>, group_id: String, action: String
     hub.group_action(&group_id, &action).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_note(hub: State<'_, Arc<Hub>>, id: String) -> AppResult<String> {
     hub.note(&id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_avatar_history(hub: State<'_, Arc<Hub>>, limit: u32) -> AppResult<Vec<store::AvatarWorn>> {
     hub.avatar_history(limit)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn search_feed(
     hub: State<'_, Arc<Hub>>,
     query: String,
@@ -355,22 +364,22 @@ fn search_feed(
     hub.feed_search(&query, &kinds, before, until.as_deref(), limit)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_together_counts(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, i64>> {
     hub.together_counts()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_local_favorites(hub: State<'_, Arc<Hub>>, kind: String) -> AppResult<Vec<store::LocalFavorite>> {
     hub.local_favorites(&kind)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn add_local_favorite(hub: State<'_, Arc<Hub>>, favorite: store::LocalFavorite) -> AppResult<()> {
     hub.add_local_favorite(&favorite)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_local_favorite(hub: State<'_, Arc<Hub>>, kind: String, item_id: String) -> AppResult<()> {
     hub.remove_local_favorite(&kind, &item_id)
 }
@@ -429,13 +438,13 @@ fn set_own_feed(hub: State<'_, Arc<Hub>>, on: bool) {
 }
 
 /// User id to when this PC last saw them do anything.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_last_seen(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, String>> {
     hub.last_seen()
 }
 
 /// The full instances I am waiting to get into.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_waiting(hub: State<'_, Arc<Hub>>) -> serde_json::Value {
     hub.waiting()
 }
@@ -446,13 +455,13 @@ async fn wait_for_room(hub: State<'_, Arc<Hub>>, location: String, world_name: S
     hub.inner().wait_for_room(&location, &world_name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_waiting(hub: State<'_, Arc<Hub>>, location: String) {
     hub.stop_waiting(&location);
 }
 
 /// What is known about which of my friends are friends with each other.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_mutuals(hub: State<'_, Arc<Hub>>) -> AppResult<serde_json::Value> {
     hub.mutuals()
 }
@@ -471,80 +480,80 @@ fn stop_mutuals(hub: State<'_, Arc<Hub>>) {
 }
 
 /// Which of these people I often saw in the same instance, for the lines on the friend map.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_pairs(hub: State<'_, Arc<Hub>>, ids: Vec<String>) -> AppResult<serde_json::Value> {
     hub.pairs(&ids)
 }
 
 /// People and worlds in my own history whose name has the words in it.
-#[tauri::command]
+#[tauri::command(async)]
 fn log_find(hub: State<'_, Arc<Hub>>, query: String) -> AppResult<serde_json::Value> {
     hub.log_find(&query)
 }
 
 /// Every stay of mine with one person or in one world, newest first.
-#[tauri::command]
+#[tauri::command(async)]
 fn log_stays(hub: State<'_, Arc<Hub>>, kind: String, id: String, name: String) -> AppResult<serde_json::Value> {
     hub.log_stays(&kind, &id, &name)
 }
 
 /// Where and when I meet one person. From this PC's history only.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_habits(hub: State<'_, Arc<Hub>>, user_id: String) -> AppResult<serde_json::Value> {
     hub.habits(&user_id)
 }
 
 /// How my own worlds stood day by day: visits, favourites and the most people seen.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_world_stats(hub: State<'_, Arc<Hub>>, days: i64) -> AppResult<serde_json::Value> {
     hub.world_stats(days)
 }
 
 /// My stars, by world or avatar id.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_ratings(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, i64>> {
     hub.ratings()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_rating(hub: State<'_, Arc<Hub>>, item_id: String, stars: i64) -> AppResult<()> {
     hub.set_rating(&item_id, stars)
 }
 
 /// Item id to my tags on it.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_tags(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, Vec<String>>> {
     hub.tags()
 }
 
 /// Replaces my tags on an avatar or a world; gives back the tags as saved.
-#[tauri::command]
+#[tauri::command(async)]
 fn set_tags(hub: State<'_, Arc<Hub>>, item_id: String, tags: Vec<String>) -> AppResult<Vec<String>> {
     hub.set_tags(&item_id, &tags)
 }
 
 /// World id to how often I visited it and when last.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_world_visits(hub: State<'_, Arc<Hub>>) -> AppResult<std::collections::HashMap<String, (i64, String)>> {
     hub.world_visits()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_alerts(hub: State<'_, Arc<Hub>>, alerts: hub::Alerts) {
     hub.set_alerts(alerts);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_note(hub: State<'_, Arc<Hub>>, user_id: String, note: String) -> AppResult<()> {
     hub.set_note(&user_id, &note)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_noted(hub: State<'_, Arc<Hub>>) -> Vec<String> {
     hub.noted()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_friend_log(hub: State<'_, Arc<Hub>>, limit: u32) -> AppResult<Vec<FeedItem>> {
     hub.friend_log(limit)
 }
@@ -564,13 +573,24 @@ async fn search_avatars(hub: State<'_, Arc<Hub>>, provider: String, query: Strin
     hub.search_avatars(&provider, &query).await
 }
 
-/// Puts an avatar on. Only ids that look like avatar ids are passed on.
+/// Puts an avatar on. Only ids that look like avatar ids are passed on. How it went is also told
+/// in the headset while VRChat runs, since the window is out of sight there; `name` is only for
+/// those words.
 #[tauri::command]
-async fn wear_avatar(hub: State<'_, Arc<Hub>>, avatar_id: String) -> AppResult<()> {
+async fn wear_avatar(app: AppHandle, hub: State<'_, Arc<Hub>>, avatar_id: String, name: Option<String>) -> AppResult<()> {
     if !avatar_id.starts_with("avtr_") {
         return Err(AppError::CannotDo("That is not an avatar id.".into()));
     }
-    hub.api.select_avatar(&avatar_id).await
+    let result = hub.api.select_avatar(&avatar_id).await;
+    let name = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    let (title, body) = match (&result, name) {
+        (Ok(()), Some(name)) => (format!("Now wearing {name}"), "VRChat switched your avatar. The game may take a moment to load it.".to_string()),
+        (Ok(()), None) => ("Avatar changed".to_string(), "VRChat switched your avatar. The game may take a moment to load it.".to_string()),
+        (Err(e), Some(name)) => (format!("{name} did not go on"), e.to_string()),
+        (Err(e), None) => ("Avatar not changed".to_string(), e.to_string()),
+    };
+    vr_notice(&app, VrAlert { kind: "invite".into(), label: "Avatar".into(), title, body }, false);
+    result
 }
 
 #[tauri::command]
@@ -593,7 +613,7 @@ fn open_link(url: String) -> AppResult<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_handled(hub: State<'_, Arc<Hub>>, limit: u32) -> AppResult<Vec<Handled>> {
     hub.handled(limit)
 }
@@ -615,7 +635,7 @@ async fn notice_action(
     .await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_instances(hub: State<'_, Arc<Hub>>) -> Vec<Instance> {
     hub.instances()
 }
@@ -636,18 +656,18 @@ async fn request_invite(hub: State<'_, Arc<Hub>>, user_id: String, slot: Option<
     hub.request_invite(&user_id, slot).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_worlds(hub: State<'_, Arc<Hub>>) -> Vec<World> {
     hub.worlds()
 }
 
 /// Asks for a world's name and picture if the app does not have them yet.
-#[tauri::command]
+#[tauri::command(async)]
 fn want_world(hub: State<'_, Arc<Hub>>, world_id: String) -> AppResult<()> {
     hub.ask_world(&world_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_feed(hub: State<'_, Arc<Hub>>, limit: u32, before: Option<i64>) -> AppResult<Vec<FeedItem>> {
     hub.feed(limit, before)
 }
@@ -659,27 +679,27 @@ struct Here {
     people: Vec<Sighting>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_here(hub: State<'_, Arc<Hub>>) -> AppResult<Option<Here>> {
     Ok(hub.here()?.map(|(visit, people)| Here { visit, people }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_visits(hub: State<'_, Arc<Hub>>, limit: u32, before: Option<i64>) -> AppResult<Vec<Visit>> {
     hub.visits(limit, before)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_visit_people(hub: State<'_, Arc<Hub>>, visit_id: i64) -> AppResult<Vec<Sighting>> {
     hub.visit_people(visit_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_videos(hub: State<'_, Arc<Hub>>, limit: u32) -> AppResult<Vec<store::VideoPlay>> {
     hub.videos(limit)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_videos_page(hub: State<'_, Arc<Hub>>, query: String, skip_arrival: bool, before_at: Option<String>, before_id: Option<i64>, limit: u32) -> AppResult<serde_json::Value> {
     let before = before_at.zip(before_id);
     let (rows, total) = hub.videos_page(&query, skip_arrival, before, limit)?;
@@ -687,18 +707,18 @@ fn get_videos_page(hub: State<'_, Arc<Hub>>, query: String, skip_arrival: bool, 
 }
 
 /// My own numbers over a range: "7d", "30d", "year" or "all".
-#[tauri::command]
+#[tauri::command(async)]
 fn get_my_stats(hub: State<'_, Arc<Hub>>, range: String) -> AppResult<stats::MyStats> {
     hub.my_stats(&range, GAME_RUNNING.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Friends whose friendship day is today or in the next days.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_friend_days(hub: State<'_, Arc<Hub>>, ahead: u32) -> AppResult<Vec<hub::FriendDay>> {
     hub.friend_days(ahead)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_visit_videos(hub: State<'_, Arc<Hub>>, visit_id: i64) -> AppResult<Vec<store::VideoPlay>> {
     hub.visit_videos(visit_id)
 }
@@ -751,7 +771,7 @@ fn open_exports_folder(app: AppHandle, path: Option<String>) -> AppResult<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_pipeline_status(hub: State<'_, Arc<Hub>>) -> &'static str {
     hub.pipeline_status()
 }
@@ -764,9 +784,14 @@ fn backups_root(app: &AppHandle) -> AppResult<std::path::PathBuf> {
         .map_err(|e| AppError::Storage(e.to_string()))
 }
 
+/// Copying a large history takes a while, so it runs aside and the window keeps answering.
 #[tauri::command]
-fn backup_now(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String) -> AppResult<backup::BackupInfo> {
-    hub.backup(&backups_root(&app)?, &settings, "backup")
+async fn backup_now(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String) -> AppResult<backup::BackupInfo> {
+    let root = backups_root(&app)?;
+    let hub = hub.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || hub.backup(&root, &settings, "backup"))
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))?
 }
 
 /// Where VRCX keeps its history on this PC.
@@ -815,7 +840,7 @@ fn vrcx_stamp() -> String {
 
 // ---------- updates ----------
 
-/// Where a newer version is announced. Only the app-only edition has such a place; the full
+/// Where a newer version is announced. Only the edition published on GitHub has such a place; the full
 /// edition is passed on by hand and never replaces itself.
 const UPDATE_FEED: &str = "https://github.com/ElDiablo66/anonymous-vrx-app/releases/latest/download/latest.json";
 
@@ -880,10 +905,98 @@ async fn update_install(app: AppHandle) -> AppResult<()> {
 
 // ---------- drawing without the graphics card ----------
 
+// ---------- when the app cannot go on ----------
+
+/// The app's own folder, worked out by hand, since it is needed before Tauri starts: the same
+/// folder Tauri uses.
+fn own_folder() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("app.anonymousvrx.desktop"))
+}
+
+/// Where the last crash is written down.
+fn crash_file() -> Option<std::path::PathBuf> {
+    own_folder().map(|d| d.join("crash log.txt"))
+}
+
+/// A plain Windows message box, which works without the app's window.
+fn tell_windows(title: &str, text: &str) {
+    // Loaded from Windows itself, so both editions can do it without another library.
+    #[cfg(windows)]
+    unsafe {
+        type MessageBoxW = unsafe extern "system" fn(isize, *const u16, *const u16, u32) -> i32;
+        // MB_OK | MB_ICONERROR | MB_SETFOREGROUND
+        const STYLE: u32 = 0x0000_0000 | 0x0000_0010 | 0x0001_0000;
+        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let (title, text) = (wide(title), wide(text));
+        if let Ok(user32) = libloading::Library::new("user32.dll") {
+            if let Ok(show) = user32.get::<MessageBoxW>(b"MessageBoxW ") {
+                show(0, text.as_ptr(), title.as_ptr(), STYLE);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (title, text);
+}
+
+/// The words written down for one crash: what went wrong, where, the version and Windows.
+fn crash_words(what: &str, at: &str, when: &str) -> String {
+    format!(
+        "Anonymous VRX {} closed because something went wrong.\r\nWhen: {when}\r\nWhat: {what}\r\nWhere: {at}\r\nWindows: {}\r\n",
+        env!("CARGO_PKG_VERSION"),
+        std::env::var("OS").unwrap_or_default()
+    )
+}
+
+/// A crash used to end the app without a word. Now what went wrong is written to a small file
+/// and shown in a message box first, so it can be sent to me. No account details are in it.
+fn keep_crashes() {
+    std::panic::set_hook(Box::new(|info| {
+        let what = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "no details".into());
+        let at = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let when = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
+        let words = crash_words(&what, &at, &when);
+        let saved = crash_file().and_then(|file| {
+            std::fs::create_dir_all(file.parent()?).ok()?;
+            std::fs::write(&file, &words).ok()?;
+            Some(file)
+        });
+        let mut text = format!("Anonymous VRX had to close.\n\n{what}");
+        if what.contains("WebView2") || what.contains("Failed to setup app") {
+            text.push_str("\n\nThis is usually Microsoft Edge WebView2, the part of Windows that draws the app's window. Installing the Evergreen WebView2 Runtime from Microsoft fixes it: https://developer.microsoft.com/microsoft-edge/webview2/");
+        }
+        if let Some(file) = saved {
+            text.push_str(&format!("\n\nWhat happened is written in:\n{}", file.display()));
+        }
+        tell_windows("Anonymous VRX", &text);
+    }));
+}
+
+/// The window is drawn by Microsoft Edge WebView2. When Windows has none (some "debloat" tools
+/// remove it), the app could not even open its window and closed without a word; now it says
+/// what is missing and where to get it, and does not start.
+fn window_parts_work() -> bool {
+    #[cfg(windows)]
+    if let Err(e) = tauri::webview_version() {
+        tell_windows(
+            "Anonymous VRX",
+            &format!(
+                "Anonymous VRX cannot open its window: Microsoft Edge WebView2 is missing or broken on this PC ({e}).\n\nInstall the Evergreen WebView2 Runtime from Microsoft, then start the app again:\nhttps://developer.microsoft.com/microsoft-edge/webview2/"
+            ),
+        );
+        return false;
+    }
+    true
+}
+
 /// The file whose presence means "draw without the graphics card". It has to be found before
 /// the window exists, so its place is worked out by hand: the same folder Tauri uses.
 fn no_gpu_flag() -> Option<std::path::PathBuf> {
-    std::env::var_os("APPDATA").map(|d| std::path::PathBuf::from(d).join("app.anonymousvrx.desktop").join("draw without graphics card"))
+    own_folder().map(|d| d.join("draw without graphics card"))
 }
 
 /// Tells the window's browser part to leave the graphics card alone, when I asked for that.
@@ -964,7 +1077,7 @@ async fn clear_game_cache(old_only: bool) -> AppResult<gamecache::Cleared> {
     let game = game_folder()?;
     tauri::async_runtime::spawn_blocking(move || {
         if !game_surely_closed() {
-            return Err(AppError::CannotDo("Close VRChat first. It is using the cache right now, or is just starting.".into()));
+            return Err(AppError::CannotDo("Close VRChat first. It looks like it is still running or just starting, and it reads the cache then.".into()));
         }
         gamecache::clear(&game, old_only, &still_closed())
     })
@@ -987,26 +1100,165 @@ fn set_vr_notices(rules: vr::Rules) {
     *VR_RULES.lock().unwrap() = Some(rules);
 }
 
-/// Hands a notice to the overlay programs switched on, while VRChat runs. Quiet hours hold
-/// here too; "quiet while VRChat runs" does not, since the headset is where I am looking then.
-fn vr_notice(app: &AppHandle, title: String, body: String) {
-    let Some(rules) = (*VR_RULES.lock().unwrap()).filter(vr::Rules::any) else {
+/// One thing to tell me in the headset. `kind` picks the colour of the app's own panel
+/// (friend, invite, room, day, battery, tracking, steamvr) and `label` names it there.
+pub struct VrAlert {
+    pub kind: String,
+    pub label: String,
+    pub title: String,
+    pub body: String,
+}
+
+/// Hands a notice to the one place in the headset that takes it first (see `vr::deliver`):
+/// XSOverlay, OVR Toolkit (in view or on the wrist, one of them) or the app's own panel, in the
+/// order set. The places after it are not tried, so one alert makes one notice. Quiet hours hold
+/// here too.
+/// Notices about VRChat only go while VRChat runs; SteamVR's own news goes whenever SteamVR does.
+///
+/// SteamVR's own news only comes when its alerts are switched on, and the app is in SteamVR then,
+/// so its own panel is always a place for it, even with the notice panel switched off. The one
+/// exception is SteamVR closing: the panel closes with it, so that goes to the other programs and
+/// to Windows.
+fn vr_notice(app: &AppHandle, alert: VrAlert, steamvr: bool) {
+    let Some(mut rules) = *VR_RULES.lock().unwrap() else {
         return;
     };
-    if !GAME_RUNNING.load(std::sync::atomic::Ordering::Relaxed) || in_quiet_time() {
+    if steamvr {
+        rules.own = true;
+    }
+    if !rules.any() || (!steamvr && !GAME_RUNNING.load(std::sync::atomic::Ordering::Relaxed)) || in_quiet_time() {
         return;
     }
-    let _ = app;
+    let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let _ = vr::send(rules, title, body).await;
+        let closing = steamvr && alert.kind == "steamvr";
+        let own_ready = rules.own && !closing && app.try_state::<overlay::Overlay>().is_some_and(|o| o.connected());
+        if vr::deliver(&rules, &alert.title, &alert.body, own_ready, vr::XS_URL, vr::OVR_URL).await == Some(vr::Target::Own) {
+            // The window draws the panel and hands the picture back through `vr_overlay_notice`.
+            let _ = app.emit("vr:draw", serde_json::json!({ "kind": alert.kind, "label": alert.label, "title": alert.title, "body": alert.body }));
+        }
     });
 }
 
 #[tauri::command]
-fn notify_vr(app: AppHandle, title: String, body: String) {
-    vr_notice(&app, title, body);
+fn notify_vr(app: AppHandle, title: String, body: String, kind: Option<String>, label: Option<String>) {
+    let alert = VrAlert { kind: kind.unwrap_or_else(|| "friend".into()), label: label.unwrap_or_default(), title, body };
+    vr_notice(&app, alert, false);
 }
 
+// ---------- the app's own panels in SteamVR ----------
+
+fn steamvr_running() -> bool {
+    is_running("vrserver.exe")
+}
+
+/// A PNG's height divided by its width, from its header.
+fn png_aspect(bytes: &[u8]) -> Option<f32> {
+    if bytes.len() < 24 || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+    let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+    (width > 0 && height > 0).then(|| height as f32 / width as f32)
+}
+
+/// Keeps a picture the window drew as a file SteamVR can read, and gives back where it is and
+/// its height over its width. Each picture gets a new name, because SteamVR does not look again
+/// at a name it knows. Of each kind only this picture and the one before stay: SteamVR may still
+/// be reading that one.
+fn keep_panel_picture(kind: &str, png_base64: &str) -> AppResult<(std::path::PathBuf, f32)> {
+    use base64::Engine;
+    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(png_base64.trim_start_matches("data:image/png;base64,"))
+        .map_err(|_| AppError::CannotDo("The panel's picture arrived damaged.".into()))?;
+    if bytes.len() > 8 * 1024 * 1024 || !bytes.starts_with(b"\x89PNG") {
+        return Err(AppError::CannotDo("That is not a panel picture.".into()));
+    }
+    let aspect = png_aspect(&bytes).ok_or_else(|| AppError::CannotDo("That is not a panel picture.".into()))?;
+    let dir = std::env::temp_dir().join("anonymous-vrx panels");
+    std::fs::create_dir_all(&dir).map_err(|e| AppError::Storage(e.to_string()))?;
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mine = format!("{kind}-{}-", std::process::id());
+    if let Ok(old) = std::fs::read_dir(&dir) {
+        let mut same: Vec<(u32, std::path::PathBuf)> = Vec::new();
+        for entry in old.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(number) = name.strip_prefix(&mine).and_then(|rest| rest.strip_suffix(".png")).and_then(|n| n.parse::<u32>().ok()) {
+                same.push((number, entry.path()));
+            } else if name.starts_with(&format!("{kind}-")) {
+                // Left by an earlier run of the app.
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+        same.sort_by_key(|(number, _)| *number);
+        same.pop();
+        for (_, path) in same {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    let file = dir.join(format!("{mine}{n}.png"));
+    std::fs::write(&file, bytes).map_err(|e| AppError::Storage(e.to_string()))?;
+    Ok((file, aspect))
+}
+
+/// Whether the app should be in SteamVR at all (a panel, the dashboard tab or SteamVR's alerts
+/// is switched on), and whether battery, tracking and SteamVR closing are told.
+#[tauri::command]
+fn set_vr_overlay(panels: State<'_, overlay::Overlay>, on: bool, watch: Option<bool>) {
+    panels.watch(watch.unwrap_or(false));
+    panels.wanted(on);
+}
+
+/// Shows a notice the window drew, in front of the eyes, for a few seconds.
+#[tauri::command]
+fn vr_overlay_notice(panels: State<'_, overlay::Overlay>, png: String, seconds: f32, alpha: f32, above: Option<bool>) -> AppResult<()> {
+    panels.notice(keep_panel_picture("notice", &png)?.0, seconds, alpha, above.unwrap_or(true));
+    Ok(())
+}
+
+/// Puts the feed the window drew on an arm, or takes it off with no picture. `shift` is in
+/// metres along the arm.
+#[tauri::command]
+fn vr_overlay_wrist(panels: State<'_, overlay::Overlay>, png: Option<String>, hand: overlay::Hand, spot: Option<overlay::Spot>, width: f32, alpha: f32, shift: Option<f32>) -> AppResult<()> {
+    match png {
+        Some(png) => {
+            let (picture, aspect) = keep_panel_picture("wrist", &png)?;
+            panels.wrist(Some(overlay::WristPanel { picture, hand, spot: spot.unwrap_or(overlay::Spot::Forearm), width, alpha, aspect, shift: shift.unwrap_or(0.0) }));
+        }
+        None => panels.wrist(None),
+    }
+    Ok(())
+}
+
+/// The tab in SteamVR's dashboard: its picture and, the first time, its small icon. No picture
+/// takes the tab away.
+#[tauri::command]
+fn vr_overlay_dashboard(panels: State<'_, overlay::Overlay>, png: Option<String>, thumb: Option<String>) -> AppResult<()> {
+    match png {
+        Some(png) => {
+            let (main, aspect) = keep_panel_picture("dash", &png)?;
+            let icon = match thumb {
+                Some(t) => Some(keep_panel_picture("thumb", &t)?.0),
+                None => None,
+            };
+            panels.dashboard(Some((main, aspect, icon)));
+        }
+        None => panels.dashboard(None),
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn vr_overlay_status(panels: State<'_, overlay::Overlay>) -> String {
+    panels.status()
+}
+
+/// Sends one of SteamVR's own notifications and says how SteamVR took it.
+#[tauri::command]
+async fn vr_overlay_try_native(panels: State<'_, overlay::Overlay>) -> Result<String, ()> {
+    Ok(panels.try_native())
+}
 
 /// Sends a sample notice now, game running or not, and says how each overlay program took it.
 #[tauri::command]
@@ -1014,33 +1266,58 @@ async fn test_vr_notice(rules: vr::Rules) -> Vec<vr::Sent> {
     vr::send(rules, "Anonymous VRX".into(), "This is what a notice looks like in the headset.".into()).await
 }
 
-/// Makes the daily automatic backup when it is due. Nothing happens otherwise.
+
+/// Makes the daily automatic backup when it is due. Nothing happens otherwise. Runs aside like
+/// `backup_now`, so the window keeps answering while it copies.
 #[tauri::command]
-fn auto_backup(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String, keep: usize) -> AppResult<Option<backup::BackupInfo>> {
-    hub.auto_backup(&backups_root(&app)?, &settings, keep)
+async fn auto_backup(app: AppHandle, hub: State<'_, Arc<Hub>>, settings: String, keep: usize) -> AppResult<Option<backup::BackupInfo>> {
+    let root = backups_root(&app)?;
+    let hub = hub.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || hub.auto_backup(&root, &settings, keep))
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))?
 }
 
-#[tauri::command]
-fn list_backups(app: AppHandle) -> AppResult<Vec<backup::BackupInfo>> {
-    Ok(backup::list(&backups_root(&app)?))
+/// The backups Settings offers: the signed-in account's own and the older ones with no account
+/// named, so only what can be restored here is listed.
+#[tauri::command(async)]
+fn list_backups(app: AppHandle, hub: State<'_, Arc<Hub>>) -> AppResult<Vec<backup::BackupInfo>> {
+    Ok(hub.list_backups(&backups_root(&app)?))
 }
 
-/// Lines a backup up to replace the current history at the next start.
+/// Lines a backup up to replace the current history at the next start. It makes a backup of the
+/// current history first, so it runs aside like `backup_now`.
 #[tauri::command]
-fn restore_backup(app: AppHandle, hub: State<'_, Arc<Hub>>, name: String, settings: String) -> AppResult<String> {
-    hub.restore_backup(&backups_root(&app)?, &name, &settings)
+async fn restore_backup(app: AppHandle, hub: State<'_, Arc<Hub>>, name: String, settings: String) -> AppResult<String> {
+    let root = backups_root(&app)?;
+    let hub = hub.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || hub.restore_backup(&root, &name, &settings))
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))?
+}
+
+/// Runs a small Windows tool without flashing a console window.
+fn quiet_run(program: &str, args: &[&str]) -> Option<std::process::Output> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    std::process::Command::new(program)
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()
 }
 
 /// Runs a small Windows tool without flashing a console window, and returns what it printed.
 fn quiet_output(program: &str, args: &[&str]) -> Option<String> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let out = std::process::Command::new(program)
-        .args(args)
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
-    Some(String::from_utf8_lossy(&out.stdout).to_string())
+    quiet_run(program, args).map(|out| String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// `quiet_output` for a tool whose answer only counts when it says it finished well: nothing
+/// when it could not start or ended with a failure.
+fn quiet_answer(program: &str, args: &[&str]) -> Option<String> {
+    quiet_run(program, args)
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 /// Whether a program with this file name is running, or nothing when Windows did not say.
@@ -1060,7 +1337,60 @@ static LAUNCHED_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 /// start the game. "Could not tell" counts as running.
 fn game_surely_closed() -> bool {
     let just_started = LAUNCHED_AT.lock().unwrap().is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(120));
-    !just_started && ["VRChat.exe", "start_protected_game.exe", "launch.exe"].iter().all(|image| running_state(image) == Some(false))
+    if just_started || running_state("VRChat.exe") != Some(false) {
+        return false;
+    }
+    // The launcher and the anti-cheat starter have names other programs use too, so a match
+    // only counts when it runs from VRChat's own folder.
+    let helpers: Vec<&str> = ["start_protected_game", "launch"]
+        .into_iter()
+        .filter(|name| running_state(&format!("{name}.exe")) != Some(false))
+        .collect();
+    helpers.is_empty() || helpers_outside_game(&helpers)
+}
+
+/// True when every running program with one of these names (without `.exe`) is known to run
+/// from somewhere other than VRChat's install folder. False when any of them is VRChat's, when
+/// its place or VRChat's folder could not be read, or when PowerShell failed or broke off.
+fn helpers_outside_game(names: &[&str]) -> bool {
+    let Some(folder) = vrchat_launcher().and_then(|l| l.parent().map(|p| p.to_string_lossy().to_lowercase())) else {
+        return false;
+    };
+    // The last line says PowerShell got to the end, so a run that broke off is not read as
+    // "nothing running".
+    let script = format!(
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Process -Name {} -ErrorAction SilentlyContinue | ForEach-Object {{ if ($_.Path) {{ $_.Path }} else {{ '?' }} }}; '{HELPERS_LISTED}'",
+        names.join(",")
+    );
+    let Some(text) = quiet_answer("powershell", &["-NoProfile", "-NonInteractive", "-Command", &script]) else {
+        return false;
+    };
+    helpers_answer_elsewhere(&text, &folder, || names.iter().all(|name| running_state(&format!("{name}.exe")) == Some(false)))
+}
+
+/// The line PowerShell prints once it has listed the helper programs.
+const HELPERS_LISTED: &str = "listed";
+
+/// Reads PowerShell's list of helper program paths. True only when the list is whole and every
+/// path lies outside VRChat's folder (lower case). An empty list means the programs closed in
+/// between, which only counts once `all_closed_now` agrees, since PowerShell may simply have
+/// found nothing it could read.
+fn helpers_answer_elsewhere(text: &str, folder: &str, all_closed_now: impl FnOnce() -> bool) -> bool {
+    let mut paths: Vec<String> = text.lines().map(|l| l.trim().to_lowercase()).filter(|l| !l.is_empty()).collect();
+    if paths.pop().as_deref() != Some(HELPERS_LISTED) {
+        return false;
+    }
+    if paths.is_empty() {
+        return all_closed_now();
+    }
+    paths.iter().all(|p| helper_elsewhere(p, folder))
+}
+
+/// Whether a helper program's path (lower case, "?" when Windows would not say) lies outside
+/// VRChat's install folder (lower case).
+fn helper_elsewhere(path: &str, folder: &str) -> bool {
+    let folder = folder.trim_end_matches('\\');
+    path != "?" && !folder.is_empty() && !path.starts_with(&format!("{folder}\\"))
 }
 
 /// `game_surely_closed` for use while clearing: asked again every two seconds at most, since
@@ -1102,8 +1432,9 @@ fn vrchat_launcher() -> Option<std::path::PathBuf> {
 }
 
 /// Starts VRChat in an instance. `mode` is `auto`, `desktop` or `vr`.
-/// Returns `running`, `desktop` or `vr` to say what was done.
-#[tauri::command]
+/// Returns `running`, `desktop` or `vr` to say what was done. It asks Windows about running
+/// programs and the registry, so it runs off the window's own thread.
+#[tauri::command(async)]
 fn launch_instance(location: String, mode: String) -> AppResult<&'static str> {
     let url = vrchat::model::launch_link(&location)
         .ok_or_else(|| AppError::CannotDo("That is not an instance VRChat can be started in.".into()))?;
@@ -1332,18 +1663,43 @@ fn open_join_page(location: String) -> AppResult<()> {
     Ok(())
 }
 
-/// Where VRChat's camera saves photos.
+/// Where VRChat's camera saves photos: the folder named in VRChat's `config.json` when there
+/// is one, or Pictures\VRChat.
 fn photos_root(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    if let Some(own) = gamecache::game_folder().and_then(|game| photos::picture_folder(&game)) {
+        return Ok(own);
+    }
     app.path()
         .picture_dir()
         .map(|d| d.join("VRChat"))
         .map_err(|e| AppError::Storage(e.to_string()))
 }
 
+/// Lets the window show pictures from a photo folder VRChat was told to use instead of
+/// Pictures\VRChat, which the app's settings already allow.
+fn allow_photo_folder(app: &AppHandle, root: &std::path::Path) {
+    let usual = app.path().picture_dir().ok().map(|d| d.join("VRChat"));
+    if usual.as_deref() != Some(root) && root.is_dir() {
+        let _ = app.asset_protocol_scope().allow_directory(root, true);
+    }
+}
+
 /// VRChat's photos on this PC, newest first, with the world and people the history has for each.
+/// Searching looks up every photo in the history, so it runs off the window's own thread. The
+/// answer also names the folder that was looked through, so the window can say where it looked.
 #[tauri::command]
-fn photos(app: AppHandle, hub: State<'_, Arc<Hub>>, limit: usize, skip: usize, query: Option<String>, until: Option<String>) -> AppResult<serde_json::Value> {
-    hub.photos(&photos_root(&app)?, limit, skip, query.as_deref().unwrap_or(""), until.as_deref().unwrap_or(""))
+async fn photos(app: AppHandle, hub: State<'_, Arc<Hub>>, limit: usize, skip: usize, query: Option<String>, until: Option<String>) -> AppResult<serde_json::Value> {
+    let root = photos_root(&app)?;
+    allow_photo_folder(&app, &root);
+    let folder = root.to_string_lossy().into_owned();
+    let hub = hub.inner().clone();
+    let mut page = tauri::async_runtime::spawn_blocking(move || hub.photos(&root, limit, skip, query.as_deref().unwrap_or(""), until.as_deref().unwrap_or("")))
+        .await
+        .map_err(|e| AppError::Storage(e.to_string()))??;
+    if let Some(fields) = page.as_object_mut() {
+        fields.insert("folder".into(), serde_json::Value::String(folder));
+    }
+    Ok(page)
 }
 
 /// Opens the folder of one VRChat photo with the file selected.
@@ -1448,6 +1804,10 @@ fn add_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 pub fn run() {
+    keep_crashes();
+    if !window_parts_work() {
+        return;
+    }
     apply_gpu_choice();
     tauri::Builder::default()
         // Starting the app a second time brings the running one to the front.
@@ -1471,7 +1831,8 @@ pub fn run() {
             let emit: hub::Emit = Arc::new(move |name, payload| {
                 if name == "popup" {
                     let text = |k: &str| payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    vr_notice(&handle, text("title"), text("body"));
+                    let alert = VrAlert { kind: text("kind"), label: text("label"), title: text("title"), body: text("body") };
+                    vr_notice(&handle, alert, false);
                     if !may_notify() {
                         return;
                     }
@@ -1488,6 +1849,28 @@ pub fn run() {
                 let _ = handle.emit(name, payload);
             });
             app.manage(Hub::new(api, data_dir, emit, true, gamelog::default_dir()));
+            // SteamVR's own news: alerts go to the headset (and SteamVR closing to Windows too, since
+            // the headset view goes with it); the device list goes to the window for the wrist.
+            let news_app = app.handle().clone();
+            app.manage(overlay::Overlay::start(
+                steamvr_running,
+                Arc::new(move |news| match news {
+                    overlay::News::Alert { kind, label, title, body } => {
+                        if kind == "steamvr" && !in_quiet_time() {
+                            use tauri_plugin_notification::NotificationExt;
+                            let _ = news_app.notification().builder().title(&title).body(&body).show();
+                        }
+                        vr_notice(&news_app, VrAlert { kind: kind.into(), label: label.into(), title, body }, true);
+                    }
+                    overlay::News::Devices(list) => {
+                        let _ = news_app.emit("vr:devices", list);
+                    }
+                    // The window drew the tab, so it knows what sits under the click.
+                    overlay::News::DashClick { x, y } => {
+                        let _ = news_app.emit("vr:dash-click", serde_json::json!({ "x": x, "y": y }));
+                    }
+                }),
+            ));
             add_tray(app)?;
             // Started by Windows at sign-in, the app stays in the tray until it is asked for.
             if std::env::var_os(SHOW_AFTER_RESTART).is_some() || !std::env::args().any(|a| a == TRAY_FLAG) {
@@ -1623,6 +2006,12 @@ pub fn run() {
             set_vr_notices,
             notify_vr,
             test_vr_notice,
+            set_vr_overlay,
+            vr_overlay_notice,
+            vr_overlay_wrist,
+            vr_overlay_dashboard,
+            vr_overlay_status,
+            vr_overlay_try_native,
             restore_backup,
             open_backups_folder,
             photos,
@@ -1634,6 +2023,51 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("the app window could not start");
+}
+
+#[cfg(test)]
+mod crash_tests {
+    #[test]
+    fn a_crash_note_says_what_where_and_which_version() {
+        let words = super::crash_words("index out of bounds", "src/hub.rs:12", "2026-11-27 10:00:00 UTC");
+        assert!(words.contains(env!("CARGO_PKG_VERSION")));
+        assert!(words.contains("What: index out of bounds\r\n") && words.contains("Where: src/hub.rs:12\r\n"));
+        assert!(super::crash_file().is_some_and(|f| f.ends_with("app.anonymousvrx.desktop/crash log.txt")));
+    }
+}
+
+#[cfg(test)]
+mod helper_tests {
+    use super::{helper_elsewhere, helpers_answer_elsewhere};
+
+    #[test]
+    fn only_helpers_in_vrchats_folder_count_as_the_game() {
+        let folder = r"c:\program files (x86)\steam\steamapps\common\vrchat";
+        assert!(!helper_elsewhere(r"c:\program files (x86)\steam\steamapps\common\vrchat\launch.exe", folder));
+        assert!(!helper_elsewhere(r"c:\program files (x86)\steam\steamapps\common\vrchat\start_protected_game.exe", &format!("{folder}\\")));
+        assert!(helper_elsewhere(r"d:\games\other\start_protected_game.exe", folder));
+        // A folder whose name only starts the same is someone else's.
+        assert!(helper_elsewhere(r"c:\program files (x86)\steam\steamapps\common\vrchat tools\launch.exe", folder));
+        // A place Windows would not give counts as VRChat's, to be careful.
+        assert!(!helper_elsewhere("?", folder));
+        assert!(!helper_elsewhere(r"d:\games\launch.exe", ""));
+    }
+
+    #[test]
+    fn a_broken_or_empty_powershell_answer_is_not_closed() {
+        let folder = r"c:\games\vrchat";
+        let never = || -> bool { panic!("only asked when the list is empty") };
+        // A whole list with every helper elsewhere.
+        assert!(helpers_answer_elsewhere("D:\\Tools\\launch.exe\r\nlisted\r\n", folder, never));
+        // One of them is VRChat's.
+        assert!(!helpers_answer_elsewhere("d:\\tools\\launch.exe\r\nc:\\games\\vrchat\\start_protected_game.exe\r\nlisted\r\n", folder, never));
+        // PowerShell printed nothing, or broke off before the end of its list.
+        assert!(!helpers_answer_elsewhere("", folder, never));
+        assert!(!helpers_answer_elsewhere("d:\\tools\\launch.exe\r\n", folder, never));
+        // An empty list counts only when the programs are known to be gone now.
+        assert!(helpers_answer_elsewhere("listed\r\n", folder, || true));
+        assert!(!helpers_answer_elsewhere("listed\r\n", folder, || false));
+    }
 }
 
 #[cfg(test)]

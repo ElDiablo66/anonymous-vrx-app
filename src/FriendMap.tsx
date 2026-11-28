@@ -19,6 +19,27 @@ const FACE = 48;
 const SEAT = 78;
 const askFirst = new Set(["invite", "invitePlus"]);
 
+/** The user who opened an Invite or Invite+ instance, read from `~private(usr_x)` in its location. */
+export function ownerOf(location: string): string | null {
+  return /~private\((usr_[^)]+)\)/.exec(location)?.[1] ?? null;
+}
+
+/**
+ * Which friend in an instance to ask for an invite. In a plain Invite instance only the person
+ * who opened it can invite anyone, so that is them or nobody. In Invite+ everyone inside can,
+ * so the owner comes first when they are a friend, then anyone else.
+ */
+export function inviteHost(room: { location: string; people: Friend[] }): Friend | null {
+  const owner = ownerOf(room.location);
+  const found = owner ? room.people.find((p) => p.id === owner) : undefined;
+  if (found) return found;
+  if (owner && parsePlace(room.location).access === "invite") return null;
+  return room.people[0] ?? null;
+}
+
+/** What the ask button says when no friend in the instance can invite me. */
+export const NO_HOST = "Only the person who opened this instance can invite you, and they are not on your friends list";
+
 /** How wide a bubble is: enough for its faces and their names, a little more the fuller the instance is. */
 function width(friends: number, everyone: number): number {
   // Up to nine faces sit on one ring, which has to be long enough for all of them.
@@ -205,8 +226,16 @@ export function FriendMap({
     // The same answer as before changes nothing, so an observer that fires again does not redraw.
     setView((v) => (v.k === k && v.x === x && v.y === y ? v : { k, x, y }));
   };
+  // My own instance gets a bubble too when no friend is in it with me.
+  const alone = here && !rooms.some((r) => r.location === here.location) ? here : null;
+  // False while the map shows only the "Nobody is around" line, with no stage to watch.
+  const staged = rooms.length + hidden.length + moving.length + away.length > 0 || alone !== null;
   // Changes whenever the bubbles on the map do, the stage coming and going included.
-  const shape = `${rooms.map((r) => r.people.length).join(",")}|${hidden.length}|${moving.length}|${showAway ? away.length : 0}`;
+  const shape = `${staged ? 1 : 0}|${alone ? 1 : 0}|${rooms.map((r) => r.people.length).join(",")}|${hidden.length}|${moving.length}|${showAway ? away.length : 0}`;
+  /** True once I have dragged or zoomed; from then on the map stays where I put it. */
+  const moved = useRef(false);
+  // With the stage gone there is nothing left to keep in place, so the next map starts fitted.
+  if (!staged) moved.current = false;
   // The wheel zooms the map and nothing else; the page behind it stays where it is.
   useEffect(() => {
     const el = stage.current;
@@ -225,9 +254,10 @@ export function FriendMap({
     el.addEventListener("wheel", turn, { passive: false });
     return () => el.removeEventListener("wheel", turn);
   }, [shape]);
-  useLayoutEffect(fitMap, [shape]); // eslint-disable-line react-hooks/exhaustive-deps
-  /** True once I have dragged or zoomed; from then on the map stays where I put it. */
-  const moved = useRef(false);
+  // Friends coming and going refit the map, unless I have already moved it myself.
+  useLayoutEffect(() => {
+    if (!moved.current) fitMap();
+  }, [shape]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const world = wrap.current;
     if (!world) return;
@@ -294,15 +324,14 @@ export function FriendMap({
       return !on;
     });
   };
-  // My own instance gets a bubble too when no friend is in it with me.
-  const alone = here && !rooms.some((r) => r.location === here.location) ? here : null;
-
   async function go(room: Room, ask: boolean) {
+    const host = ask ? inviteHost(room) : null;
+    if (ask && !host) return;
     setBusy(room.location);
     try {
-      if (ask) {
-        await backend.requestInvite(room.people[0].id);
-        onDone(`Asked ${room.people[0].displayName} for an invite. Their answer arrives in your Inbox.`);
+      if (host) {
+        await backend.requestInvite(host.id);
+        onDone(`Asked ${host.displayName} for an invite. Their answer arrives in your Inbox.`);
       } else {
         onDone(launched[await backend.launchInstance(room.location, savedLaunchMode())]);
       }
@@ -313,7 +342,7 @@ export function FriendMap({
     }
   }
 
-  if (rooms.length + hidden.length + moving.length + away.length === 0 && !alone) return <p className="empty">Nobody is around right now. Friends show up here as bubbles once they are in VRChat.</p>;
+  if (!staged) return <p className="empty">Nobody is around right now. Friends show up here as bubbles once they are in VRChat.</p>;
   const inGame = rooms.reduce((n, r) => n + r.people.length, 0) + hidden.length + moving.length;
   const names = new Map([...rooms.flatMap((r) => r.people), ...hidden, ...moving].map((f) => [f.id, f.displayName]));
   const together = pairs.slice(0, 6).map((p) => ({ ...p, names: [names.get(p.a) ?? "A friend", names.get(p.b) ?? "a friend"] }));
@@ -493,18 +522,21 @@ export function FriendMap({
                         const full = !ask && instance?.full === true;
                         const waits = waiting.some((w) => w.location === room.location);
                         const worldName = tidy(worlds.get(room.worldId)?.name ?? "") || "A world";
+                        const host = ask ? inviteHost(room) : null;
                         return (
                           <button
                             className={ask || full ? "plain" : "plain go"}
-                            disabled={busy === room.location}
-                            title={ask ? `Asks ${room.people[0].displayName} for an invite` : waits ? "You are waiting for room here. Press to stop" : full ? "This instance is full. Press to be told when it has room" : "Starts VRChat in this instance, or moves you there"}
+                            disabled={busy === room.location || (ask && !host)}
+                            title={ask ? (host ? `Asks ${host.displayName} for an invite` : NO_HOST) : waits ? "You are waiting for room here. Press to stop" : full ? "This instance is full. Press to be told when it has room" : "Starts VRChat in this instance, or moves you there"}
                             onClick={() => {
-                              if (!full && !waits) return void go(room, ask);
+                              // "Ask" always asks, even when a wait for this instance is running.
+                              if (ask) return void go(room, true);
+                              if (!full && !waits) return void go(room, false);
                               setBusy(room.location);
                               void toggleWait(room.location, worldName, waits, onDone).finally(() => setBusy(""));
                             }}
                           >
-                            {ask ? "Ask" : waits ? "Waiting" : full ? "Full, wait" : "Join"}
+                            {ask ? (host ? "Ask" : "Owner only") : waits ? "Waiting" : full ? "Full, wait" : "Join"}
                           </button>
                         );
                       })()

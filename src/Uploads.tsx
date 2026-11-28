@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { backend, errorText } from "./backend";
 import { dateText, tidy } from "./bits";
 import { openThing } from "./Detail";
@@ -27,10 +27,14 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
   const [kind, setKind] = useState<Kind>("avatars");
   const [recovery, setRecovery] = useState(false);
   const [rows, setRows] = useState<Record<string, Json[] | null>>({});
-  const [problem, setProblem] = useState("");
+  /** Why a list did not come, kept per list so one failure does not show on the other tab. */
+  const [problems, setProblems] = useState<Record<string, string>>({});
   const [query, setQuery] = useState("");
   const [only, setOnly] = useState<"all" | "public" | "private">("all");
-  const [busy, setBusy] = useState("");
+  // Every upload with a request still out is held here, so one finishing does not unlock another.
+  // The ref is the guard against a double click that lands before the page draws again.
+  const [busy, setBusy] = useState<Set<string>>(() => new Set());
+  const sending = useRef(new Set<string>());
   const tags = useTags();
   const [pickedTag, setTag] = useState(ALL_TAGS);
   /** The avatar whose tags are being edited. */
@@ -38,8 +42,24 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
   /** The upload whose Delete was pressed once and waits for the second click. */
   const [deleting, setDeleting] = useState("");
 
+  function start(id: string): boolean {
+    if (sending.current.has(id)) return false;
+    sending.current.add(id);
+    setBusy((old) => new Set(old).add(id));
+    return true;
+  }
+
+  function finish(id: string) {
+    sending.current.delete(id);
+    setBusy((old) => {
+      const next = new Set(old);
+      next.delete(id);
+      return next;
+    });
+  }
+
   async function change(id: string, name: string, action: "public" | "private" | "delete") {
-    setBusy(id);
+    if (!start(id)) return;
     try {
       await backend.uploadAction(kind === "avatars" ? "avatar" : "world", id, action);
       // The list on screen follows at once; VRChat's own list catches up a little later.
@@ -51,29 +71,38 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
     } finally {
-      setBusy("");
+      finish(id);
       setDeleting("");
     }
   }
 
   // Something of mine was changed or deleted from its own window: read the lists again.
   useEffect(() => {
-    const again = () => setRows({});
+    const again = () => {
+      setRows({});
+      setProblems({});
+    };
     window.addEventListener("uploads:changed", again);
     return () => window.removeEventListener("uploads:changed", again);
   }, []);
 
+  // A list that failed is kept as null and is not asked for again on its own (that could follow a
+  // 429). Try again clears it, so this effect asks once more.
   useEffect(() => {
     if (kind in rows) return;
     let alive = true;
-    setProblem("");
+    const asked = kind;
     void backend
-      .profilePart(meId, kind, "", "")
-      .then((d) => alive && setRows((old) => ({ ...old, [kind]: list(d) })))
+      .profilePart(meId, asked, "", "")
+      .then((d) => {
+        if (!alive) return;
+        setRows((old) => ({ ...old, [asked]: list(d) }));
+        setProblems(({ [asked]: _, ...rest }) => rest);
+      })
       .catch((err) => {
         if (!alive) return;
-        setRows((old) => ({ ...old, [kind]: null }));
-        setProblem(errorText(err));
+        setRows((old) => ({ ...old, [asked]: null }));
+        setProblems((old) => ({ ...old, [asked]: errorText(err) }));
       });
     return () => {
       alive = false;
@@ -82,6 +111,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
   }, [kind, meId, rows]);
 
   const all = rows[kind];
+  const problem = problems[kind] ?? "";
   // How my worlds moved, read once their list is in (listing them also notes today's numbers).
   const stats = useWorldStats(kind === "worlds" && !!rows.worlds);
   const worldsNow = useMemo(() => {
@@ -107,14 +137,14 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
     );
 
   async function wear(id: string, name: string) {
-    setBusy(id);
+    if (!start(id)) return;
     try {
-      await backend.wearAvatar(id);
+      await backend.wearAvatar(id, name);
       onDone(`You are now wearing ${name}.`);
     } catch (err) {
       onDone(`That did not work: ${errorText(err)}`);
     } finally {
-      setBusy("");
+      finish(id);
     }
   }
 
@@ -160,10 +190,18 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
       {kind === "avatars" && all && <TagFilter ids={all.map((r) => str(r.id))} tags={tags} value={tag} set={setTag} />}
       {kind === "worlds" && all && <WorldSummary stats={stats} now={worldsNow} />}
 
-      {problem && (
-        <p className="banner" role="alert">
-          VRChat did not send your {kind}: {problem}
-        </p>
+      {all === null && (
+        <div className="banner" role="alert">
+          VRChat did not send your {kind}{problem ? `: ${problem}` : "."}{" "}
+          <button
+            onClick={() => {
+              setProblems(({ [kind]: _, ...rest }) => rest);
+              setRows(({ [kind]: _, ...rest }) => rest);
+            }}
+          >
+            Try again
+          </button>
+        </div>
       )}
       {all === undefined && <p className="empty">Asking VRChat for your {kind}</p>}
       {all && all.length === 0 && <p className="empty">You have not uploaded any {kind}.</p>}
@@ -192,7 +230,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
               <div className="wayback">
                 {kind === "avatars" && (
                   <>
-                    <button className="go" disabled={busy === id} onClick={() => void wear(id, name)}>
+                    <button className="go" disabled={busy.has(id)} onClick={() => void wear(id, name)}>
                       Wear
                     </button>
                   </>
@@ -205,7 +243,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
                 )}
                 {deleting === id ? (
                   <>
-                    <button className="danger" disabled={busy === id} onClick={() => void change(id, name, "delete")}>
+                    <button className="danger" disabled={busy.has(id)} onClick={() => void change(id, name, "delete")}>
                       Yes, delete for good
                     </button>
                     <button onClick={() => setDeleting("")}>Keep</button>
@@ -213,7 +251,7 @@ export function Uploads({ meId, onDone }: { meId: string; onDone: (message: stri
                 ) : (
                   <>
                     <button
-                      disabled={busy === id}
+                      disabled={busy.has(id)}
                       title={str(r.releaseStatus) === "public" ? "Only you can use it after this" : kind === "avatars" ? "Anyone can use it after this" : "Publishes the world"}
                       onClick={() => void change(id, name, str(r.releaseStatus) === "public" ? "private" : "public")}
                     >
